@@ -70,7 +70,7 @@ export function proxy(request: NextRequest) {
 
   if (!authenticated) {
     if (!isApiRequest) {
-      const loginUrl = new URL("/login", request.url);
+      const loginUrl = new URL("/login2", request.url);
       if (request.nextUrl.search) {
         loginUrl.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
       }
