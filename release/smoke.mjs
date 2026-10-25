@@ -85,7 +85,9 @@ try {
   }
   assert.equal((await fetch(`${base}/api/sessions`)).status, 401);
   const redirect = await fetch(base, { redirect: "manual" });
-  assert.equal(new URL(redirect.headers.get("location"), base).pathname, "/login");
+  assert.equal(redirect.status, 307);
+  assert.equal(new URL(redirect.headers.get("location"), base).pathname, "/login2");
+  assert.equal((await fetch(`${base}/login`)).status, 200, "Classic login must remain available");
   for (const name of ["emblem.webp", "pi-permission.mp3", "pi-password.mp3", "pi-read.mp3", "pi-verified.mp3", "pi-welcome.mp3"]) {
     const response = await fetch(`${base}/login2/assets/${name}`);
     assert.equal(response.status, 200, name);
@@ -99,7 +101,9 @@ try {
   page.setDefaultTimeout(30000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${base}/login2?next=${encodeURIComponent("/?tsgw-release-smoke=1")}`);
+  await page.goto(`${base}/?tsgw-release-smoke=1`);
+  assert.equal(new URL(page.url()).pathname, "/login2");
+  assert.equal(new URL(page.url()).searchParams.get("next"), "/?tsgw-release-smoke=1");
   await page.locator("#pi-access-password").fill(env.PI_WEB_PASSWORD);
   await page.locator("#pi-access-password").press("Enter");
   await page.waitForURL(`${base}/?tsgw-release-smoke=1`, { timeout: 60000 });
