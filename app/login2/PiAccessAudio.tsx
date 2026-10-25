@@ -8,14 +8,14 @@ const piVoiceFiles: Partial<Record<PiAccessPhase, string>> = {
   verified: "verified", welcome: "welcome", handoff: "welcome",
 };
 
-export function PiAccessAudio({ piPhase, piEnableLabel, piMuteLabel }: {
-  piPhase: PiAccessPhase; piEnableLabel: string; piMuteLabel: string;
+export function PiAccessAudio({ piPhase, piAuthenticated = false, piEnableLabel, piMuteLabel }: {
+  piPhase: PiAccessPhase; piAuthenticated?: boolean; piEnableLabel: string; piMuteLabel: string;
 }) {
   const piAudioRef = useRef<HTMLAudioElement>(null);
   const piEnabledRef = useRef(true);
   const piResumeRef = useRef<(() => void) | null>(null);
   const [piEnabled, setPiEnabled] = useState(true);
-  const piVoice = piVoiceFiles[piPhase];
+  const piVoice = piAuthenticated && piPhase === "password" ? undefined : piVoiceFiles[piPhase];
   const piSource = piVoice ? `/login2/assets/pi-${piVoice}.mp3` : undefined;
 
   useEffect(() => {

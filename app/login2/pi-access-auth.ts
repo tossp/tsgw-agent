@@ -1,5 +1,5 @@
 export type PiAccessFailure =
-  | { kind: "invalid" | "failed" }
+  | { kind: "invalid" | "failed" | "expired" }
   | { kind: "throttled"; seconds: number };
 
 export type PiAccessResult = { ok: true } | { ok: false; failure: PiAccessFailure };

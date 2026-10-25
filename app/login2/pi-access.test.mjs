@@ -82,6 +82,18 @@ test("Pi visual copy covers every phase in each supported locale", () => {
   }
 });
 
+test("Pi existing-session copy asks for a click rather than a password in every locale", () => {
+  for (const piLocale of ["en", "zh-CN", "zh-TW"]) {
+    const piCopy = getPiAccessCopy(piLocale, "password", true);
+    assert.ok(piCopy.clickEnter.length > 0);
+    assert.ok(piCopy.sessionExpired.length > 0);
+    assert.doesNotMatch(piCopy.log, /password|密码|密碼/i);
+    assert.notEqual(piCopy.log, getPiAccessCopy(piLocale, "password").log);
+    assert.doesNotMatch(getPiAccessCopy(piLocale, "permission", true).log, /password|密码|密碼/i);
+    assert.equal(getPiAccessCopy(piLocale, "read", true).log, getPiAccessCopy(piLocale, "read").log);
+  }
+});
+
 test("Pi identity card keeps the original three fields and uses the existing password credential", () => {
   const piCopy = getPiAccessCopy("zh-CN", "password");
   assert.equal(piCopy.identityToken, "身份令牌");
@@ -91,6 +103,8 @@ test("Pi identity card keeps the original three fields and uses the existing pas
   assert.match(piPage, /const PI_ACCESS_IDENTITY_ID = "9527"/);
   assert.doesNotMatch(piPage, /getRandomValues|Math\.random/);
   assert.match(piPage, /type="password"/);
+  assert.ok(piPage.includes("data-pi-existing-session>••••••••</b>"));
+  assert.equal(piPage.includes("piCopy.tokenVerified"), false);
   assert.match(piPage, /data-pi-identity-row><span>\{piCopy.accessLevel\}<\/span><b>3<\/b>/);
 });
 

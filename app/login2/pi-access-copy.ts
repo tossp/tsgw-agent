@@ -20,7 +20,9 @@ const piCopies = {
     original: "Skip animation · Original login ↗", enter: "Enter Pi Web ↗",
     enableAudio: "Enable Chinese voice", muteAudio: "Mute voice",
     identityCard: "Identity credentials", identityToken: "Identity token", identityNumber: "Identity number",
-    accessLevel: "Access level", confirmIdentity: "Confirm identity",
+    accessLevel: "Access level", confirmIdentity: "Confirm identity", clickEnter: "Click to enter",
+    sessionExpired: "Your session has expired. Please enter your identity token again.",
+    existingPermission: "Your session is valid. Confirm to enter.", existingPassword: "Identity confirmed. Click to enter the workspace.",
     titles: {
       checking: "Connecting", intro: "Pi Web", wash: "Initializing", permission: "Access required",
       password: "Verify identity", request: "Request received", read: "Reading permissions",
@@ -38,7 +40,9 @@ const piCopies = {
     original: "跳过动画 · 普通登录 ↗", enter: "直接进入 Pi Web ↗",
     enableAudio: "开启中文播报", muteAudio: "关闭播报",
     identityCard: "身份资料", identityToken: "身份令牌", identityNumber: "身份编号",
-    accessLevel: "权限等级", confirmIdentity: "确认身份",
+    accessLevel: "权限等级", confirmIdentity: "确认身份", clickEnter: "点击进入",
+    sessionExpired: "登录会话已失效，请重新填写身份令牌。",
+    existingPermission: "已有有效登录状态，确认后即可进入。", existingPassword: "身份已确认，点击进入工作区。",
     titles: {
       checking: "连接访问终端", intro: "智能协作", wash: "初始化访问序列", permission: "需要访问许可",
       password: "身份资料确认", request: "接收访问需求", read: "开始读取权限",
@@ -56,7 +60,9 @@ const piCopies = {
     original: "跳過動畫 · 一般登入 ↗", enter: "直接進入 Pi Web ↗",
     enableAudio: "開啟中文播報", muteAudio: "關閉播報",
     identityCard: "身分資料", identityToken: "身分權杖", identityNumber: "身分編號",
-    accessLevel: "權限等級", confirmIdentity: "確認身分",
+    accessLevel: "權限等級", confirmIdentity: "確認身分", clickEnter: "點擊進入",
+    sessionExpired: "登入工作階段已失效，請重新填寫身分權杖。",
+    existingPermission: "已有有效登入狀態，確認後即可進入。", existingPassword: "身分已確認，點擊進入工作區。",
     titles: {
       checking: "連接存取終端", intro: "智慧協作", wash: "初始化存取序列", permission: "需要存取許可",
       password: "身分資料確認", request: "接收存取需求", read: "開始讀取權限",
@@ -72,12 +78,15 @@ const piCopies = {
   },
 };
 
-export function getPiAccessCopy(piLocale: string, piPhase: PiAccessPhase) {
+export function getPiAccessCopy(piLocale: string, piPhase: PiAccessPhase, piAuthenticated = false) {
   const piCopy = piCopies[piLocale as keyof typeof piCopies] || piCopies.en;
   return {
-    title: piCopy.titles[piPhase], subtitle: piSubtitles[piPhase], log: piCopy.logs[piPhase],
+    title: piCopy.titles[piPhase], subtitle: piSubtitles[piPhase],
+    log: piAuthenticated && piPhase === "permission" ? piCopy.existingPermission
+      : piAuthenticated && piPhase === "password" ? piCopy.existingPassword : piCopy.logs[piPhase],
     logSubtitle: piLogSubtitles[piPhase], identityCard: piCopy.identityCard, identityToken: piCopy.identityToken,
     identityNumber: piCopy.identityNumber, accessLevel: piCopy.accessLevel, confirmIdentity: piCopy.confirmIdentity,
+    clickEnter: piCopy.clickEnter, sessionExpired: piCopy.sessionExpired,
     original: piCopy.original, enter: piCopy.enter, enableAudio: piCopy.enableAudio, muteAudio: piCopy.muteAudio,
   };
 }

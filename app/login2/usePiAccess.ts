@@ -23,10 +23,12 @@ function getPiAccessDestination(): string {
 export function usePiAccess() {
   const [piPhase, setPiPhase] = useState<PiAccessPhase>("checking");
   const [piBusy, setPiBusy] = useState(false);
+  const [piAuthenticated, setPiAuthenticated] = useState(false);
   const [piSourceIp, setPiSourceIp] = useState("");
   const [piFailure, setPiFailure] = useState<PiAccessFailure | null>(null);
   const [piFallbackHref, setPiFallbackHref] = useState("/login");
   const piDestinationRef = useRef("/");
+  const piClassicHrefRef = useRef("/login");
   const piPendingRef = useRef<AbortController | null>(null);
   const piMountedRef = useRef(false);
   const piSubmittingRef = useRef(false);
@@ -41,14 +43,18 @@ export function usePiAccess() {
     piDestinationRef.current = piDestination;
     const piUrl = new URL(piDestination, window.location.origin);
     const piClassicHref = "/login?" + new URLSearchParams({ next: piUrl.pathname + piUrl.search + piUrl.hash });
+    piClassicHrefRef.current = piClassicHref;
     setPiFallbackHref(piClassicHref);
     const piMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     piReducedMotionRef.current = piMotion.matches;
     const piMotionChange = () => {
       piReducedMotionRef.current = piMotion.matches;
       if (piMotion.matches) {
-        if (piAuthenticatedRef.current) window.location.replace(piDestination);
-        else setPiPhase((piCurrent) => piCurrent === "checking" ? piCurrent : "password");
+        setPiPhase((piCurrent) => {
+          if (piCurrent === "checking") return piCurrent;
+          return piAuthenticatedRef.current && ["request", "read", "verified", "welcome", "handoff"].includes(piCurrent)
+            ? "handoff" : "password";
+        });
       }
     };
     piMotion.addEventListener("change", piMotionChange);
@@ -58,8 +64,8 @@ export function usePiAccess() {
     }).then((piAuthenticated) => {
       if (piController.signal.aborted) return;
       if (piAuthenticated) {
-        window.location.replace(piDestination);
-        return;
+        piAuthenticatedRef.current = true;
+        setPiAuthenticated(true);
       }
       setPiPhase(piReducedMotionRef.current ? "password" : "intro");
     }).catch(() => {
@@ -100,10 +106,15 @@ export function usePiAccess() {
     setPiBusy(true);
     setPiFailure(null);
     try {
-      const piResult = await submitPiAccessPassword(piPassword, piController.signal);
+      const piResult = piAuthenticatedRef.current
+        ? { ok: await readPiAccessAuth(piController.signal), failure: { kind: "expired" as const } }
+        : await submitPiAccessPassword(piPassword, piController.signal);
       if (piPendingRef.current !== piController) return false;
       if (piController.signal.aborted) throw new Error("Pi Web login timed out");
       if (!piResult.ok) {
+        piAuthenticatedRef.current = false;
+        setPiAuthenticated(false);
+        setPiFallbackHref(piClassicHrefRef.current);
         setPiFailure(piResult.failure);
         return false;
       }
@@ -125,5 +136,5 @@ export function usePiAccess() {
     }
   }, [piPhase]);
 
-  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp };
+  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp, piAuthenticated };
 }
