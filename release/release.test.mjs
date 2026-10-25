@@ -33,7 +33,7 @@ const files = [
 ];
 
 test("fork identity, lockfile and CLI name are persisted in project source", () => {
-  assert.equal(manifest.name, "@tossp/tsgw-agent");
+  assert.equal(manifest.name, "tsgw-agent");
   assert.equal(manifest.repository.url, "git+https://github.com/tossp/tsgw-agent.git");
   assert.deepEqual(manifest.bin, { "tsgw-agent": "bin/pi-web.js" });
   assert.equal(lock.name, manifest.name);
@@ -99,7 +99,7 @@ test("installed web and CLI updates stay on their own package and channel", () =
   assert.equal(release.getReleaseChannel(preview), "next");
   for (const [version, tag] of [["0.1.0", "latest"], [preview, "next"]]) {
     const url = new URL(release.getNpmLatestUrl(version));
-    assert.equal(decodeURIComponent(url.pathname), `/@tossp/tsgw-agent/${tag}`);
+    assert.equal(decodeURIComponent(url.pathname), `/tsgw-agent/${tag}`);
   }
   assert.equal(release.isNewerReleaseVersion("0.1.1", "0.1.0"), true);
   assert.equal(release.isNewerReleaseVersion("0.1.0-dev.43.1.g0123456789ab", preview), true);
@@ -121,13 +121,14 @@ test("preview CLI checks next and refuses to install a stable or upstream packag
   const base = { currentVersion: deriveRelease(input).version, check: true, pkgDir: "/fixture",
     listRecords: () => [], formatRecord: () => "", log: (message) => logs.push(message), error: () => {} };
   assert.equal(await runUpdate(base), 0);
-  assert.deepEqual(requests, ["/@tossp/tsgw-agent/next"]);
+  assert.deepEqual(requests, ["/tsgw-agent/next"]);
   assert.match(logs[0], /^tsgw-agent .* is available/);
   let installed = false;
   await runUpdate({ ...base, check: false, fetchLatest: async () => "0.2.0", install: () => { installed = true; } });
   assert.equal(installed, false);
   assert.equal(getInstallKind({ pkgDir: "/npm/@agegr/pi-web", npmRoot: "/npm", realpath: (path) => path }), "other");
-  assert.equal(getInstallKind({ pkgDir: "/npm/@tossp/tsgw-agent", npmRoot: "/npm", realpath: (path) => path }), "global");
+  assert.equal(getInstallKind({ pkgDir: "/npm/tsgw-agent", npmRoot: "/npm", realpath: (path) => path }), "global");
+  assert.equal(getInstallKind({ pkgDir: "/npm/@tossp/tsgw-agent", npmRoot: "/npm", realpath: (path) => path }), "other");
   assert.equal(records.isRecordProcess(1, "launcher", { readCommand: () => "node /npm/bin/tsgw-agent" }), true);
 });
 
@@ -135,12 +136,13 @@ test("update metadata rejects a different package, invalid versions and cross-ch
   assert.equal(release.readReleaseVersion({ name: manifest.name, version: "0.2.0" }, "0.1.0"), "0.2.0");
   for (const metadata of [
     { name: "@agegr/pi-web", version: "99.0.0" }, { version: "0.2.0" },
+    { name: "@tossp/tsgw-agent", version: "0.2.0" },
     { name: manifest.name, version: deriveRelease(input).version }, { name: manifest.name, version: "invalid" },
   ]) assert.throws(() => release.readReleaseVersion(metadata, "0.1.0"));
   t.mock.method(globalThis, "fetch", async () => Response.json({ name: "@agegr/pi-web", version: "99.0.0" }));
   const errors = [];
   let installed = false;
-  const result = await runUpdate({ currentVersion: "0.1.0", pkgDir: "/npm/@tossp/tsgw-agent",
+  const result = await runUpdate({ currentVersion: "0.1.0", pkgDir: "/npm/tsgw-agent",
     getNpmRoot: () => "/npm", listRecords: () => [], formatRecord: () => "", log: () => {}, error: (message) => errors.push(message),
     install: () => { installed = true; },
   });
@@ -178,4 +180,5 @@ test("packing requires login2 routes, generated assets and license without dev d
   }
   assert.throws(() => verifyPack(manifest, files.filter((file) => !file.endsWith("pi-password.mp3"))));
   assert.throws(() => verifyPack({ ...manifest, name: "@agegr/pi-web" }, files));
+  assert.throws(() => verifyPack({ ...manifest, name: "@tossp/tsgw-agent" }, files));
 });

@@ -1,7 +1,8 @@
 name: TSGW npm initialization
 
-# 一次性初始化例外：仅修改本文件并推送 tsgw 才会暂存已验收产物。
-# 不直接发布、不替代正常 tsgw-npm.yml 的 OIDC 认证；用完删除临时 Secret。
+# 一次性初始化例外：仅修改本文件并推送 tsgw 才会触发，不依赖默认分支。
+# 新构建验收后设置仓库变量 TSGW_NPM_BOOTSTRAP_RUN_ID，再 rerun 本运行。
+# 不直接发布、不替代正常 tsgw-npm.yml 的 OIDC 认证；用完删除临时 Secret 和变量。
 on:
   push:
     branches: [tsgw]
@@ -22,65 +23,152 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: npm
-    env:
-      VERSION: 0.1.0-dev.1.1.gf15409e3fe7d
     steps:
+      # Secret 只进步骤环境，不输出、不落盘；未配置时连 checkout/download 都不执行。
+      - name: Wait for the accepted build and temporary credential
+        id: configuration
+        env:
+          BOOTSTRAP_RUN_ID: ${{ vars.TSGW_NPM_BOOTSTRAP_RUN_ID }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_STAGE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BOOTSTRAP_RUN_ID" ] || [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo '::notice::Waiting for TSGW_NPM_BOOTSTRAP_RUN_ID and environment npm Secret NPM_STAGE_TOKEN; no artifact downloaded or package staged.'
+            echo 'Initialization is waiting for an accepted build and temporary credential. Configure them and rerun this workflow run.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
+        if: steps.configuration.outputs.ready == 'true'
         with:
           persist-credentials: false
+
       - uses: actions/setup-node@v7
+        if: steps.configuration.outputs.ready == 'true'
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Install npm with staged publishing support
-        run: npm install --global npm@11.21.1
-      - name: Download the previously tested artifact without rebuilding
-        uses: actions/download-artifact@v8
-        with:
-          name: tsgw-npm-0.1.0-dev.1.1.gf15409e3fe7d
-          run-id: 40170008119
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/tsgw-bootstrap
-      - name: Verify artifact identity and confirm this is still a new package
+
+      - name: Verify the accepted workflow run and source identity
+        id: accepted
+        if: steps.configuration.outputs.ready == 'true'
+        env:
+          BOOTSTRAP_RUN_ID: ${{ vars.TSGW_NPM_BOOTSTRAP_RUN_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/tsgw-bootstrap"
-          sha256sum -c SHA256SUMS
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { execFileSync } from "node:child_process";
+          const { BOOTSTRAP_RUN_ID, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_OUTPUT } = process.env;
+          assert.equal(GITHUB_REPOSITORY, "tossp/tsgw-agent");
+          assert.match(BOOTSTRAP_RUN_ID, /^[1-9][0-9]*$/, "Expected an accepted workflow run ID");
+          assert.match(GITHUB_SHA, /^[a-f0-9]{40}$/);
+          const api = (endpoint, ...options) => JSON.parse(execFileSync("gh", ["api", endpoint, ...options], { encoding: "utf8" }));
+          const endpoint = `repos/${GITHUB_REPOSITORY}/actions/runs/${BOOTSTRAP_RUN_ID}`;
+          const run = api(endpoint);
+          assert.equal(String(run.id), BOOTSTRAP_RUN_ID);
+          assert.equal(run.path, ".github/workflows/tsgw-npm.yml");
+          assert.equal(run.head_branch, "tsgw");
+          assert.equal(run.head_sha, GITHUB_SHA, "Accepted build must match this initialization commit");
+          assert.equal(run.event, "push");
+          for (const field of ["run_number", "run_attempt"]) {
+            assert.ok(Number.isSafeInteger(run[field]) && run[field] > 0, `Invalid ${field}`);
+          }
+          // 只要求本次 attempt 的 build 成功；publish 尚无 OIDC 时整 run 可因 ENEEDAUTH 失败。
+          const pages = api(`${endpoint}/attempts/${run.run_attempt}/jobs?per_page=100`, "--paginate", "--slurp");
+          const builds = pages.flatMap((page) => page.jobs).filter((job) => job.name === "Check, build, pack");
+          assert.equal(builds.length, 1, "Expected exactly one build job in the accepted attempt");
+          assert.equal(builds[0].head_sha, GITHUB_SHA);
+          assert.equal(builds[0].status, "completed");
+          assert.equal(builds[0].conclusion, "success", "Build, pack and smoke tests must pass before staging");
+          const source = JSON.parse(readFileSync("package.json", "utf8"));
+          assert.equal(source.name, "tsgw-agent");
+          assert.deepEqual(source.bin, { "tsgw-agent": "bin/pi-web.js" });
+          assert.equal(source.repository.url, "git+https://github.com/tossp/tsgw-agent.git");
+          assert.equal(source.publishConfig.access, "public");
+          assert.equal(source.publishConfig.registry, "https://registry.npmjs.org/");
+          assert.match(source.version, /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/, "Source version must be stable SemVer");
+          // 与 release/version.mjs 的预览版本公式一致；不构建、不改写源版本。
+          const version = `${source.version}-dev.${run.run_number}.${run.run_attempt}.g${GITHUB_SHA.slice(0, 12)}`;
+          appendFileSync(GITHUB_OUTPUT, `version=${version}\nartifact=tsgw-npm-${version}\n`);
+          NODE
+
+      - name: Download the accepted artifact without rebuilding
+        if: steps.configuration.outputs.ready == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.accepted.outputs.artifact }}
+          run-id: ${{ vars.TSGW_NPM_BOOTSTRAP_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/tsgw-bootstrap
+
+      - name: Verify artifact identity and confirm this is still a new package
+        if: steps.configuration.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.accepted.outputs.version }}
+        run: |
+          set -euo pipefail
           node --input-type=module <<'NODE'
           import assert from "node:assert/strict";
           import { readFileSync } from "node:fs";
           import { execFileSync } from "node:child_process";
+          const source = JSON.parse(readFileSync("package.json", "utf8"));
+          process.chdir(`${process.env.RUNNER_TEMP}/tsgw-bootstrap`);
           const metadata = JSON.parse(readFileSync("release.json", "utf8"));
           assert.equal(metadata.version, process.env.VERSION);
           assert.equal(metadata.tag, "next");
-          assert.equal(metadata.filename, `tossp-tsgw-agent-${process.env.VERSION}.tgz`);
+          assert.equal(metadata.filename, `tsgw-agent-${process.env.VERSION}.tgz`);
+          const checksum = readFileSync("SHA256SUMS", "utf8").trim();
+          assert.match(checksum, /^[a-f0-9]{64}  /);
+          assert.equal(checksum.slice(66), metadata.filename, "Checksum must cover exactly the accepted tarball");
+          execFileSync("sha256sum", ["-c", "SHA256SUMS"], { stdio: "inherit" });
           const manifest = JSON.parse(execFileSync("tar", ["-xzOf", metadata.filename, "package/package.json"], { encoding: "utf8" }));
-          assert.equal(manifest.name, "@tossp/tsgw-agent");
+          assert.equal(manifest.name, "tsgw-agent");
           assert.equal(manifest.version, process.env.VERSION);
-          assert.equal(manifest.repository.url, "git+https://github.com/tossp/tsgw-agent.git");
-          const response = await fetch("https://registry.npmjs.org/@tossp%2Ftsgw-agent", { signal: AbortSignal.timeout(15000) });
+          assert.deepEqual(manifest.bin, { "tsgw-agent": "bin/pi-web.js" });
+          for (const field of ["name", "bin", "repository", "publishConfig", "license", "engines"]) {
+            assert.deepEqual(manifest[field], source[field], `Artifact ${field} must match the committed source`);
+          }
+          const response = await fetch("https://registry.npmjs.org/tsgw-agent", { redirect: "error", signal: AbortSignal.timeout(15000) });
           assert.equal(response.status, 404, "Package exists or registry unavailable; stop initialization instead of repeating it");
           NODE
+
+      - name: Install npm with staged publishing support
+        if: steps.configuration.outputs.ready == 'true'
+        run: npm install --global npm@11.21.1
+
       - name: Stage once with the temporary credential (never direct publish)
+        if: steps.configuration.outputs.ready == 'true'
         env:
+          VERSION: ${{ steps.accepted.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_STAGE_TOKEN }}
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/tsgw-bootstrap.npmrc
+          NPM_CONFIG_FETCH_RETRIES: '0'
         run: |
           set -euo pipefail
           test -n "$NODE_AUTH_TOKEN"
+          umask 077
           trap 'rm -f "$NPM_CONFIG_USERCONFIG"' EXIT
           printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
           identity=$(npm whoami --registry=https://registry.npmjs.org/)
           test "$identity" = tossp
-          npm stage publish "$RUNNER_TEMP/tsgw-bootstrap/tossp-tsgw-agent-$VERSION.tgz" \
+          npm stage publish "$RUNNER_TEMP/tsgw-bootstrap/tsgw-agent-$VERSION.tgz" \
             --access public --tag next --registry=https://registry.npmjs.org/ --provenance
+
       - name: Record the operator handoff
+        if: steps.configuration.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.accepted.outputs.version }}
         run: |
           {
             echo '### Initialization staged; not yet approved'
-            echo '- Package: `@tossp/tsgw-agent`'
-            echo '- Version: `0.1.0-dev.1.1.gf15409e3fe7d`, requested dist-tag: `next`'
+            echo '- Package: `tsgw-agent`'
+            printf -- '- Version: `%s`, requested dist-tag: `next`\n' "$VERSION"
             echo '- No rebuild and no direct npm publish were performed.'
             echo '- Maintainer: review/approve the staged package and configure GitHub Actions trusted publishing on npmjs.com.'
-            echo '- The temporary NPM_STAGE_TOKEN can now be removed from GitHub and revoked on npm.'
+            echo '- Remove the temporary GitHub NPM_STAGE_TOKEN and TSGW_NPM_BOOTSTRAP_RUN_ID, then revoke the token on npm.'
           } >> "$GITHUB_STEP_SUMMARY"

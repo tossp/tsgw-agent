@@ -1,12 +1,12 @@
 # Pi Web
 
-> **TSGW fork** — independently maintained as `@tossp/tsgw-agent`.
-> Install stable: `npm install -g @tossp/tsgw-agent@latest`, then run `tsgw-agent`.
-> Preview channel: `npx @tossp/tsgw-agent@next`. Previews do not replace `latest`.
+> **TSGW fork** — independently maintained as `tsgw-agent`.
+> Install stable: `npm install -g tsgw-agent@latest`, then run `tsgw-agent`.
+> Preview channel: `npx tsgw-agent@next`. Previews do not replace `latest`.
 > Login variant: `/login2`; the original login and default redirect are unchanged.
 > See [TSGW releases](./docs/tsgw-release.md) for branch/tag publishing and upstream synchronization.
 > The upstream documentation below retains its original package and command names;
-> for this fork use `@tossp/tsgw-agent` and `tsgw-agent` instead.
+> for this fork use `tsgw-agent` as both the package and command name.
 
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 

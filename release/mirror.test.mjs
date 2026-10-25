@@ -38,7 +38,7 @@ for (const [name, mock, expected] of [
     const output = join(directory, "outputs");
     const stub = `import assert from "node:assert/strict";
       globalThis.fetch = async (url, options) => {
-        assert.equal(url, "https://registry-direct.npmmirror.com/-/package/@tossp/tsgw-agent/syncs");
+        assert.equal(url, "https://registry-direct.npmmirror.com/-/package/tsgw-agent/syncs");
         assert.equal(options.method, "PUT");
         assert.equal(options.headers.Authorization, undefined);
         assert.equal(options.body, "{}");
@@ -48,7 +48,7 @@ for (const [name, mock, expected] of [
       };\n`;
     const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
       input: stub + code, encoding: "utf8", timeout: 5_000,
-      env: { ...process.env, PKG_NAME: "@tossp/tsgw-agent", GITHUB_OUTPUT: output },
+      env: { ...process.env, PKG_NAME: "tsgw-agent", GITHUB_OUTPUT: output },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(output, "utf8"), `status=${expected}\n`);

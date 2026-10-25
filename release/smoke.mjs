@@ -53,9 +53,9 @@ try {
     "--registry", "https://registry.npmjs.org/", "--no-audit", "--no-fund"], {
     env, stdio: "inherit", timeout: 180000,
   });
-  const installed = join(prefix, process.platform === "win32" ? "node_modules" : "lib/node_modules", "@tossp/tsgw-agent");
+  const installed = join(prefix, process.platform === "win32" ? "node_modules" : "lib/node_modules", "tsgw-agent");
   const pkg = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
-  assert.equal(pkg.name, "@tossp/tsgw-agent");
+  assert.equal(pkg.name, "tsgw-agent");
   assert.equal(pkg.version, metadata.version);
   const cli = join(prefix, process.platform === "win32" ? "tsgw-agent.cmd" : "bin/tsgw-agent");
   assert.equal(execFileSync(cli, ["--version"], { env, encoding: "utf8" }).trim(), metadata.version);

@@ -1,5 +1,5 @@
 {
-  "name": "@tossp/tsgw-agent",
+  "name": "tsgw-agent",
   "version": "0.1.0",
   "description": "TSGW fork of Pi Web: a browser UI for the pi coding agent",
   "homepage": "https://github.com/tossp/tsgw-agent#readme",

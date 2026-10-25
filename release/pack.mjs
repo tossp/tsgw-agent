@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { getReleaseChannel, isReleaseVersion } from "../bin/tsgw-release.js";
 
 export function verifyPack(manifest, files) {
-  assert.equal(manifest.name, "@tossp/tsgw-agent");
+  assert.equal(manifest.name, "tsgw-agent");
   assert.ok(isReleaseVersion(manifest.version), "Invalid package version");
   assert.deepEqual(manifest.bin, { "tsgw-agent": "bin/pi-web.js" });
   assert.equal(manifest.repository.url, "git+https://github.com/tossp/tsgw-agent.git");
@@ -54,7 +54,7 @@ export function packRelease(destination, root = process.cwd()) {
   const metadata = verifyPack(manifest, preview.files);
   const packed = readPackResult(npm("pack", "--json", "--ignore-scripts", "--pack-destination", out));
   verifyPack(manifest, packed.files);
-  assert.equal(packed.filename, `tossp-tsgw-agent-${manifest.version}.tgz`);
+  assert.equal(packed.filename, `tsgw-agent-${manifest.version}.tgz`);
   const tarball = resolve(out, packed.filename);
   const digest = createHash("sha256").update(readFileSync(tarball)).digest("hex");
   writeFileSync(resolve(out, "SHA256SUMS"), `${digest}  ${packed.filename}\n`);

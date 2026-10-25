@@ -22,7 +22,7 @@ export function prepareVersion(root = process.cwd(), env = process.env) {
   assert.equal(env.GITHUB_REPOSITORY, "tossp/tsgw-agent", "Releases are restricted to the fork");
   const manifest = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
   const lock = JSON.parse(readFileSync(resolve(root, "package-lock.json"), "utf8"));
-  assert.equal(manifest.name, "@tossp/tsgw-agent");
+  assert.equal(manifest.name, "tsgw-agent");
   assert.equal(lock.name, manifest.name);
   assert.equal(lock.version, manifest.version);
   assert.equal(lock.packages[""].version, manifest.version);

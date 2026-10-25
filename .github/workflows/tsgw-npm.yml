@@ -138,7 +138,7 @@ jobs:
             echo ''
             echo '| field | value |'
             echo '| --- | --- |'
-            echo '| package | `@tossp/tsgw-agent` |'
+            echo '| package | `tsgw-agent` |'
             echo '| channel version | `${{ steps.version.outputs.version }}` |'
             echo '| dist-tag | `${{ steps.version.outputs.tag }}` |'
             echo '| ref | `${{ github.ref }}` |'
@@ -203,7 +203,7 @@ jobs:
           import { execFileSync } from "node:child_process";
           import { readFileSync } from "node:fs";
 
-          const EXPECTED_NAME = "@tossp/tsgw-agent";
+          const EXPECTED_NAME = "tsgw-agent";
           const { TARBALL, VERSION, DIST_TAG } = process.env;
           const fail = (message) => { console.error(`::error::${message}`); process.exit(1); };
 
@@ -221,7 +221,7 @@ jobs:
 
           console.log(`verified ${manifest.name}@${manifest.version} for dist-tag ${DIST_TAG}`);
           NODE
-          printf 'TARBALL=%s\nPKG_NAME=%s\nPKG_VERSION=%s\n' "$TARBALL" "@tossp/tsgw-agent" "$VERSION" >> "$GITHUB_ENV"
+          printf 'TARBALL=%s\nPKG_NAME=%s\nPKG_VERSION=%s\n' "$TARBALL" "tsgw-agent" "$VERSION" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -380,7 +380,7 @@ jobs:
             echo ''
             echo '| field | value |'
             echo '| --- | --- |'
-            echo '| package | `@tossp/tsgw-agent` |'
+            echo '| package | `tsgw-agent` |'
             echo '| version | `${{ needs.build.outputs.version }}` |'
             echo '| dist-tag | `${{ needs.build.outputs.tag }}` |'
             echo '| publish decision | `${{ steps.gate.outputs.should_publish }}` |'

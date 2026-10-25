@@ -24,9 +24,11 @@ test("web updates reject mismatched registry metadata without caching it", async
     return Response.json(body);
   });
   assert.equal((await GET()).status, 502);
-  body = { name: "@tossp/tsgw-agent", version: "0.1.0-dev.2.1.g0123456789ab" };
-  assert.equal((await GET()).status, 502);
   body = { name: "@tossp/tsgw-agent", version: "0.2.0" };
+  assert.equal((await GET()).status, 502);
+  body = { name: "tsgw-agent", version: "0.1.0-dev.2.1.g0123456789ab" };
+  assert.equal((await GET()).status, 502);
+  body = { name: "tsgw-agent", version: "0.2.0" };
   const accepted = await GET();
   assert.equal(accepted.status, 200);
   assert.deepEqual(await accepted.json(), {
@@ -34,5 +36,5 @@ test("web updates reject mismatched registry metadata without caching it", async
     releaseUrl: "https://github.com/tossp/tsgw-agent/tree/v0.2.0",
   });
   assert.equal((await GET()).status, 200);
-  assert.deepEqual(requests, Array(3).fill("/@tossp/tsgw-agent/latest"));
+  assert.deepEqual(requests, Array(4).fill("/tsgw-agent/latest"));
 });

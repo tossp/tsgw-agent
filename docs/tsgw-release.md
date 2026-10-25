@@ -3,10 +3,10 @@
 本仓库的 tsgw fork 用一条独立工作流发布 npm 包：`.github/workflows/tsgw-npm.yml`。
 它只服务 `tsgw` 开发发布分支，不读写默认分支，不依赖 `main`；已有的 `.github/workflows/ci.yml`、`demo-pages.yml` 和 `package.json` 的 `scripts.release` 保持上游原样。
 
-- 包：`@tossp/tsgw-agent`（身份持久化在源 `package.json`，CI 不替换）
+- 包：`tsgw-agent`（身份持久化在源 `package.json`，CI 不替换）
 - 预览版：push 到 `tsgw` → `next` dist-tag
 - 稳定版：push `vX.Y.Z` 标签 → `latest` dist-tag
-- 认证：npm 可信发布（OIDC），不保存 `NPM_TOKEN`
+- 认证：正式版和预览版统一由 GitHub Actions 使用 OIDC 可信发布；不依赖开发设备登录 npm，不执行本机首发，不配置 `NPM_TOKEN` / `NODE_AUTH_TOKEN` 回退
 - 更新检查：正式版留在 `latest`、预览版留在 `next`；只接受本包同通道元数据，查看链接分别指向 `vX.Y.Z` 标签源码和 `tsgw` 分支，不依赖额外创建 GitHub Release。
 
 ## 1. 触发与版本规则
@@ -55,14 +55,14 @@ if: >-
 `publish` job（`needs: build`，仅 `push` 事件，`environment: npm`，`contents: read` + `id-token: write`，20 min），固定并发组 `tsgw-npm-publish`、`cancel-in-progress: false`：
 
 1. checkout 触发该运行的提交（provenance 的 git 上下文），下载同一 artifact
-2. 校验 artifact：恰好一个 `.tgz`、`sha256sum -c SHA256SUMS`、tarball 内 `package.json` 的 `name` 必须是 `@tossp/tsgw-agent`、`version` 必须等于本次通道版本、`release.json` 的 `version`/`tag` 也要一致；dist-tag 只允许 `next`/`latest`，且必须与版本通道对应（预发布 → `next`，稳定 → `latest`）
+2. 校验 artifact：恰好一个 `.tgz`、`sha256sum -c SHA256SUMS`、tarball 内 `package.json` 的 `name` 必须是 `tsgw-agent`、`version` 必须等于本次通道版本、`release.json` 的 `version`/`tag` 也要一致；dist-tag 只允许 `next`/`latest`，且必须与版本通道对应（预发布 → `next`，稳定 → `latest`）
 3. 装 Node 24 与 `npm@11.21.1`（发布只需 `>=11.5.1`，见 §7）
 4. 分支推送额外确认 `origin/tsgw` 的 head 仍是本次 `GITHUB_SHA`；不是则记 notice 并跳过后续发布步骤（step output 控制，不是简单 return）
 5. 注册表预检：精确版本 URL 只有 **HTTP 404** 才放行；200 → 已发布，报错要求 bump 版本；其它状态码、网络错误、超时 → 一律拦下，避免盲目重发
 6. 稳定版另做 `latest` 不降级检查：读 `dist-tags.latest`，若已有稳定版更高，拒绝旧标签把 `latest` 拉回去（数字元组比较，`latest` 与待发版本都必须是严格稳定 SemVer）
 7. `npm publish <tgz> --access public --registry https://registry.npmjs.org --tag <next|latest> --provenance`
 8. 失败即失败，不自动重试；之后只读轮询 `npm view <pkg>@<version>` 约 2 分钟确认可解析，不可见时只告警
-9. 仅在 npm 发布成功且未被跳过时，向 npmmirror 的 `PUT /-/package/@tossp/tsgw-agent/syncs` 请求同步（30 秒超时，无 npm 凭据、不自动重试）。返回有效任务 ID 只代表已受理，不代表镜像已同步完成；失败只告警，不改变 npm 发布结果，更不能重新发布同一版本
+9. 仅在 npm 发布成功且未被跳过时，向 npmmirror 的 `PUT /-/package/tsgw-agent/syncs` 请求同步（30 秒超时，无 npm 凭据、不自动重试）。返回有效任务 ID 只代表已受理，不代表镜像已同步完成；失败只告警，不改变 npm 发布结果，更不能重新发布同一版本
 10. 写 publish step summary（含 job 状态与镜像请求状态 `requested` / `failed` / `not requested`）
 
 并发分两层：工作流级 `tsgw-npm-${{ github.ref }}` 让同 ref 排队（稳定版永不被取消）；publish job 级固定组 `tsgw-npm-publish` 让**不同** `v*` 标签也串行，避免两条标签并行改写 `latest`。预览通道的乱序由「head 即本次提交」+ 预检共同挡住。
@@ -71,35 +71,24 @@ if: >-
 
 ### 3.1 npm 侧
 
-首次操作前先现场核验（不要依赖本文档的快照）：
+本机无需 npm CLI 登录。以下公开状态检查可匿名执行：
 
 ```bash
-npm whoami                                   # 未登录时会提示先 npm login
-npm org ls tossp                             # 仅当 @tossp 是组织；个人 scope 则核对用户名
-npm view @tossp/tsgw-agent version           # 包目前是否存在
-git ls-remote --heads origin                 # origin 是否已有 tsgw
+npm view tsgw-agent version --registry=https://registry.npmjs.org/
+git ls-remote --heads origin tsgw
 ```
 
-首次准备时（2026-10-25）本机 npm 未登录，scope 权限尚未知，registry 返回 404，远程尚无 `tsgw`；实际首发前需重新核验。`@tossp` 可以是个人 scope 或组织 scope，不将组织查询失败直接等同于没有权限。
+维护者在 npm 网页确认账号对 `tsgw-agent` 的管理权限，并检查包是否已经存在；不要求在开发设备运行 `npm whoami`、登录账号或提供凭据。
 
-信任关系的建立顺序：npm 只能在**已存在的包**的设置页里配置可信发布，包不存在时没有这个页面。新包如何建立第一个可信发布连接，官方文档没有明文；下面的顺序是按平台结构推断的流程，第一次实操时确认。
+**新包初始化与 CI 发布授权是两个问题。** npm 的 `npm trust` 文档明确要求包已经存在；因此，包尚不存在时，不能把已有的 OIDC 工作流直接视为完成首发配置。本机登录既不能授权 GitHub runner，也不是解决此问题的前置步骤。
 
-1. 先把 `tsgw` 推送到 `tossp/tsgw-agent`，让工作流跑一次 `build`。`publish` 会因为还没有 OIDC 信任关系而失败，这是预期的；artifact 仍然可用。
-2. 从那次运行下载**已验收的产物**，不要用源目录重新打包：
+官方已支持通过 staged publishing 创建新包，但首次暂存会公开创建 `0.0.0-stage` 占位版本；使用 CI 暂存新包仍需要适当的认证，不能靠未建立的 OIDC 信任凭空获得权限。该方式不是本项目默认回退方案。若新包初始化需要占位版本、临时 token 或其它授权方式，必须先核实最小范围、说明副作用并取得用户单独同意，不自行执行。
 
-   ```bash
-   gh run download <run-id> -n tsgw-npm-<version> -D /tmp/tsgw-bootstrap
-   cd /tmp/tsgw-bootstrap && sha256sum -c SHA256SUMS
-   ```
+未完成包初始化及可信发布配置时，保留已验收的 CI artifact 并报告阻塞；不回退本机发布、不复制本机凭据、不自动添加 secret，也不为认证错误反复重跑发布。
 
-3. 用有 2FA 的账号 `npm login`，在**明确授权**后把该 artifact 以 `next` 通道首发（源目录、手工改版本都不参与）：
+包已存在且维护者具备管理权限后，按以下步骤配置：
 
-   ```bash
-   npm publish /tmp/tsgw-bootstrap/tossp-tsgw-agent-<version>.tgz --access public --tag next
-   ```
-
-这一步只建立包、只写 `next`，不会产生 `latest`；版本号是 CI 派生的预览版本，后续预览仍按序增长。
-4. 在 npmjs.com → Packages → `@tossp/tsgw-agent` → Settings → Trusted Publisher 添加 GitHub Actions，字段必须精确：
+1. 在 npmjs.com → Packages → `tsgw-agent` → Settings → Trusted Publisher 添加 GitHub Actions，字段必须精确：
 
    - Organization or user：`tossp`
    - Repository：`tsgw-agent`
@@ -107,9 +96,9 @@ git ls-remote --heads origin                 # origin 是否已有 tsgw
    - Environment name：`npm`
    - Allowed actions：勾选 **Allow npm publish** 即可。`npm publish --tag next` 属于 publish 自身，本工作流从不调用 `npm dist-tag`，因此不需要、也不要为此扩大 dist-tag 权限；2026-09-03 之后新建的配置默认只有 `npm stage publish`，不勾 `npm publish` 会在发布时因权限不足失败。
 
-5. 新建的可信发布配置必须在 **2 天内**完成第一次成功发布，否则配置过期且不可编辑，只能删掉重建。所以先把 workflow 与本文件推好，再创建配置并立刻推一次 `tsgw` 验证。
-6. `package.json` 的 `repository.url` 必须精确指向本仓库（`git+https://github.com/tossp/tsgw-agent.git`），npm 用它在 OIDC 发布时校验来源。
-7. 可信发布跑通后，建议把 Publishing access 设为 “Require two-factor authentication and disallow tokens”；可信发布用的是 OIDC，不受该开关影响。
+2. 新建的可信发布配置必须在 **2 天内**完成第一次成功发布，否则配置过期且不可编辑，只能删掉重建。应先备好工作流和产物，再创建配置，并在发布授权范围内安排验证。
+3. `package.json` 的 `repository.url` 必须精确指向本仓库（`git+https://github.com/tossp/tsgw-agent.git`），npm 用它在 OIDC 发布时校验来源。
+4. 可信发布跑通后，建议把 Publishing access 设为 “Require two-factor authentication and disallow tokens”；可信发布用的是 OIDC，不受该开关影响。
 
 ### 3.2 GitHub 侧
 
@@ -118,6 +107,14 @@ git ls-remote --heads origin                 # origin 是否已有 tsgw
   - 可选：加 required reviewers 作为人工闸门；不需要、也不要配置任何 secret。
 - 建议为 `v*` 开 tag protection rules（或 ruleset），只让发布者创建正式 tag。
 - 不需要 `NPM_TOKEN` / `NODE_AUTH_TOKEN`。工作流不给 `setup-node` 传 `registry-url`，因此不会生成带 token 的 `.npmrc`；npm CLI 检测到 OIDC 环境后自动换取短期发布凭据。
+
+### 3.3 经单独授权的一次性 CI 暂存初始化
+
+独立入口为 `.github/workflows/tsgw-npm-bootstrap.yml`。先用新包名完成常规 CI 的检查、构建、打包和安装冒烟，再把对应运行 ID 保存为仓库变量 `TSGW_NPM_BOOTSTRAP_RUN_ID`，临时凭据只保存在 GitHub 的 `npm` 环境 Secret `NPM_STAGE_TOKEN`。
+
+缺少运行 ID 或临时凭据时，初始化入口仅提示等待，不下载或暂存产物。配置就绪后重跑同一提交的初始化运行；它核验常规 CI 的工作流、分支、提交和构建验收结果，下载该次产物并校验摘要、包身份及版本，只执行一次 `npm stage publish --tag next`，不本机发布、不重建产物、不修改旧包。
+
+暂存成功后立即删除临时 Secret 和运行 ID 变量，并通知维护者在 npm 网页吊销 Token。维护者随后审批暂存版本并配置常规工作流的 OIDC 信任；正常正式版／预览版流程不读取临时 Token。删除 GitHub Secret 不等于吊销 npm Token。
 
 ## 4. 日常流程
 
@@ -131,7 +128,7 @@ npm run lint && npx tsc --noEmit && npm test   # 本地检查，不 build
 git push origin tsgw          # 触发预览发布，dist-tag next
 ```
 
-安装预览版：`npm install -g @tossp/tsgw-agent@next`。
+安装预览版：`npm install -g tsgw-agent@next`。
 
 稳定版：
 
@@ -150,8 +147,8 @@ git push origin v0.1.0                                      # 按名推送，禁
 发布后只读确认：
 
 ```bash
-npm view @tossp/tsgw-agent dist-tags --registry https://registry.npmjs.org
-npm view @tossp/tsgw-agent versions --json --registry https://registry.npmjs.org | tail -c 400
+npm view tsgw-agent dist-tags --registry https://registry.npmjs.org
+npm view tsgw-agent versions --json --registry https://registry.npmjs.org | tail -c 400
 gh run list --workflow tsgw-npm.yml --limit 5
 ```
 
@@ -160,7 +157,7 @@ gh run list --workflow tsgw-npm.yml --limit 5
 - **预检说“latest 是 X，比待发版本新”**：说明标签是旧的，工作流拒绝把 `latest` 降级。按顺序补发更高的版本。
 - **E404 / `dist-tags` 还是旧值**：新版本要几分钟才可见，这是传播延迟，不是发布失败，不是重发依据。
 - **`npm publish` 失败但日志显示已上传**：先按上面命令确认版本；确认存在后再考虑 bump 版本，不要直接重跑。
-- **`ENEEDAUTH` / “Unable to authenticate”**：可信发布字段不一致。逐字核对组织、仓库、工作流文件名（含 `.yml`）、environment 名 `npm`，确认用的是 GitHub 托管 runner（自托管 runner 不支持可信发布），并确认 job 有 `id-token: write`。
+- **`ENEEDAUTH` / “Unable to authenticate”**：先确认包已存在、可信发布关系已创建且未过期，再逐字核对组织、仓库、工作流文件名（含 `.yml`）、environment 名 `npm` 和 Allow npm publish；确认是 GitHub 托管 runner，且 job 有 `id-token: write`。该错误不是要求开发设备登录 npm 的依据。
 - **预览版被跳过**：日志里出现 “origin/tsgw moved to …”，说明该次运行的提交已不是分支 head，更新的运行会发布 `next`。
 - **源测试本来就失败**：工作流不跳过、不放行，保持失败。先在本机 `npm test` 复现并修好，再推分支。
 - **`.next/server/route-cache` 报错**：本地用 `npm run test:e2e`（`start` 模式）跑过后 `.next` 被污染，换干净 checkout 或让 CI 构建。
@@ -215,14 +212,16 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 | 命令 | 输入 | 约定输出 |
 | --- | --- | --- |
 | `node release/version.mjs` | `GITHUB_REPOSITORY`、`GITHUB_REF`、`GITHUB_SHA`、`GITHUB_RUN_NUMBER`、`GITHUB_RUN_ATTEMPT`、`GITHUB_OUTPUT`、本地 git（`refs/remotes/origin/tsgw`） | stdout 打印 JSON `{ "version": "…", "tag": "next"|"latest" }`；设置了 `GITHUB_OUTPUT` 时写入 `version` 与 `tag`；只改写本次 checkout 的 `package.json` / `package-lock.json` 的版本字段；断言仓库、`HEAD`、包名与 lock 元信息 |
-| `node release/pack.mjs <outDir>` | 已构建的工作目录 | 在空目录里产出恰好一个 `tossp-tsgw-agent-<version>.tgz`、`sha256sum -c` 兼容的 `SHA256SUMS`，以及含 `version`/`tag`/`filename`/`files` 的 `release.json`；拒绝 dev 锁与污染的 `.next` |
+| `node release/pack.mjs <outDir>` | 已构建的工作目录 | 在空目录里产出恰好一个 `tsgw-agent-<version>.tgz`、`sha256sum -c` 兼容的 `SHA256SUMS`，以及含 `version`/`tag`/`filename`/`files` 的 `release.json`；拒绝 dev 锁与污染的 `.next` |
 | `node release/smoke.mjs <outDir>` | 同上 | 从 tgz 装到临时 prefix，用 Playwright Chromium 验收登录页与终端；需要 CI 预装 Chromium |
 
 发布 job 不重新构建，只发布 artifact 里的 tgz；冒烟也从同一 tgz 全新安装，所以最终发布的字节就是验收过的字节。
 
-## 9. 首次实操要确认的事
+## 9. 包名调整与首次初始化（2026-10-25）
 
-- `@tossp` 个人／组织 scope 的发布权限与 npm 登录状态；
-- registry 上包是否真的不存在（404）；
-- 新包首个可信发布连接的建立方式（本文档按平台结构推断，官方无明文）；
-- `origin/tsgw` 尚未建立，首次推送前确认分支名与上游遗留 `v*` 标签的范围（记得只按名推 tag）。
+- 当前包身份调整为不带 scope 的 `tsgw-agent`，启动命令仍为 `tsgw-agent`；正式版 `latest` 与预览版 `next` 均以本包为目标。
+- 旧的 `@tossp/tsgw-agent` 曾由 CI `40175947678` 暂存，npm 页面显示 `0.0.0-stage` 占位版本。旧 Token 已由维护者撤销；旧包及待审批版本不自动删除、审批或复用。
+- 改名后必须重新构建并验收 `tsgw-agent` 安装包，旧 scoped 包的已验收产物不可作为新包发布。初始化及 OIDC 的完成状态以实际 Actions 和 npm 页面为准。
+- GitHub 的 `npm` 环境仅允许 `tsgw` 分支和 `v*` 标签；开发设备不登录 npm、不手动首发，不为正常发布添加 Token 回退。
+
+新包初始化依据：npm 官方 `npm trust` 的 Prerequisites，以及 `staged-publishing` 的新包占位版本说明。
