@@ -125,7 +125,9 @@ try {
   piRecord("Three-row identity card, fixed number 9527, level 3 and live clock; wrong password/429 unchanged");
 
   let piPosts = 0;
+  let piGets = 0;
   await piPage.route("**/api/web-auth", async (piRoute) => {
+    if (piRoute.request().method() === "GET") piGets++;
     if (piRoute.request().method() === "POST") {
       piPosts++;
       assert.deepEqual(Object.keys(piRoute.request().postDataJSON()), ["password"]);
@@ -165,9 +167,67 @@ try {
   await piDelay(2250);
   await piPage.screenshot({ path: join(piArtifacts, "welcome-after-flash.png") });
   await piPage.waitForURL(`${piBase}/?pi-login2-e2e=desktop`, { timeout: 60000 });
+  piRecord("Single in-flight login, real HttpOnly cookie, success sequence and safe next destination");
   await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=existing")}`);
+  for (const piPhase of ["intro", "wash", "permission", "password"]) {
+    await piPage.locator(`[data-pi-phase="${piPhase}"]`).waitFor();
+    assert.equal(new URL(piPage.url()).pathname, "/login2");
+  }
+  assert.equal(await piPage.locator("#pi-access-password").count(), 0);
+  const piExistingFallback = piPage.getByRole("link", { name: "跳过动画 · 普通登录 ↗", exact: true });
+  assert.equal(new URL(await piExistingFallback.getAttribute("href"), piBase).pathname, "/login");
+  assert.equal(await piPage.locator("[data-pi-existing-session]").textContent(), "••••••••");
+  assert.equal(await piPage.locator("[data-pi-identity-row]").first().locator("span").textContent(), "身份令牌");
+  await piPage.screenshot({ path: join(piArtifacts, "existing-session-desktop.png") });
+  assert.equal(await piPage.locator("audio").getAttribute("src"), null, "Existing sessions must not hear a request for a password");
+  await checkPiPasswordControls(piPage);
+  await piPage.setViewportSize({ width: 1440, height: 1000 });
+  await piPage.emulateMedia({ reducedMotion: "reduce" });
+  await piDelay(200);
+  assert.equal(new URL(piPage.url()).pathname, "/login2", "Motion preference changes must not bypass click-to-enter");
+  await piPage.emulateMedia({ reducedMotion: "no-preference" });
+  await piDelay(1000);
+  assert.equal(await piPage.locator('[data-pi-phase="password"]').count(), 1, "Existing sessions wait for an explicit click");
+  const piGetsBeforeEnter = piGets;
+  await piPage.getByRole("button", { name: "点击进入", exact: true }).click();
+  await piPage.locator('[data-pi-phase="request"]').waitFor();
+  assert.equal(piGets, piGetsBeforeEnter + 1, "Existing-session entry checks the cookie with GET only");
+  assert.equal(piPosts, 1, "The token mask must never be submitted as a password");
+  for (const piPhase of ["request", "read", "verified", "welcome", "handoff"]) {
+    await piPage.locator(`[data-pi-phase="${piPhase}"]`).waitFor();
+    assert.equal(new URL(piPage.url()).pathname, "/login2", `${piPhase} must finish before navigating`);
+    assert.equal(new URL(await piPage.getByRole("link", { name: "直接进入 Pi Web ↗", exact: true }).getAttribute("href"), piBase).href, `${piBase}/?pi-login2-e2e=existing`);
+  }
   await piPage.waitForURL(`${piBase}/?pi-login2-e2e=existing`);
-  piRecord("Single in-flight login, real HttpOnly cookie, success sequence, next and existing-session shortcut");
+  assert.equal(piPosts, 1, "Click-to-enter must not submit the password again");
+  await piPage.emulateMedia({ reducedMotion: "reduce" });
+  await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=reduced-existing")}`);
+  await piPage.getByRole("button", { name: "点击进入", exact: true }).waitFor();
+  await piDelay(500);
+  assert.equal(new URL(piPage.url()).pathname, "/login2");
+  await piPage.getByRole("button", { name: "点击进入", exact: true }).click();
+  await piPage.waitForURL(`${piBase}/?pi-login2-e2e=reduced-existing`);
+  assert.equal(piPosts, 1);
+  piRecord("Existing sessions wait for click-to-enter, replay the complete success animation and never resubmit a password");
+  await piPage.goto(`${piBase}/login2`);
+  await piPage.locator("[data-pi-existing-session]").waitFor();
+  assert.equal((await piContext.request.delete(`${piBase}/api/web-auth`)).status(), 200);
+  await piPage.getByRole("button", { name: "点击进入", exact: true }).click();
+  await piPage.locator("#pi-access-password").waitFor();
+  assert.equal(await piPage.locator("[data-pi-existing-session]").count(), 0);
+  assert.equal(piPosts, 1);
+  assert.equal(await piPage.locator('[data-pi-phase="password"]').count(), 1);
+  assert.equal(await piPage.locator("#pi-access-password").inputValue(), "");
+  assert.equal(await piPage.locator("#pi-access-error").textContent(), "登录会话已失效，请重新填写身份令牌。");
+  assert.equal(await piPage.locator('form button[type="submit"]').isDisabled(), true);
+  await piPage.screenshot({ path: join(piArtifacts, "expired-session-password.png") });
+  await piPage.locator("#pi-access-password").fill(piPassword);
+  await piPage.locator("#pi-access-password").press("Enter");
+  await piPage.waitForURL(`${piBase}/`);
+  assert.equal(piPosts, 2, "A fresh password is posted only after the user reenters it");
+  assert.deepEqual(await (await piContext.request.get(`${piBase}/api/web-auth`)).json(), { enabled: true, authenticated: true });
+  await piPage.emulateMedia({ reducedMotion: "no-preference" });
+  piRecord("Expired sessions clear the mask, request a fresh token and successfully log in again on the same page");
   assert.equal((await piContext.request.delete(`${piBase}/api/web-auth`)).status(), 200);
   await piPage.goto(`${piBase}/`);
   assert.equal(new URL(piPage.url()).pathname, "/login2");
