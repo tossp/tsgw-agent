@@ -12,54 +12,69 @@ export function PiAccessAudio({ piPhase, piEnableLabel, piMuteLabel }: {
   piPhase: PiAccessPhase; piEnableLabel: string; piMuteLabel: string;
 }) {
   const piAudioRef = useRef<HTMLAudioElement>(null);
-  const [piEnabled, setPiEnabled] = useState(false);
+  const piEnabledRef = useRef(true);
+  const piResumeRef = useRef<(() => void) | null>(null);
+  const [piEnabled, setPiEnabled] = useState(true);
   const piVoice = piVoiceFiles[piPhase];
   const piSource = piVoice ? `/login2/assets/pi-${piVoice}.mp3` : undefined;
 
   useEffect(() => {
     const piAudio = piAudioRef.current;
-    if (!piAudio || !piEnabled || !piSource) return;
-    // Playback failure is purely presentational; authentication never waits on it.
+    if (!piAudio || !piSource) return;
     let piActive = true;
-    void piAudio.play().catch(() => { if (piActive) setPiEnabled(false); });
-    return () => { piActive = false; piAudio.pause(); };
-  }, [piEnabled, piSource]);
-
-  useEffect(() => {
-    const piAudio = piAudioRef.current;
-    const piPauseHidden = () => {
-      if (document.hidden) {
-        piAudio?.pause();
-        setPiEnabled(false);
-      }
+    let piPending = false;
+    const piPlay = () => {
+      if (!piActive || !piEnabledRef.current || document.hidden || piPending
+        || piAudio.error || piAudio.ended || !piAudio.paused) return;
+      piPending = true;
+      // Call directly inside interaction handlers so the browser can grant playback.
+      // A rejected autoplay attempt must not turn off subsequent interaction retries.
+      void piAudio.play().then(() => {
+        if (piActive && (!piEnabledRef.current || document.hidden)) piAudio.pause();
+      }).catch(() => {}).finally(() => { piPending = false; });
     };
-    document.addEventListener("visibilitychange", piPauseHidden);
-    return () => { document.removeEventListener("visibilitychange", piPauseHidden); piAudio?.pause(); };
-  }, []);
+    const piInteraction = (piEvent: Event) => {
+      // The dedicated control handles its own gesture, including an explicit mute.
+      if (piEvent.target instanceof Element && piEvent.target.closest("[data-pi-audio-control]")) return;
+      piPlay();
+    };
+    const piVisibilityChange = () => {
+      if (document.hidden) piAudio.pause();
+      else piPlay();
+    };
+    const piEvents = ["click", "pointerup", "touchend", "keydown"] as const;
+    piResumeRef.current = piPlay;
+    for (const piEvent of piEvents) document.addEventListener(piEvent, piInteraction, true);
+    document.addEventListener("visibilitychange", piVisibilityChange);
+    piPlay();
+    return () => {
+      piActive = false;
+      piResumeRef.current = null;
+      for (const piEvent of piEvents) document.removeEventListener(piEvent, piInteraction, true);
+      document.removeEventListener("visibilitychange", piVisibilityChange);
+      piAudio.pause();
+    };
+  }, [piSource]);
 
   const piToggleAudio = () => {
+    const piNextEnabled = !piEnabledRef.current;
+    piEnabledRef.current = piNextEnabled;
+    setPiEnabled(piNextEnabled);
+    if (piNextEnabled) piResumeRef.current?.();
+    else piAudioRef.current?.pause();
+  };
+
+  const piUpdateMeter = () => {
     const piAudio = piAudioRef.current;
-    if (!piAudio) return;
-    if (piEnabled) {
-      piAudio.pause();
-      setPiEnabled(false);
-    } else if (piSource) {
-      // Call synchronously from the gesture, rather than relying on autoplay.
-      void piAudio.play().then(() => {
-        if (!piAudio.isConnected || document.hidden) {
-          piAudio.pause();
-          return;
-        }
-        setPiEnabled(true);
-      }).catch(() => setPiEnabled(false));
-    }
+    piAudio?.closest("[data-pi-phase]")?.setAttribute("data-pi-speaking", piAudio.paused || piAudio.ended ? "0" : "1");
   };
 
   return (
     <>
       {/* These are decorative Mandarin cues; all information remains in visible text. */}
-      <audio ref={piAudioRef} src={piSource} preload="none" onError={() => setPiEnabled(false)} />
-      <button type="button" onClick={piToggleAudio} aria-pressed={piEnabled} disabled={!piSource}>
+      <audio ref={piAudioRef} src={piSource} preload="none"
+        onPlay={piUpdateMeter} onPause={piUpdateMeter} onEnded={piUpdateMeter} onError={piUpdateMeter} />
+      <button type="button" data-pi-audio-control onClick={piToggleAudio} aria-pressed={piEnabled} disabled={!piSource}>
         {piEnabled ? piMuteLabel : piEnableLabel}
       </button>
     </>
