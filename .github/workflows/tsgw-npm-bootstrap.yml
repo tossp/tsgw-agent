@@ -1,0 +1,86 @@
+name: TSGW npm initialization
+
+# 一次性初始化例外：仅修改本文件并推送 tsgw 才会暂存已验收产物。
+# 不直接发布、不替代正常 tsgw-npm.yml 的 OIDC 认证；用完删除临时 Secret。
+on:
+  push:
+    branches: [tsgw]
+    paths: [.github/workflows/tsgw-npm-bootstrap.yml]
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: tsgw-npm-initialization
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    if: github.repository == 'tossp/tsgw-agent' && github.ref == 'refs/heads/tsgw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    env:
+      VERSION: 0.1.0-dev.1.1.gf15409e3fe7d
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install npm with staged publishing support
+        run: npm install --global npm@11.21.1
+      - name: Download the previously tested artifact without rebuilding
+        uses: actions/download-artifact@v8
+        with:
+          name: tsgw-npm-0.1.0-dev.1.1.gf15409e3fe7d
+          run-id: 40170008119
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/tsgw-bootstrap
+      - name: Verify artifact identity and confirm this is still a new package
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/tsgw-bootstrap"
+          sha256sum -c SHA256SUMS
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { execFileSync } from "node:child_process";
+          const metadata = JSON.parse(readFileSync("release.json", "utf8"));
+          assert.equal(metadata.version, process.env.VERSION);
+          assert.equal(metadata.tag, "next");
+          assert.equal(metadata.filename, `tossp-tsgw-agent-${process.env.VERSION}.tgz`);
+          const manifest = JSON.parse(execFileSync("tar", ["-xzOf", metadata.filename, "package/package.json"], { encoding: "utf8" }));
+          assert.equal(manifest.name, "@tossp/tsgw-agent");
+          assert.equal(manifest.version, process.env.VERSION);
+          assert.equal(manifest.repository.url, "git+https://github.com/tossp/tsgw-agent.git");
+          const response = await fetch("https://registry.npmjs.org/@tossp%2Ftsgw-agent", { signal: AbortSignal.timeout(15000) });
+          assert.equal(response.status, 404, "Package exists or registry unavailable; stop initialization instead of repeating it");
+          NODE
+      - name: Stage once with the temporary credential (never direct publish)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_STAGE_TOKEN }}
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/tsgw-bootstrap.npmrc
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          trap 'rm -f "$NPM_CONFIG_USERCONFIG"' EXIT
+          printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
+          identity=$(npm whoami --registry=https://registry.npmjs.org/)
+          test "$identity" = tossp
+          npm stage publish "$RUNNER_TEMP/tsgw-bootstrap/tossp-tsgw-agent-$VERSION.tgz" \
+            --access public --tag next --registry=https://registry.npmjs.org/ --provenance
+      - name: Record the operator handoff
+        run: |
+          {
+            echo '### Initialization staged; not yet approved'
+            echo '- Package: `@tossp/tsgw-agent`'
+            echo '- Version: `0.1.0-dev.1.1.gf15409e3fe7d`, requested dist-tag: `next`'
+            echo '- No rebuild and no direct npm publish were performed.'
+            echo '- Maintainer: review/approve the staged package and configure GitHub Actions trusted publishing on npmjs.com.'
+            echo '- The temporary NPM_STAGE_TOKEN can now be removed from GitHub and revoked on npm.'
+          } >> "$GITHUB_STEP_SUMMARY"
