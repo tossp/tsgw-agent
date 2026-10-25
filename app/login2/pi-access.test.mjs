@@ -58,6 +58,21 @@ test("Pi auth state supports an existing session and disabled passwords", async 
   assert.equal(await readPiAccessAuth(piSignal()), false);
 });
 
+test("Pi login reads display-only source IP without an extra request or changing auth", async (piContext) => {
+  const piRequests = mockPiFetch(piContext, piResponse({ enabled: true, authenticated: false }, 200, { "X-Pi-Source-IP": "203.0.113.42" }));
+  let piIp = "";
+  assert.equal(await readPiAccessAuth(piSignal(), (piValue) => { piIp = piValue; }), false);
+  assert.equal(piIp, "203.0.113.42");
+  assert.equal(piRequests.length, 1);
+});
+
+test("Pi login still works when display-only IP metadata is unavailable", async (piContext) => {
+  mockPiFetch(piContext, piResponse({ enabled: true, authenticated: false }));
+  let piIp = "previous value";
+  assert.equal(await readPiAccessAuth(piSignal(), (piValue) => { piIp = piValue; }), false);
+  assert.equal(piIp, "");
+});
+
 test("Pi visual copy covers every phase in each supported locale", () => {
   for (const piLocale of ["en", "zh-CN", "zh-TW"]) {
     for (const piPhase of ["checking", "intro", "wash", "permission", "password", "request", "read", "verified", "welcome", "handoff"]) {
@@ -65,6 +80,25 @@ test("Pi visual copy covers every phase in each supported locale", () => {
       for (const piValue of Object.values(piCopy)) assert.ok(typeof piValue === "string" && piValue.length > 0);
     }
   }
+});
+
+test("Pi identity card keeps the original three fields and uses the existing password credential", () => {
+  const piCopy = getPiAccessCopy("zh-CN", "password");
+  assert.equal(piCopy.identityToken, "身份令牌");
+  assert.equal(piCopy.identityNumber, "身份编号");
+  assert.equal(piCopy.accessLevel, "权限等级");
+  const piPage = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+  assert.match(piPage, /const PI_ACCESS_IDENTITY_ID = "9527"/);
+  assert.doesNotMatch(piPage, /getRandomValues|Math\.random/);
+  assert.match(piPage, /type="password"/);
+  assert.match(piPage, /data-pi-identity-row><span>\{piCopy.accessLevel\}<\/span><b>3<\/b>/);
+});
+
+test("Pi login links to the project fork without granting the new tab an opener", () => {
+  const piScene = readFileSync(new URL("./PiAccessScene.tsx", import.meta.url), "utf8");
+  assert.match(piScene, /href="https:\/\/github\.com\/tossp\/tsgw-agent"/);
+  assert.match(piScene, /target="_blank"/);
+  assert.match(piScene, /rel="noopener noreferrer"/);
 });
 
 test("Pi login is a React route without legacy runtime or embedded scripts", () => {

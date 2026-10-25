@@ -8,6 +8,8 @@ import { dirname, join } from "node:path";
 import { setTimeout as piDelay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { runPiAccessAudioChecks } from "./login2-audio.mjs";
+import { checkPiIdentityCard, checkPiPasswordControls, checkPiReferenceRead, checkPiReferenceScan, runPiTranslatedLayoutChecks } from "./login2-layout.mjs";
 
 const piRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const piArtifacts = join(piRoot, "test-results/login2");
@@ -34,6 +36,21 @@ let piPage;
 const piErrors = [];
 const piRecord = (piLabel) => console.log(`✓ ${piLabel}`);
 
+async function piCheckProjectLink(piView) {
+  const piLink = piView.getByRole("link", { name: "GitHub · tossp/tsgw-agent" });
+  assert.equal(await piLink.getAttribute("href"), "https://github.com/tossp/tsgw-agent");
+  assert.equal(await piLink.getAttribute("target"), "_blank");
+  assert.equal(await piLink.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(await piLink.isVisible(), true);
+  const piAccessible = await piLink.evaluate((piElement) => {
+    const piBounds = piElement.getBoundingClientRect();
+    const piHit = document.elementFromPoint(piBounds.x + piBounds.width / 2, piBounds.y + piBounds.height / 2);
+    return piBounds.x >= 0 && piBounds.right <= innerWidth && piBounds.y >= 0 && piBounds.bottom <= innerHeight
+      && (piHit === piElement || piElement.contains(piHit));
+  });
+  assert.equal(piAccessible, true, "Project link must remain on-screen and unobstructed");
+}
+
 async function piOpen(piOptions = {}) {
   const piContext = await piBrowser.newContext({ locale: "zh-CN", ...piOptions });
   const piNewPage = await piContext.newPage();
@@ -51,26 +68,47 @@ try {
     assert.ok(Date.now() < piDeadline, "Dev readiness timed out");
     await piDelay(300);
   }
+  const piIpStatus = await fetch(`${piBase}/api/web-auth`);
+  assert.equal(piIpStatus.headers.get("X-Pi-Source-IP"), "127.0.0.1", "No forwarded header must use the real connection address");
+  assert.deepEqual(await piIpStatus.json(), { enabled: true, authenticated: false });
+  for (const piHeaders of [
+    { "X-Real-IP": "203.0.113.42", "X-Forwarded-For": "203.0.113.43, 10.0.0.1" },
+    { "X-Forwarded-For": "203.0.113.42, 10.0.0.1" },
+  ]) {
+    const piForwardedStatus = await fetch(`${piBase}/api/web-auth`, { headers: piHeaders });
+    assert.equal(piForwardedStatus.headers.get("X-Pi-Source-IP"), "203.0.113.42");
+    assert.deepEqual(await piForwardedStatus.json(), { enabled: true, authenticated: false });
+  }
+  piRecord("Display-only IP: HTTP headers first, real socket fallback, authentication response unchanged");
   assert.equal((await fetch(`${piBase}/api/sessions`)).status, 401);
   const piRootResponse = await fetch(piBase, { redirect: "manual" });
-  assert.equal(new URL(piRootResponse.headers.get("location"), piBase).pathname, "/login");
-  piRecord("Original unauthenticated redirect and API protection unchanged");
+  assert.equal(new URL(piRootResponse.headers.get("location"), piBase).pathname, "/login2");
+  piRecord("Default unauthenticated redirect uses login2; API protection unchanged");
 
   piBrowser = await chromium.launch({ headless: true });
+  await runPiAccessAudioChecks(piBrowser, piBase);
   const { piContext, piNewPage } = await piOpen({ viewport: { width: 1440, height: 1000 } });
   piPage = piNewPage;
   await piPage.goto(`${piBase}/login`);
   await piPage.locator("#web-login-password").waitFor();
-  await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=desktop")}`);
+  await piPage.goto(`${piBase}/?pi-login2-e2e=desktop`);
+  assert.equal(new URL(piPage.url()).pathname, "/login2");
+  assert.equal(new URL(piPage.url()).searchParams.get("next"), "/?pi-login2-e2e=desktop");
   await piPage.locator('[data-pi-phase="intro"]').waitFor();
+  await piCheckProjectLink(piPage);
   await piPage.screenshot({ path: join(piArtifacts, "intro.png") });
   await piPage.locator("#pi-access-password").waitFor();
+  const piIdentityId = await checkPiIdentityCard(piPage);
   assert.equal(await piPage.locator("iframe").count(), 0);
+  await piCheckProjectLink(piPage);
   await piPage.screenshot({ path: join(piArtifacts, "password-desktop.png") });
   await piDelay(1000);
   assert.equal(await piPage.locator('[data-pi-phase="password"]').count(), 1);
   assert.ok((await piPage.locator('a[href^="/login?"]').getAttribute("href")).includes("pi-login2-e2e"));
   piRecord("React opening/wash/password sequence; password phase never advances itself");
+  await piPage.locator("#pi-access-password").click();
+  await piPage.waitForFunction(() => !document.querySelector("audio").paused);
+  piRecord("Real generated audio starts after a normal password-field click");
 
   await piPage.locator("#pi-access-password").fill("wrong");
   await piPage.locator("#pi-access-password").press("Enter");
@@ -83,11 +121,16 @@ try {
   await piPage.locator("#pi-access-password").press("Space");
   await piPage.locator("#pi-access-password").pressSequentially("login2 fixture");
   assert.equal(await piPage.locator("#pi-access-password").inputValue(), piPassword);
-  piRecord("Wrong password, real 429 throttle, Enter submit and spaces in passwords");
+  assert.equal(await piPage.locator("[data-pi-identity-number]").textContent(), piIdentityId);
+  piRecord("Three-row identity card, fixed number 9527, level 3 and live clock; wrong password/429 unchanged");
 
   let piPosts = 0;
   await piPage.route("**/api/web-auth", async (piRoute) => {
-    if (piRoute.request().method() === "POST") { piPosts++; await piDelay(500); }
+    if (piRoute.request().method() === "POST") {
+      piPosts++;
+      assert.deepEqual(Object.keys(piRoute.request().postDataJSON()), ["password"]);
+      await piDelay(500);
+    }
     await piRoute.continue();
   });
   await piPage.locator("form").evaluate((piForm) => {
@@ -101,20 +144,45 @@ try {
   const piCookie = (await piContext.cookies()).find((piItem) => piItem.name === "pi_web_session");
   assert.ok(piCookie?.httpOnly);
   assert.deepEqual(await (await piContext.request.get(`${piBase}/api/web-auth`)).json(), { enabled: true, authenticated: true });
+  await piPage.locator('[data-pi-phase="read"]').waitFor();
+  await checkPiReferenceRead(piPage);
+  await piPage.screenshot({ path: join(piArtifacts, "reading-desktop.png") });
+  await piPage.setViewportSize({ width: 390, height: 844 });
+  await piPage.screenshot({ path: join(piArtifacts, "reading-mobile.png") });
+  await piPage.setViewportSize({ width: 1440, height: 1000 });
+  await piPage.locator('[data-pi-phase="verified"]').waitFor();
+  await checkPiReferenceScan(piPage);
+  await piDelay(600);
+  await piPage.screenshot({ path: join(piArtifacts, "verified-desktop.png") });
+  await piPage.setViewportSize({ width: 390, height: 844 });
+  await checkPiReferenceScan(piPage);
+  await piPage.screenshot({ path: join(piArtifacts, "verified-mobile.png") });
+  await piPage.setViewportSize({ width: 1440, height: 1000 });
+  piRecord("Reference phase layout and original two-tone rings; desktop/mobile translated text stays clear");
   await piPage.locator('[data-pi-phase="welcome"]').waitFor();
-  await piDelay(1400);
+  await piDelay(650);
   await piPage.screenshot({ path: join(piArtifacts, "welcome.png") });
+  await piDelay(2250);
+  await piPage.screenshot({ path: join(piArtifacts, "welcome-after-flash.png") });
   await piPage.waitForURL(`${piBase}/?pi-login2-e2e=desktop`, { timeout: 60000 });
   await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=existing")}`);
   await piPage.waitForURL(`${piBase}/?pi-login2-e2e=existing`);
   piRecord("Single in-flight login, real HttpOnly cookie, success sequence, next and existing-session shortcut");
+  assert.equal((await piContext.request.delete(`${piBase}/api/web-auth`)).status(), 200);
+  await piPage.goto(`${piBase}/`);
+  assert.equal(new URL(piPage.url()).pathname, "/login2");
+  await piPage.locator("#pi-access-password").waitFor();
+  piRecord("Logout clears the session and the next visit uses login2");
 
   const { piContext: piMobileContext, piNewPage: piMobile } = await piOpen({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
   piPage = piMobile;
   await piMobile.goto(`${piBase}/login2?next=${encodeURIComponent("//evil.example")}`);
   await piMobile.locator("#pi-access-password").waitFor();
   assert.equal(await piMobile.locator('[data-pi-phase="password"]').count(), 1);
+  await piCheckProjectLink(piMobile);
   await piMobile.screenshot({ path: join(piArtifacts, "password-mobile.png") });
+  await checkPiPasswordControls(piMobile);
+  piRecord("Connection metadata reserves its own space across narrow, medium-height and keyboard viewports");
   await piMobile.setViewportSize({ width: 390, height: 320 });
   await piMobile.locator('form button[type="submit"]').scrollIntoViewIfNeeded();
   const piBox = await piMobile.locator('form button[type="submit"]').boundingBox();
@@ -125,6 +193,8 @@ try {
     return piTop === piButton || piButton.contains(piTop);
   });
   assert.equal(piSubmitVisible, true, "Short viewport controls must not be covered by decorations");
+  await piCheckProjectLink(piMobile);
+  piRecord("Project GitHub link is safe and accessible in dark, light, mobile and short viewports");
   await piMobile.screenshot({ path: join(piArtifacts, "password-keyboard.png") });
   await piMobile.route("**/api/web-auth", (piRoute) => piRoute.request().method() === "POST"
     ? piRoute.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' }) : piRoute.continue());
@@ -137,16 +207,16 @@ try {
   await piMobile.waitForURL(`${piBase}/`, { timeout: 60000 });
   assert.ok((await piMobileContext.cookies()).some((piItem) => piItem.name === "pi_web_session"));
   piRecord("Mobile/short viewport, reduced motion, missing-cookie rejection and open-redirect rejection");
+  await runPiTranslatedLayoutChecks(piBrowser, piBase, piPassword);
 
   const { piNewPage: piAudioPage } = await piOpen({ viewport: { width: 1280, height: 900 } });
   piPage = piAudioPage;
   await piAudioPage.route("**/login2/assets/*.mp3", (piRoute) => piRoute.abort());
   await piAudioPage.goto(`${piBase}/login2`);
   await piAudioPage.locator("#pi-access-password").waitFor();
-  const piAudioButton = piAudioPage.getByRole("button", { name: "开启中文播报" });
-  await piAudioButton.click();
+  await piAudioPage.locator("#pi-access-password").click();
   await piDelay(300);
-  assert.equal(await piAudioButton.getAttribute("aria-pressed"), "false");
+  assert.equal(await piAudioPage.locator("[data-pi-audio-control]").getAttribute("aria-pressed"), "true");
   assert.equal(await piAudioPage.locator('[data-pi-phase="password"]').count(), 1);
   await piAudioPage.locator('a[href^="/login?"]').click();
   await piAudioPage.locator("#web-login-password").waitFor();
