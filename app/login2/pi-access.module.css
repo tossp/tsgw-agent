@@ -14,6 +14,15 @@
 .piScene :where(h1,h2,p) { margin: 0; }
 .piScene :where(input,button) { font: inherit; }
 
+/* Quiet loading/ready screen, above the logo but below the existing escape links. */
+.piOpening { position: absolute; inset: 0; z-index: 36; display: grid; place-items: center;
+  padding: 28px; background: #000; color: rgba(255,255,255,.58); text-align: center; }
+.piOpening p,.piOpening button { font-family: var(--pi-zh); font-size: 13px; letter-spacing: .12em; line-height: 1.8; }
+.piOpening button { min-height: 44px; padding: 12px 18px; border: 1px solid transparent;
+  background: transparent; color: inherit; cursor: pointer; }
+.piOpening button:hover { color: rgba(255,255,255,.85); }
+.piOpening button:focus-visible { outline: 1px solid var(--pi-accent); outline-offset: 4px; }
+
 /* Archive plate: four bounded panels, not full-height stripes. */
 .piPlate { position: absolute; inset: 0; z-index: 1; opacity: 0; transition: opacity 900ms ease;
   background: radial-gradient(120% 90% at 78% 12%, rgba(255,255,255,.85), transparent 55%),

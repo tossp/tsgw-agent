@@ -11,7 +11,7 @@ const PI_ACCESS_IDENTITY_ID = "9527";
 
 function PiLoginContent() {
   const { locale: piLocale, t: piTranslate } = useI18n();
-  const { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp, piAuthenticated } = usePiAccess();
+  const { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp, piAuthenticated, piAudioRef, piStart } = usePiAccess();
   const [piPassword, setPiPassword] = useState("");
   const piCopy = getPiAccessCopy(piLocale, piPhase, piAuthenticated);
   const piAfterLogin = ["request", "read", "verified", "welcome", "handoff"].includes(piPhase);
@@ -30,7 +30,11 @@ function PiLoginContent() {
       phase={piPhase} title={piCopy.title} subtitle={piCopy.subtitle} log={piCopy.log}
       logSubtitle={piCopy.logSubtitle} sourceIp={piSourceIp}
       fallbackHref={piFallbackHref} fallbackLabel={piAfterLogin ? piCopy.enter : piCopy.original}
-      audioControl={<PiAccessAudio piPhase={piPhase} piAuthenticated={piAuthenticated} piEnableLabel={piCopy.enableAudio} piMuteLabel={piCopy.muteAudio} />}
+      audioControl={<PiAccessAudio piPhase={piPhase} piAuthenticated={piAuthenticated} piAudioRef={piAudioRef}
+        piEnableLabel={piCopy.enableAudio} piMuteLabel={piCopy.muteAudio} />}
+      openingControl={piPhase === "checking" ? <p role="status">{piCopy.loading}</p>
+        : piPhase === "ready" ? <button type="button" data-pi-start
+          onClick={(piEvent) => { if (piEvent.isTrusted) piStart(); }}>{piCopy.start}</button> : undefined}
     >
       <form data-pi-access-form onSubmit={piHandleSubmit} aria-busy={piBusy}>
         <div data-pi-identity-card role="group" aria-label={piCopy.identityCard}>
