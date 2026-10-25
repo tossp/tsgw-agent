@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { safeLoginDestination } from "@/lib/login-destination";
 import { readPiAccessAuth, submitPiAccessPassword, type PiAccessFailure } from "./pi-access-auth";
 import type { PiAccessPhase } from "./PiAccessScene";
+import { preloadPiAccessVoices } from "./pi-access-voices";
 
 const piTimedPhases: Partial<Record<PiAccessPhase, { next: PiAccessPhase; delay: number }>> = {
-  intro: { next: "wash", delay: 2700 },
+  intro: { next: "wash", delay: 3400 },
   wash: { next: "permission", delay: 1020 },
   permission: { next: "password", delay: 2600 },
   request: { next: "read", delay: 1600 },
   read: { next: "verified", delay: 4900 },
-  verified: { next: "welcome", delay: 3550 },
+  verified: { next: "welcome", delay: 4500 },
   welcome: { next: "handoff", delay: 3900 },
 };
 
@@ -27,6 +28,8 @@ export function usePiAccess() {
   const [piSourceIp, setPiSourceIp] = useState("");
   const [piFailure, setPiFailure] = useState<PiAccessFailure | null>(null);
   const [piFallbackHref, setPiFallbackHref] = useState("/login");
+  const piAudioRef = useRef<HTMLAudioElement>(null);
+  const piStartedRef = useRef(false);
   const piDestinationRef = useRef("/");
   const piClassicHrefRef = useRef("/login");
   const piPendingRef = useRef<AbortController | null>(null);
@@ -51,7 +54,7 @@ export function usePiAccess() {
       piReducedMotionRef.current = piMotion.matches;
       if (piMotion.matches) {
         setPiPhase((piCurrent) => {
-          if (piCurrent === "checking") return piCurrent;
+          if (piCurrent === "checking" || piCurrent === "ready") return piCurrent;
           return piAuthenticatedRef.current && ["request", "read", "verified", "welcome", "handoff"].includes(piCurrent)
             ? "handoff" : "password";
         });
@@ -59,15 +62,18 @@ export function usePiAccess() {
     };
     piMotion.addEventListener("change", piMotionChange);
     const piTimeout = window.setTimeout(() => piController.abort(), 15000);
-    void readPiAccessAuth(piController.signal, (piIp) => {
-      if (!piController.signal.aborted) setPiSourceIp(piIp);
-    }).then((piAuthenticated) => {
+    void Promise.all([
+      readPiAccessAuth(piController.signal, (piIp) => {
+        if (!piController.signal.aborted) setPiSourceIp(piIp);
+      }),
+      preloadPiAccessVoices(piController.signal),
+    ]).then(([piAuthenticated]) => {
       if (piController.signal.aborted) return;
       if (piAuthenticated) {
         piAuthenticatedRef.current = true;
         setPiAuthenticated(true);
       }
-      setPiPhase(piReducedMotionRef.current ? "password" : "intro");
+      setPiPhase("ready");
     }).catch(() => {
       if (piPendingRef.current === piController) window.location.replace(piClassicHref);
     }).finally(() => {
@@ -93,9 +99,52 @@ export function usePiAccess() {
     }
     const piStep = piTimedPhases[piPhase];
     if (!piStep) return;
-    const piTimer = window.setTimeout(() => setPiPhase(piStep.next), piStep.delay);
+    // Presentation only: let a started cue finish before changing its source.
+    // request/read share a clip; do not hold their internal visual transition.
+    // Autoplay rejection, mute, hidden pages and failures retain timed progress.
+    const piDeadline = performance.now() + piStep.delay + 5000;
+    let piTimer: number;
+    const piAdvance = () => {
+      const piAudio = piAudioRef.current;
+      if (piPhase !== "request" && piAudio && !piAudio.paused && !piAudio.ended
+        && !piAudio.error && !piAudio.muted && !document.hidden && performance.now() < piDeadline) {
+        piTimer = window.setTimeout(piAdvance, 100);
+      } else setPiPhase(piStep.next);
+    };
+    piTimer = window.setTimeout(piAdvance, piStep.delay);
     return () => window.clearTimeout(piTimer);
   }, [piPhase]);
+
+  const piStart = useCallback(() => {
+    if (!piMountedRef.current || piPhase !== "ready" || piStartedRef.current) return;
+    piStartedRef.current = true;
+    // The ready screen already owns the connected clip. Start it synchronously
+    // inside the trusted gesture, not later in a React effect.
+    const piAudio = piAudioRef.current;
+    if (!piReducedMotionRef.current && piAudio && !piAudio.muted) void piAudio.play().catch(() => {});
+    setPiPhase(piReducedMotionRef.current ? "password" : "intro");
+  }, [piPhase]);
+
+  useEffect(() => {
+    if (piPhase !== "ready") return;
+    const piInteract = (piEvent: MouseEvent | KeyboardEvent) => {
+      if (!piEvent.isTrusted || piEvent.defaultPrevented) return;
+      if (piEvent.target instanceof Element
+        && piEvent.target.closest("a, input, textarea, select, [data-pi-audio-control]")) return;
+      if (piEvent instanceof KeyboardEvent) {
+        if (piEvent.repeat || piEvent.isComposing || piEvent.ctrlKey || piEvent.altKey || piEvent.metaKey
+          || ["Tab", "Shift", "Control", "Alt", "Meta", "Escape"].includes(piEvent.key)) return;
+        piEvent.preventDefault();
+      }
+      piStart();
+    };
+    document.addEventListener("click", piInteract);
+    document.addEventListener("keydown", piInteract);
+    return () => {
+      document.removeEventListener("click", piInteract);
+      document.removeEventListener("keydown", piInteract);
+    };
+  }, [piPhase, piStart]);
 
   const piSubmit = useCallback(async (piPassword: string): Promise<boolean> => {
     if (!piMountedRef.current || piSubmittingRef.current || piPhase !== "password") return false;
@@ -136,5 +185,5 @@ export function usePiAccess() {
     }
   }, [piPhase]);
 
-  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp, piAuthenticated };
+  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp, piAuthenticated, piAudioRef, piStart };
 }

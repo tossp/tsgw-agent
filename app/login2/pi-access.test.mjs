@@ -75,7 +75,7 @@ test("Pi login still works when display-only IP metadata is unavailable", async 
 
 test("Pi visual copy covers every phase in each supported locale", () => {
   for (const piLocale of ["en", "zh-CN", "zh-TW"]) {
-    for (const piPhase of ["checking", "intro", "wash", "permission", "password", "request", "read", "verified", "welcome", "handoff"]) {
+    for (const piPhase of ["checking", "ready", "intro", "wash", "permission", "password", "request", "read", "verified", "welcome", "handoff"]) {
       const piCopy = getPiAccessCopy(piLocale, piPhase);
       for (const piValue of Object.values(piCopy)) assert.ok(typeof piValue === "string" && piValue.length > 0);
     }

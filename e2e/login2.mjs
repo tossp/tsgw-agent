@@ -9,6 +9,9 @@ import { setTimeout as piDelay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { runPiAccessAudioChecks } from "./login2-audio.mjs";
+import { runPiOpeningChecks } from "./login2-opening.mjs";
+import { startPiAccess } from "./login2-start.mjs";
+import { runPiVoiceTimingChecks } from "./login2-voice-timing.mjs";
 import { checkPiIdentityCard, checkPiPasswordControls, checkPiReferenceRead, checkPiReferenceScan, runPiTranslatedLayoutChecks } from "./login2-layout.mjs";
 
 const piRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -86,6 +89,7 @@ try {
   piRecord("Default unauthenticated redirect uses login2; API protection unchanged");
 
   piBrowser = await chromium.launch({ headless: true });
+  await runPiOpeningChecks(piBrowser, piBase);
   await runPiAccessAudioChecks(piBrowser, piBase);
   const { piContext, piNewPage } = await piOpen({ viewport: { width: 1440, height: 1000 } });
   piPage = piNewPage;
@@ -94,7 +98,13 @@ try {
   await piPage.goto(`${piBase}/?pi-login2-e2e=desktop`);
   assert.equal(new URL(piPage.url()).pathname, "/login2");
   assert.equal(new URL(piPage.url()).searchParams.get("next"), "/?pi-login2-e2e=desktop");
+  await startPiAccess(piPage, { piChinese: true });
   await piPage.locator('[data-pi-phase="intro"]').waitFor();
+  await piPage.waitForFunction(() => {
+    const piAudio = document.querySelector("audio");
+    return piAudio?.src.endsWith("/pi-connected.mp3") && !piAudio.paused;
+  });
+  piRecord("Real generated connected voice starts after the explicit opening gesture");
   await piCheckProjectLink(piPage);
   await piPage.screenshot({ path: join(piArtifacts, "intro.png") });
   await piPage.locator("#pi-access-password").waitFor();
@@ -107,8 +117,8 @@ try {
   assert.ok((await piPage.locator('a[href^="/login?"]').getAttribute("href")).includes("pi-login2-e2e"));
   piRecord("React opening/wash/password sequence; password phase never advances itself");
   await piPage.locator("#pi-access-password").click();
-  await piPage.waitForFunction(() => !document.querySelector("audio").paused);
-  piRecord("Real generated audio starts after a normal password-field click");
+  // Start has already granted media permission; a completed password cue must not
+  // be replayed here. Blocked-autoplay retry is isolated in login2-audio.mjs.
 
   await piPage.locator("#pi-access-password").fill("wrong");
   await piPage.locator("#pi-access-password").press("Enter");
@@ -169,6 +179,7 @@ try {
   await piPage.waitForURL(`${piBase}/?pi-login2-e2e=desktop`, { timeout: 60000 });
   piRecord("Single in-flight login, real HttpOnly cookie, success sequence and safe next destination");
   await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=existing")}`);
+  await startPiAccess(piPage);
   for (const piPhase of ["intro", "wash", "permission", "password"]) {
     await piPage.locator(`[data-pi-phase="${piPhase}"]`).waitFor();
     assert.equal(new URL(piPage.url()).pathname, "/login2");
@@ -202,6 +213,7 @@ try {
   assert.equal(piPosts, 1, "Click-to-enter must not submit the password again");
   await piPage.emulateMedia({ reducedMotion: "reduce" });
   await piPage.goto(`${piBase}/login2?next=${encodeURIComponent("/?pi-login2-e2e=reduced-existing")}`);
+  await startPiAccess(piPage);
   await piPage.getByRole("button", { name: "点击进入", exact: true }).waitFor();
   await piDelay(500);
   assert.equal(new URL(piPage.url()).pathname, "/login2");
@@ -210,6 +222,7 @@ try {
   assert.equal(piPosts, 1);
   piRecord("Existing sessions wait for click-to-enter, replay the complete success animation and never resubmit a password");
   await piPage.goto(`${piBase}/login2`);
+  await startPiAccess(piPage);
   await piPage.locator("[data-pi-existing-session]").waitFor();
   assert.equal((await piContext.request.delete(`${piBase}/api/web-auth`)).status(), 200);
   await piPage.getByRole("button", { name: "点击进入", exact: true }).click();
@@ -231,12 +244,14 @@ try {
   assert.equal((await piContext.request.delete(`${piBase}/api/web-auth`)).status(), 200);
   await piPage.goto(`${piBase}/`);
   assert.equal(new URL(piPage.url()).pathname, "/login2");
+  await startPiAccess(piPage);
   await piPage.locator("#pi-access-password").waitFor();
   piRecord("Logout clears the session and the next visit uses login2");
 
   const { piContext: piMobileContext, piNewPage: piMobile } = await piOpen({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
   piPage = piMobile;
   await piMobile.goto(`${piBase}/login2?next=${encodeURIComponent("//evil.example")}`);
+  await startPiAccess(piMobile);
   await piMobile.locator("#pi-access-password").waitFor();
   assert.equal(await piMobile.locator('[data-pi-phase="password"]').count(), 1);
   await piCheckProjectLink(piMobile);
@@ -268,11 +283,13 @@ try {
   assert.ok((await piMobileContext.cookies()).some((piItem) => piItem.name === "pi_web_session"));
   piRecord("Mobile/short viewport, reduced motion, missing-cookie rejection and open-redirect rejection");
   await runPiTranslatedLayoutChecks(piBrowser, piBase, piPassword);
+  await runPiVoiceTimingChecks(piBrowser, piBase, piPassword);
 
   const { piNewPage: piAudioPage } = await piOpen({ viewport: { width: 1280, height: 900 } });
   piPage = piAudioPage;
   await piAudioPage.route("**/login2/assets/*.mp3", (piRoute) => piRoute.abort());
   await piAudioPage.goto(`${piBase}/login2`);
+  await startPiAccess(piAudioPage);
   await piAudioPage.locator("#pi-access-password").waitFor();
   await piAudioPage.locator("#pi-access-password").click();
   await piDelay(300);

@@ -7,7 +7,7 @@ import { PiAccessReticle } from "./PiAccessReticle";
 import styles from "./pi-access.module.css";
 
 export type PiAccessPhase =
-  | "checking" | "intro" | "wash" | "permission" | "password"
+  | "checking" | "ready" | "intro" | "wash" | "permission" | "password"
   | "request" | "read" | "verified" | "welcome" | "handoff";
 
 export interface PiAccessSceneProps {
@@ -20,6 +20,7 @@ export interface PiAccessSceneProps {
   fallbackHref: string;
   fallbackLabel: string;
   audioControl?: ReactNode;
+  openingControl?: ReactNode;
   children?: ReactNode;
 }
 
@@ -29,7 +30,7 @@ const PI_ACCESS_LIGHT_PHASES = new Set<PiAccessPhase>([
 ]);
 const PI_ACCESS_BUSY_PHASES = new Set<PiAccessPhase>(["checking", "request", "read"]);
 const PI_ACCESS_STAGE: Record<PiAccessPhase, number> = {
-  checking: 0, intro: 0, wash: 0, permission: 1, password: 2,
+  checking: 0, ready: 0, intro: 0, wash: 0, permission: 1, password: 2,
   request: 3, read: 4, verified: 5, welcome: 6, handoff: 6,
 };
 const PI_ACCESS_BADGES = ["BOOT", "AUTHORIZATION", "IDENTITY", "REQUEST", "READ", "VERIFY", "WELCOME"];
@@ -72,7 +73,7 @@ function PiAccessHostname() {
 }
 
 export function PiAccessScene({
-  phase, title, subtitle, log, logSubtitle, sourceIp, fallbackHref, fallbackLabel, audioControl, children,
+  phase, title, subtitle, log, logSubtitle, sourceIp, fallbackHref, fallbackLabel, audioControl, openingControl, children,
 }: PiAccessSceneProps) {
   const piTextRef = useRef<HTMLDivElement>(null);
   const piReadoutRef = useRef<HTMLDivElement>(null);
@@ -170,6 +171,7 @@ export function PiAccessScene({
       </section>
 
       <div className={styles.piWash} aria-hidden="true" />
+      {openingControl ? <div className={styles.piOpening}>{openingControl}</div> : null}
       <div className={styles.piPrologue} aria-hidden={piIsLight || undefined}>
         <div className={styles.piSweep} aria-hidden="true" />
         <div className={styles.piPrologoInner}>

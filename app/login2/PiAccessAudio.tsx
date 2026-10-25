@@ -1,26 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PiAccessPhase } from "./PiAccessScene";
+import { piAccessVoiceSource } from "./pi-access-voices";
 
 const piVoiceFiles: Partial<Record<PiAccessPhase, string>> = {
+  ready: "connected", intro: "connected",
   permission: "permission", password: "password", request: "read", read: "read",
   verified: "verified", welcome: "welcome", handoff: "welcome",
 };
 
-export function PiAccessAudio({ piPhase, piAuthenticated = false, piEnableLabel, piMuteLabel }: {
+export function PiAccessAudio({ piPhase, piAuthenticated = false, piEnableLabel, piMuteLabel, piAudioRef }: {
   piPhase: PiAccessPhase; piAuthenticated?: boolean; piEnableLabel: string; piMuteLabel: string;
+  piAudioRef: RefObject<HTMLAudioElement | null>;
 }) {
-  const piAudioRef = useRef<HTMLAudioElement>(null);
   const piEnabledRef = useRef(true);
   const piResumeRef = useRef<(() => void) | null>(null);
   const [piEnabled, setPiEnabled] = useState(true);
   const piVoice = piAuthenticated && piPhase === "password" ? undefined : piVoiceFiles[piPhase];
-  const piSource = piVoice ? `/login2/assets/pi-${piVoice}.mp3` : undefined;
+  const piSource = piVoice ? piAccessVoiceSource(piVoice) : undefined;
+  const piWaitingForStart = piPhase === "ready";
 
   useEffect(() => {
     const piAudio = piAudioRef.current;
-    if (!piAudio || !piSource) return;
+    if (!piAudio || !piSource || piWaitingForStart) return;
     let piActive = true;
     let piPending = false;
     const piPlay = () => {
@@ -54,7 +57,7 @@ export function PiAccessAudio({ piPhase, piAuthenticated = false, piEnableLabel,
       document.removeEventListener("visibilitychange", piVisibilityChange);
       piAudio.pause();
     };
-  }, [piSource]);
+  }, [piSource, piWaitingForStart, piAudioRef]);
 
   const piToggleAudio = () => {
     const piNextEnabled = !piEnabledRef.current;
@@ -72,7 +75,7 @@ export function PiAccessAudio({ piPhase, piAuthenticated = false, piEnableLabel,
   return (
     <>
       {/* These are decorative Mandarin cues; all information remains in visible text. */}
-      <audio ref={piAudioRef} src={piSource} preload="none"
+      <audio ref={piAudioRef} src={piSource} preload="none" muted={!piEnabled}
         onPlay={piUpdateMeter} onPause={piUpdateMeter} onEnded={piUpdateMeter} onError={piUpdateMeter} />
       <button type="button" data-pi-audio-control onClick={piToggleAudio} aria-pressed={piEnabled} disabled={!piSource}>
         {piEnabled ? piMuteLabel : piEnableLabel}

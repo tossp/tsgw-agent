@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { startPiAccess } from "./login2-start.mjs";
 
 export async function checkPiIdentityCard(piPage) {
   const piRows = piPage.locator("[data-pi-identity-row]");
@@ -74,6 +75,7 @@ export async function runPiTranslatedLayoutChecks(piBrowser, piBase, piPassword)
     const piPage = await piContext.newPage();
     try {
       await piPage.goto(`${piBase}/login2`);
+      await startPiAccess(piPage);
       await piPage.locator("#pi-access-password").waitFor();
       assert.equal(await piPage.locator("[data-pi-identity-row]").count(), 3);
       const piNumber = await piPage.locator("[data-pi-identity-number]").textContent();
