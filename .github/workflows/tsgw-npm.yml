@@ -1,0 +1,390 @@
+name: TSGW npm
+
+# 只服务 tsgw 开发发布分支，不读写默认分支，也不依赖 main。
+#   push tsgw     -> 预览版 <source.version>-dev.<run_number>.<run_attempt>.g<sha 前 12 位>，dist-tag next
+#   push vX.Y.Z   -> 稳定版 X.Y.Z，dist-tag latest（tag 必须是 origin/tsgw 的祖先，且等于源 package.json.version）
+# 详细说明与一次性配置见 docs/tsgw-release.md。
+
+on:
+  push:
+    branches: [tsgw]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# 同一 ref 上串行：同一次推送不会自相覆盖，稳定版永不取消（cancel-in-progress 恒为 false）。
+# 跨 ref 的发布顺序另由 publish job 的固定并发组约束，见该 job。
+concurrency:
+  group: tsgw-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Check, build, pack
+    # 只认本项目仓库的 tsgw 分支或 v* 标签；默认分支和其他分支不进入发布流水线。
+    if: >-
+      github.repository == 'tossp/tsgw-agent' &&
+      (github.ref == 'refs/heads/tsgw' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout the pushed ref with history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      # 稳定 tag 的祖先核验需要 origin/tsgw 这个 ref，显式抓取不依赖 checkout 的默认 refspec。
+      - name: Fetch tsgw for the tag ancestry check
+        run: git fetch --no-tags --prune origin "+refs/heads/tsgw:refs/remotes/origin/tsgw"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # 源测试先跑：此时 package.json 还是源版本，metadata 测试不会因 CI 版本赋值而失配。
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Release helper tests
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tests=(release/*.test.mjs)
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "::error::release/*.test.mjs is missing; the release helper contract needs its tests."
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
+      - name: Resolve the version for this channel
+        id: version
+        run: node release/version.mjs
+
+      # 包身份、bin、repository、files、许可证都必须持久化在源文件里；
+      # CI 只允许给本次 checkout 的 package.json / package-lock.json 赋值版本号。
+      - name: Only the version fields may change
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { execFileSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+
+          const baseline = (path) => JSON.parse(execFileSync("git", ["show", `HEAD:${path}`], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }));
+          const current = (path) => JSON.parse(readFileSync(path, "utf8"));
+          const dropVersion = (json) => { const copy = structuredClone(json); delete copy.version; return copy; };
+          const dropLockVersions = (json) => {
+            const copy = dropVersion(json);
+            const root = copy.packages?.[""];
+            if (root) { copy.packages = { ...copy.packages, "": dropVersion(root) }; }
+            return copy;
+          };
+
+          try {
+            assert.deepStrictEqual(dropVersion(current("package.json")), dropVersion(baseline("package.json")));
+            assert.deepStrictEqual(dropLockVersions(current("package-lock.json")), dropLockVersions(baseline("package-lock.json")));
+            console.log("only the version fields changed");
+          } catch (error) {
+            console.error(`::error::package metadata changed beyond the version fields: ${String(error.message).split("\n")[0].slice(0, 300)}`);
+            process.exit(1);
+          }
+          NODE
+
+      # 干净 CI 才能构建：dev 写 .next/dev，e2e 的 start 模式写 route-cache，都不该进包。
+      - name: Build
+        run: npm run build
+
+      - name: Check the build output
+        run: |
+          set -euo pipefail
+          test -f .next/BUILD_ID
+          for path in .next/dev .next/server/route-cache; do
+            if [ -e "$path" ]; then
+              echo "::error::$path must not be packaged; rebuild from a clean checkout."
+              exit 1
+            fi
+          done
+
+      - name: Pack
+        run: node release/pack.mjs "$RUNNER_TEMP/tsgw-package"
+
+      # smoke.mjs 用 Playwright Chromium 真的打开登录页和终端，runner 上先装浏览器。
+      - name: Install Chromium for the smoke test
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test the packed artifact
+        run: node release/smoke.mjs "$RUNNER_TEMP/tsgw-package"
+
+      - name: Summarize the channel
+        run: |
+          {
+            echo '### TSGW npm: ${{ steps.version.outputs.tag }}'
+            echo ''
+            echo '| field | value |'
+            echo '| --- | --- |'
+            echo '| package | `@tossp/tsgw-agent` |'
+            echo '| channel version | `${{ steps.version.outputs.version }}` |'
+            echo '| dist-tag | `${{ steps.version.outputs.tag }}` |'
+            echo '| ref | `${{ github.ref }}` |'
+            echo '| commit | `${{ github.sha }}` |'
+            echo '| event | `${{ github.event_name }}` |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the npm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tsgw-npm-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/tsgw-package
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to npm
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 与 npm 可信发布配置里的 Environment name 完全一致。
+    environment: npm
+    # 同一个包的发布必须跨 ref 串行：不同 v* 标签各自排队，不会并行改写 latest。
+    concurrency:
+      group: tsgw-npm-publish
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      DIST_TAG: ${{ needs.build.outputs.tag }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout the triggering commit (provenance git context)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the built artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: tsgw-npm-${{ needs.build.outputs.version }}
+          path: ${{ runner.temp }}/tsgw-package
+
+      # 只发布 build job 验收过的字节：校验和、包身份、版本/通道映射都对上才继续。
+      - name: Verify the artifact
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/tsgw-package"
+          mapfile -t tarballs < <(find . -maxdepth 2 -name '*.tgz')
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one .tgz in the artifact, found ${#tarballs[@]}"
+            exit 1
+          fi
+          export TARBALL="$(cd "$(dirname "${tarballs[0]}")" && pwd)/$(basename "${tarballs[0]}")"
+          cd "$(dirname "$TARBALL")"
+          test -f SHA256SUMS
+          sha256sum -c SHA256SUMS
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+
+          const EXPECTED_NAME = "@tossp/tsgw-agent";
+          const { TARBALL, VERSION, DIST_TAG } = process.env;
+          const fail = (message) => { console.error(`::error::${message}`); process.exit(1); };
+
+          if (DIST_TAG !== "next" && DIST_TAG !== "latest") fail(`unexpected dist-tag ${DIST_TAG}`);
+          const prerelease = /^\d+\.\d+\.\d+-/.test(VERSION);
+          if ((DIST_TAG === "next") !== prerelease) fail(`dist-tag ${DIST_TAG} does not match channel of ${VERSION}`);
+
+          const manifest = JSON.parse(execFileSync("tar", ["-xzOf", TARBALL, "package/package.json"], { encoding: "utf8" }));
+          if (manifest.name !== EXPECTED_NAME) fail(`artifact package is ${manifest.name}, not ${EXPECTED_NAME}`);
+          if (manifest.version !== VERSION) fail(`artifact version ${manifest.version} does not match ${VERSION}`);
+
+          const release = JSON.parse(readFileSync("release.json", "utf8"));
+          if (release.version !== VERSION) fail(`release.json version ${release.version} does not match ${VERSION}`);
+          if (release.tag !== DIST_TAG) fail(`release.json tag ${release.tag} does not match ${DIST_TAG}`);
+
+          console.log(`verified ${manifest.name}@${manifest.version} for dist-tag ${DIST_TAG}`);
+          NODE
+          printf 'TARBALL=%s\nPKG_NAME=%s\nPKG_VERSION=%s\n' "$TARBALL" "@tossp/tsgw-agent" "$VERSION" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # 可信发布要求 npm >= 11.5.1；这里固定 11.21.1 只为可复现，不是 dist-tag 权限要求。
+      - name: Install the npm CLI for trusted publishing
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.21.1
+          npm --version
+
+      # 预览版只让分支当前 head 发布 next；排队更早的旧运行不会覆盖更新的预览版。
+      # 结论写入 step output，后续步骤必须显式检查它。
+      - name: Decide whether this run may publish
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != branch ]; then
+            echo "tag push: $GITHUB_REF is an immutable release"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tsgw" --jq .sha)
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::origin/tsgw moved to $head_sha; this run built $GITHUB_SHA and will not publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      # 只有精确版本 404 才放行；网络错误、5xx、超时都拦下，避免盲目重发。
+      # 稳定版另做 latest 不降级检查：旧标签不能把 latest 拉回去。
+      - name: Confirm the registry allows this publish
+        if: steps.gate.outputs.should_publish == 'true'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const { PKG_NAME, PKG_VERSION, DIST_TAG } = process.env;
+          const fail = (message) => { console.error(`::error::${message}`); process.exit(1); };
+          const base = `https://registry.npmjs.org/${PKG_NAME.replace("/", "%2F")}`;
+          const get = async (url, accept) => {
+            try {
+              return await fetch(url, { headers: { accept }, signal: AbortSignal.timeout(15_000) });
+            } catch (error) {
+              fail(`registry request failed for ${url} (${error.message}); refusing to publish unverified`);
+            }
+          };
+
+          const exact = await get(`${base}/${PKG_VERSION}`, "application/json");
+          if (exact.status === 200) fail(`${PKG_NAME}@${PKG_VERSION} is already published; bump the version instead of republishing`);
+          if (exact.status !== 404) fail(`registry returned HTTP ${exact.status} for ${PKG_NAME}@${PKG_VERSION}; refusing to publish unverified`);
+          console.log(`${PKG_NAME}@${PKG_VERSION} is not on the registry (HTTP 404)`);
+
+          if (DIST_TAG !== "latest") {
+            console.log("preview channel: latest is never touched");
+            process.exit(0);
+          }
+
+          const packument = await get(base, "application/vnd.npm.install-v1+json");
+          if (packument.status === 404) {
+            console.log("package not created yet: nothing to protect on latest");
+            process.exit(0);
+          }
+          if (packument.status !== 200) fail(`registry returned HTTP ${packument.status} while reading dist-tags; refusing to publish unverified`);
+          const latest = (await packument.json())["dist-tags"]?.latest;
+          if (latest === undefined) {
+            console.log("no latest dist-tag yet");
+            process.exit(0);
+          }
+          const tuple = (version) => {
+            const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+            if (!match) fail(`unexpected stable version ${version}`);
+            return match.slice(1, 4).map(Number);
+          };
+          const [existing, incoming] = [tuple(latest), tuple(PKG_VERSION)];
+          const compare = existing.findIndex((part, index) => part !== incoming[index]);
+          if (compare !== -1 && existing[compare] > incoming[compare]) {
+            fail(`registry latest is ${latest}, newer than ${PKG_VERSION}; an older tag must not downgrade latest`);
+          }
+          console.log(`latest ${latest} -> ${PKG_VERSION}`);
+          NODE
+
+      # --tag 只影响本次发布的 dist-tag，属于 publish 自身；
+      # 本工作流不调用 npm dist-tag，因此不需要额外的 dist-tag 权限。失败不自动重试。
+      - name: Publish with trusted publishing (OIDC)
+        if: steps.gate.outputs.should_publish == 'true'
+        run: |
+          set -euo pipefail
+          npm publish "$TARBALL" \
+            --access public \
+            --registry https://registry.npmjs.org \
+            --tag "$DIST_TAG" \
+            --provenance
+
+      # 只读确认产物可解析；新版本传播滞后返回 E404 是正常的，绝不是重发依据。
+      - name: Confirm the version is served (read-only)
+        if: steps.gate.outputs.should_publish == 'true'
+        run: |
+          set -euo pipefail
+          verified=0
+          for attempt in $(seq 1 12); do
+            if npm view "$PKG_NAME@$PKG_VERSION" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "registry serves $PKG_NAME@$PKG_VERSION (attempt $attempt)"
+              verified=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$verified" -ne 1 ]; then
+            echo "::warning::$PKG_NAME@$PKG_VERSION is published but not visible yet; this is registry propagation, never a reason to republish."
+          fi
+          npm view "$PKG_NAME" dist-tags --json --registry https://registry.npmjs.org || true
+
+      # npm 已发布后才请求国内镜像同步；队列受理不代表同步完成。
+      # 镜像失败只告警，不改变 npm 发布结果，也不重发 npm 包。
+      - name: Request npmmirror sync
+        id: mirror
+        if: steps.gate.outputs.should_publish == 'true'
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+
+          const { PKG_NAME, GITHUB_OUTPUT } = process.env;
+          let status = "failed";
+          try {
+            const response = await fetch(`https://registry-direct.npmmirror.com/-/package/${PKG_NAME}/syncs`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", Accept: "application/json" },
+              body: "{}",
+              redirect: "error",
+              signal: AbortSignal.timeout(30_000),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const task = await response.json();
+            if (task?.ok !== true || typeof task.id !== "string" || !task.id || task.state === "error") {
+              throw new Error("mirror did not accept a sync task");
+            }
+            console.log(`npmmirror sync requested: ${JSON.stringify({ package: PKG_NAME, taskId: task.id })}`);
+            status = "requested";
+          } catch (error) {
+            console.log(`::warning::npmmirror sync request failed (${error.message}); npm is already published. Do not republish.`);
+          }
+          await appendFile(GITHUB_OUTPUT, `status=${status}\n`);
+          NODE
+
+      - name: Summarize the publish
+        if: always()
+        run: |
+          {
+            echo '### Publish: ${{ job.status }}'
+            echo ''
+            echo '| field | value |'
+            echo '| --- | --- |'
+            echo '| package | `@tossp/tsgw-agent` |'
+            echo '| version | `${{ needs.build.outputs.version }}` |'
+            echo '| dist-tag | `${{ needs.build.outputs.tag }}` |'
+            echo '| publish decision | `${{ steps.gate.outputs.should_publish }}` |'
+            echo '| npmmirror sync | `${{ steps.mirror.outputs.status || 'not requested' }}` |'
+            echo '| ref | `${{ github.ref }}` |'
+            echo '| commit | `${{ github.sha }}` |'
+          } >> "$GITHUB_STEP_SUMMARY"

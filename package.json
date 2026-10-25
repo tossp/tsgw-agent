@@ -1,14 +1,14 @@
 {
-  "name": "@agegr/pi-web",
-  "version": "0.12.2",
-  "description": "Web UI for the pi coding agent",
-  "homepage": "https://github.com/agegr/pi-web#readme",
+  "name": "@tossp/tsgw-agent",
+  "version": "0.1.0",
+  "description": "TSGW fork of Pi Web: a browser UI for the pi coding agent",
+  "homepage": "https://github.com/tossp/tsgw-agent#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agegr/pi-web.git"
+    "url": "git+https://github.com/tossp/tsgw-agent.git"
   },
   "bugs": {
-    "url": "https://github.com/agegr/pi-web/issues"
+    "url": "https://github.com/tossp/tsgw-agent/issues"
   },
   "license": "MIT",
   "engines": {
@@ -22,7 +22,11 @@
     "ios_saf 16.2"
   ],
   "bin": {
-    "pi-web": "bin/pi-web.js"
+    "tsgw-agent": "bin/pi-web.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "files": [
     "bin",
@@ -31,6 +35,8 @@
     "!.next/dev",
     "!.next/**/*.js.map",
     "public",
+    "docs/login2.md",
+    "docs/tsgw-release.md",
     "next.config.ts",
     "package.json"
   ],

@@ -2,6 +2,8 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { parseArgs } = require("util");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { COMMAND_NAME } = require("./tsgw-release");
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -40,7 +42,7 @@ const COMMAND_OPTIONS = {
 };
 
 function getHelpText() {
-  return `Usage: pi-web [command] [options]
+  return `Usage: ${COMMAND_NAME} [command] [options]
 
 Start the Pi Web UI server, or run one of the commands below.
 
