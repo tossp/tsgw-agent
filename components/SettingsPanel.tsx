@@ -107,7 +107,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     try {
       const response = await fetch("/api/web-auth", { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.location.replace("/login");
+      window.location.replace("/login2");
     } catch {
       setLogoutError(t("auth.logoutFailed"));
     } finally {

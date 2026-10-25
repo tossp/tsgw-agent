@@ -4,10 +4,10 @@ import { readPiAccessAuth, submitPiAccessPassword, type PiAccessFailure } from "
 import type { PiAccessPhase } from "./PiAccessScene";
 
 const piTimedPhases: Partial<Record<PiAccessPhase, { next: PiAccessPhase; delay: number }>> = {
-  intro: { next: "wash", delay: 2400 },
-  wash: { next: "permission", delay: 800 },
+  intro: { next: "wash", delay: 2700 },
+  wash: { next: "permission", delay: 1020 },
   permission: { next: "password", delay: 2600 },
-  request: { next: "read", delay: 900 },
+  request: { next: "read", delay: 1600 },
   read: { next: "verified", delay: 4900 },
   verified: { next: "welcome", delay: 3550 },
   welcome: { next: "handoff", delay: 3900 },
@@ -23,6 +23,7 @@ function getPiAccessDestination(): string {
 export function usePiAccess() {
   const [piPhase, setPiPhase] = useState<PiAccessPhase>("checking");
   const [piBusy, setPiBusy] = useState(false);
+  const [piSourceIp, setPiSourceIp] = useState("");
   const [piFailure, setPiFailure] = useState<PiAccessFailure | null>(null);
   const [piFallbackHref, setPiFallbackHref] = useState("/login");
   const piDestinationRef = useRef("/");
@@ -52,7 +53,9 @@ export function usePiAccess() {
     };
     piMotion.addEventListener("change", piMotionChange);
     const piTimeout = window.setTimeout(() => piController.abort(), 15000);
-    void readPiAccessAuth(piController.signal).then((piAuthenticated) => {
+    void readPiAccessAuth(piController.signal, (piIp) => {
+      if (!piController.signal.aborted) setPiSourceIp(piIp);
+    }).then((piAuthenticated) => {
       if (piController.signal.aborted) return;
       if (piAuthenticated) {
         window.location.replace(piDestination);
@@ -79,7 +82,7 @@ export function usePiAccess() {
     if (piPhase === "handoff") {
       const piTimer = window.setTimeout(() => {
         if (piAuthenticatedRef.current) window.location.replace(piDestinationRef.current);
-      }, 650);
+      }, 780);
       return () => window.clearTimeout(piTimer);
     }
     const piStep = piTimedPhases[piPhase];
@@ -122,5 +125,5 @@ export function usePiAccess() {
     }
   }, [piPhase]);
 
-  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit };
+  return { piPhase, piBusy, piFailure, piFallbackHref, piSubmit, piSourceIp };
 }

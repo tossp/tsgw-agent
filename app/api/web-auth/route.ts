@@ -6,6 +6,7 @@ import {
   retryAfterSeconds,
 } from "@/lib/auth-throttle";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getPiLoginSourceIp } from "@/lib/login-source-ip";
 import {
   createWebSessionToken,
   isValidBasicAuthorization,
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
     || isValidWebSessionToken(request.cookies.get(PI_WEB_SESSION_COOKIE)?.value, password);
   return NextResponse.json(
     { enabled, authenticated },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: { "Cache-Control": "no-store", "X-Pi-Source-IP": getPiLoginSourceIp(request.headers) } },
   );
 }
 
