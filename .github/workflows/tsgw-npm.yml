@@ -292,8 +292,10 @@ jobs:
           }
           if (packument.status !== 200) fail(`registry returned HTTP ${packument.status} while reading dist-tags; refusing to publish unverified`);
           const latest = (await packument.json())["dist-tags"]?.latest;
-          if (latest === undefined) {
-            console.log("no latest dist-tag yet");
+          // npm 首次暂存会创建 0.0.0-stage 并把 latest 指向它；这不是已发布的稳定版。
+          // 仅放行这个确切占位值，其它异常／预发布 latest 仍由下面的稳定版本检查拦下。
+          if (latest === undefined || latest === "0.0.0-stage") {
+            console.log("no stable latest yet (absent or staged-publishing placeholder)");
             process.exit(0);
           }
           const tuple = (version) => {

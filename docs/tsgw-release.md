@@ -59,7 +59,7 @@ if: >-
 3. 装 Node 24 与 `npm@11.21.1`（发布只需 `>=11.5.1`，见 §7）
 4. 分支推送额外确认 `origin/tsgw` 的 head 仍是本次 `GITHUB_SHA`；不是则记 notice 并跳过后续发布步骤（step output 控制，不是简单 return）
 5. 注册表预检：精确版本 URL 只有 **HTTP 404** 才放行；200 → 已发布，报错要求 bump 版本；其它状态码、网络错误、超时 → 一律拦下，避免盲目重发
-6. 稳定版另做 `latest` 不降级检查：读 `dist-tags.latest`，若已有稳定版更高，拒绝旧标签把 `latest` 拉回去（数字元组比较，`latest` 与待发版本都必须是严格稳定 SemVer）
+6. 稳定版另做 `latest` 不降级检查：读 `dist-tags.latest`，若已有稳定版更高，拒绝旧标签把 `latest` 拉回去（数字元组比较，已有版本与待发版本都必须是严格稳定 SemVer）。唯一例外是 npm 首次暂存自动创建的确切占位值 `0.0.0-stage`，按尚无稳定版处理，允许首次正式发布替换它；其它异常／预发布值仍拒绝
 7. `npm publish <tgz> --access public --registry https://registry.npmjs.org --tag <next|latest> --provenance`
 8. 失败即失败，不自动重试；之后只读轮询 `npm view <pkg>@<version>` 约 2 分钟确认可解析，不可见时只告警
 9. 仅在 npm 发布成功且未被跳过时，向 npmmirror 的 `PUT /-/package/tsgw-agent/syncs` 请求同步（30 秒超时，无 npm 凭据、不自动重试）。返回有效任务 ID 只代表已受理，不代表镜像已同步完成；失败只告警，不改变 npm 发布结果，更不能重新发布同一版本
@@ -221,7 +221,9 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 
 - 当前包身份调整为不带 scope 的 `tsgw-agent`，启动命令仍为 `tsgw-agent`；正式版 `latest` 与预览版 `next` 均以本包为目标。
 - 旧的 `@tossp/tsgw-agent` 曾由 CI `40175947678` 暂存，npm 页面显示 `0.0.0-stage` 占位版本。旧 Token 已由维护者撤销；旧包及待审批版本不自动删除、审批或复用。
-- 改名后必须重新构建并验收 `tsgw-agent` 安装包，旧 scoped 包的已验收产物不可作为新包发布。初始化及 OIDC 的完成状态以实际 Actions 和 npm 页面为准。
+- 新包已由 CI `40177252293` 完成构建、打包和全新安装验收，再由初始化 CI `40177252224` 暂存；维护者已审批 `0.1.0-dev.3.1.g77d1c47f742c`，`next` 已可安装，临时 Secret 和初始化变量已删除。旧 scoped 包的产物未复用。
+- npm 首次暂存自动将 `latest` 指向 `0.0.0-stage`；首个正式标签发布前请使用 `tsgw-agent@next`，不要把占位版本当成正式版。此占位值已纳入首次正式发布的校验例外，不需要额外的 npm dist-tag 权限。
+- 可信发布配置已由维护者创建；仍需常规 CI 成功完成一次 OIDC 发布才能验收自动发布，不以人工审批的初始化版本替代该验证。
 - GitHub 的 `npm` 环境仅允许 `tsgw` 分支和 `v*` 标签；开发设备不登录 npm、不手动首发，不为正常发布添加 Token 回退。
 
 新包初始化依据：npm 官方 `npm trust` 的 Prerequisites，以及 `staged-publishing` 的新包占位版本说明。
