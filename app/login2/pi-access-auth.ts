@@ -5,7 +5,9 @@ export type PiAccessFailure =
 export type PiAccessResult = { ok: true } | { ok: false; failure: PiAccessFailure };
 
 /** Use the existing authentication contract; never infer login from animation. */
-export async function readPiAccessAuth(piSignal: AbortSignal): Promise<boolean> {
+export async function readPiAccessAuth(
+  piSignal: AbortSignal, piOnSourceIp?: (piSourceIp: string) => void,
+): Promise<boolean> {
   const piResponse = await fetch("/api/web-auth", {
     signal: piSignal, credentials: "same-origin", cache: "no-store", redirect: "error",
   });
@@ -14,6 +16,7 @@ export async function readPiAccessAuth(piSignal: AbortSignal): Promise<boolean> 
   if (typeof piState.enabled !== "boolean" || typeof piState.authenticated !== "boolean") {
     throw new Error("Unexpected Pi Web authentication status");
   }
+  piOnSourceIp?.(piResponse.headers.get("X-Pi-Source-IP") || "");
   return !piState.enabled || piState.authenticated;
 }
 
