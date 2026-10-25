@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 import { createTerminalOutput } from "./terminal-output.mjs";
+import { startPiAccess } from "../e2e/login2-start.mjs";
 
 const artifacts = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "Usage: node release/smoke.mjs <artifact-directory>");
@@ -88,7 +89,7 @@ try {
   assert.equal(redirect.status, 307);
   assert.equal(new URL(redirect.headers.get("location"), base).pathname, "/login2");
   assert.equal((await fetch(`${base}/login`)).status, 200, "Classic login must remain available");
-  for (const name of ["emblem.webp", "pi-permission.mp3", "pi-password.mp3", "pi-read.mp3", "pi-verified.mp3", "pi-welcome.mp3"]) {
+  for (const name of ["emblem.webp", "pi-connected.mp3", "pi-permission.mp3", "pi-password.mp3", "pi-read.mp3", "pi-verified.mp3", "pi-welcome.mp3"]) {
     const response = await fetch(`${base}/login2/assets/${name}`);
     assert.equal(response.status, 200, name);
     assert.ok((await response.arrayBuffer()).byteLength > 0, name);
@@ -104,6 +105,7 @@ try {
   await page.goto(`${base}/?tsgw-release-smoke=1`);
   assert.equal(new URL(page.url()).pathname, "/login2");
   assert.equal(new URL(page.url()).searchParams.get("next"), "/?tsgw-release-smoke=1");
+  await startPiAccess(page, { piChinese: true });
   await page.locator("#pi-access-password").fill(env.PI_WEB_PASSWORD);
   await page.locator("#pi-access-password").press("Enter");
   await page.waitForURL(`${base}/?tsgw-release-smoke=1`, { timeout: 60000 });
