@@ -22,14 +22,14 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: "/icons/icon-192.png",
-        sizes: "192x192",
-        type: "image/png",
+        url: "/icons/pi-blocks.svg",
+        sizes: "any",
+        type: "image/svg+xml",
       },
     ],
     apple: [
       {
-        url: "/icons/apple-touch-icon.png",
+        url: "/icons/pi-blocks-180.png",
         sizes: "180x180",
         type: "image/png",
       },

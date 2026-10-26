@@ -181,11 +181,25 @@ test("install precaches offline assets but not the runtime manifest", async () =
 
   assert.deepEqual(precached, [
     "/offline.html",
-    "/icons/icon-192.png",
-    "/icons/icon-512.png",
-    "/icons/apple-touch-icon.png",
+    "/icons/pi-blocks.svg",
+    "/icons/pi-blocks-180.png",
   ]);
   assert.equal(skipped, true);
+});
+
+test("the SVG and Apple Touch icon can be read from the offline cache", async () => {
+  globalThis.caches = {
+    match: async (request) => new Response(request.url),
+  };
+  globalThis.fetch = async () => assert.fail("cached icons must not need the network");
+
+  for (const path of ["/icons/pi-blocks.svg", "/icons/pi-blocks-180.png"]) {
+    const url = `https://pi.test${path}`;
+    const { pending, background } = dispatchFetch(url);
+    assert.ok(pending, "new icon paths must be handled by the worker");
+    assert.equal(await (await pending).text(), url);
+    assert.deepEqual(background, []);
+  }
 });
 
 test("manifest requests bypass the worker even with query strings and old cached entries", async () => {
