@@ -220,7 +220,7 @@ Module._load = function(request, parent, isMain) {
   browser = await chromium.launch();
   report(`Chromium ${browser.version()}`);
   for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 }]) {
-    context = await browser.newContext({ viewport, locale: "en-US", timezoneId: "UTC" });
+    context = await browser.newContext({ viewport, hasTouch: viewport.width === 375, locale: "en-US", timezoneId: "UTC" });
     await context.tracing.start({ screenshots: true, snapshots: true });
     await context.route("**/*", async (route) => {
       const request = route.request();
@@ -248,6 +248,23 @@ Module._load = function(request, parent, isMain) {
     // React keys. The existing notice shelf legitimately stacks unique cards.
     await exactToast(footer(), turnDetails, true);
     await page.screenshot({ path: join(artifacts, `${viewport.width}-turn-enter.png`) });
+    const cards = page.locator(".notice-shelf-item");
+    const closeLast = cards.last().getByRole("button", { name: "Close", exact: true });
+    const closeBounds = await closeLast.boundingBox();
+    assert.ok(closeBounds && closeBounds.width >= 44 && closeBounds.height >= 44, "touch-sized close target");
+    await page.keyboard.press("Tab");
+    assert.ok(await closeLast.evaluate((button) => button === document.activeElement), "Tab reaches Close from notice text");
+    await page.keyboard.press("Space");
+    assert.equal(await cards.count(), 1, "keyboard dismisses only the selected notice, not the oldest");
+    assert.equal(await cards.locator('> span[tabindex="0"]').textContent(), turnDetails, "other notice content is unchanged");
+    const closeFirst = cards.first().getByRole("button", { name: "Close", exact: true });
+    if (viewport.width === 375) await closeFirst.tap(); else await closeFirst.click();
+    assert.equal(await cards.count(), 0, "click or tap closes the remaining notice immediately");
+    await exactToast(footer(), turnDetails);
+    await page.mouse.move(0, 0);
+    await footer().focus();
+    await page.waitForFunction(() => document.querySelectorAll(".notice-shelf-item").length === 0, { }, { timeout: 7_000 });
+    report(`PASS ${viewport.width}px: Close via Tab + Space and click/tap, independent cards, reopen, original auto-expiry resumes`);
     // Reset the shelf between scopes; its generic five-card stacking policy is
     // not this regression's target, especially in the 375px viewport.
     await page.reload({ waitUntil: "domcontentloaded" });
