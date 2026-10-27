@@ -2860,6 +2860,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Pause notice expiry while hovered or focused.
   // The remainingMs/startedAt/oldestId refs implement a true pause-and-resume instead of resetting the 5s timer.
   const [pausedNoticeId, setPausedNoticeId] = useState<string | null>(null);
+  const dismissNotice = useCallback((id: string) => {
+    dispatchNotice({ type: "remove", id });
+    setPausedNoticeId((paused) => paused === id ? null : paused);
+  }, []);
   const noticeRemainingMsRef = useRef(NOTICE_VISIBLE_MS);
   const noticeTimerStartedAtRef = useRef<number | null>(null);
   const noticeOldestIdRef = useRef<string | null>(null);
@@ -2945,7 +2949,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleEditContent,
     // Present only while a history edit is pending.
     cancelEdit: editEntryId ? cancelEdit : undefined,
-    addNotice,
+    addNotice, dismissNotice,
     setNoticePaused: setPausedNoticeId,
     handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
