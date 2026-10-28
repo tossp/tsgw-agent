@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportCatError } from "@/lib/cat-monitoring";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 
@@ -60,6 +61,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    reportCatError(error, { source: "agent-api", operation: commandType, session_id: id, status: 500 });
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted
@@ -87,6 +89,7 @@ export async function GET(
     if (new URL(req.url).searchParams.get("systemPrompt") === "0") delete state.systemPrompt;
     return NextResponse.json({ running: true, state });
   } catch (error) {
+    reportCatError(error, { source: "agent-api", operation: "get_state", session_id: id, status: 500 });
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

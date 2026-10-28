@@ -1,4 +1,5 @@
 import type { AgentEventLike } from "./agent-event-wire";
+import { reportCatError } from "./cat-monitoring";
 
 export interface AgentEventSourceLike {
   readonly readyState: number;
@@ -97,7 +98,13 @@ export class AgentEventConnection {
       if (connection.source.readyState === EVENT_SOURCE_OPEN) return;
 
       // A once-ready EventSource may otherwise remain CONNECTING indefinitely.
-      this.discard(connection, new AgentEventConnectionError("closed"));
+      const closed = new AgentEventConnectionError("closed");
+      reportCatError(closed, {
+        source: "agent-events",
+        session_id: connection.sessionId,
+        reason: closed.status,
+      });
+      this.discard(connection, closed);
     }
   }
 
@@ -108,10 +115,16 @@ export class AgentEventConnection {
     try {
       source = this.options.createSource(sessionId);
     } catch (error) {
-      throw new AgentEventConnectionError(
+      const connectionError = new AgentEventConnectionError(
         "closed",
         error instanceof Error ? error.message : String(error),
       );
+      reportCatError(connectionError, {
+        source: "agent-events",
+        session_id: sessionId,
+        reason: connectionError.status,
+      });
+      throw connectionError;
     }
 
     let settled = false;
@@ -185,6 +198,14 @@ export class AgentEventConnection {
 
   private fail(connection: Connection, error: AgentEventConnectionError): void {
     if (this.current !== connection) return;
+    // A real failure of this stream: a readiness timeout, a refused start, an error event,
+    // or a ready stream gone silent. A discard on its own is not one — a manual close, a
+    // session switch and a hidden page releasing its stream all pass through `discard`.
+    reportCatError(error, {
+      source: "agent-events",
+      session_id: connection.sessionId,
+      reason: error.status,
+    });
     this.discard(connection, error);
     if (error.status === "startup_error") this.stopRetrying();
     else this.scheduleRetry(connection.sessionId);

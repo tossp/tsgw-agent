@@ -56,6 +56,7 @@ import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
 import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
+import { reportCatAgentEvent } from "./cat-agent-events";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server";
 import {
   appendClearedSessionToolSelection,
@@ -681,6 +682,7 @@ export class AgentSessionWrapper {
   }
 
   private emit(event: AgentEvent): void {
+    reportCatAgentEvent(event, this.sessionId);
     for (const listener of this.listeners) {
       try {
         listener(event);

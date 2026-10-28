@@ -108,6 +108,8 @@ jobs:
 
       # 干净 CI 才能构建：dev 写 .next/dev，e2e 的 start 模式写 route-cache，都不该进包。
       - name: Build
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: npm run build
 
       - name: Check the build output

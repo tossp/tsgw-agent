@@ -1,3 +1,4 @@
+import { reportCatError } from "./cat-monitoring";
 import {
   AGENT_EVENT_HEARTBEAT_MS,
   isEventIncludedInSnapshot,
@@ -274,6 +275,7 @@ export function createAgentEventStream(
           snapshotPublished = true;
         } catch (error) {
           if (closed) return;
+          reportCatError(error, { source: "agent-startup", session_id: sessionId });
           encode({
             type: "startup_error",
             errorMessage: `Failed to start agent: ${errorMessage(error)}`,

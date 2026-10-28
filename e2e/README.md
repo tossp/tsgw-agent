@@ -62,6 +62,13 @@ Coverage:
 - A local extension checks dialog keyboard navigation, Esc cancellation,
   collapse/expand draft preservation, countdown display, and server-side expiry.
 
+The TSGW-only CAT regression is standalone: `node e2e/cat-monitoring.mjs`, or
+`E2E_SERVER_MODE=start node e2e/cat-monitoring.mjs` in a clean production-build
+checkout. It uses a temporary local collector for real browser/server SDK envelopes,
+checks runtime DSN configuration, disabled mode and the existing auth boundary.
+Only an explicit `CAT_E2E_DSN` sends test events to a real Sentry instance; then
+verify server receipt through `ts_tool → cat` as well. No model calls are made.
+
 Model prompts, live model streaming, and agent execution are outside this suite.
 Failures save a screenshot, Playwright trace, and server log under
 `test-results/e2e/`; CI uploads that directory. Open a trace with
