@@ -16,6 +16,7 @@ import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { agentStatusUrl, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import { SessionCompletionTracker } from "@/lib/session-completion-client";
+import { reportCatError } from "@/lib/cat-monitoring";
 import {
   deleteSessionViewSnapshot,
   getSessionViewSnapshot,
@@ -995,12 +996,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             ? { thinkingLevel: selectedThinkingLevel }
             : {}),
         }),
+      }).catch((error) => {
+        reportCatError(error, { source: "agent-new-request", operation: "ensure_session" });
+        throw error;
       });
       if (!res.ok) {
         // The server's reason (a project folder that no longer exists, a model Chat only
         // cannot load) beats a bare status.
         const body = await res.json().catch(() => null) as { error?: unknown } | null;
-        throw new Error(typeof body?.error === "string" ? body.error : `HTTP ${res.status}`);
+        const error = new Error(typeof body?.error === "string" ? body.error : `HTTP ${res.status}`);
+        if (res.status >= 500) reportCatError(error, { source: "agent-new-request", status: res.status });
+        throw error;
       }
       const result = await res.json() as {
         sessionId: string;

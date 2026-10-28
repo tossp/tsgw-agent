@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportCatError } from "@/lib/cat-monitoring";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";
@@ -97,6 +98,7 @@ export async function POST(req: Request) {
       thinkingLevel: state.thinkingLevel,
     });
   } catch (error) {
+    reportCatError(error, { source: "agent-new", operation: commandType, status: 500 });
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted

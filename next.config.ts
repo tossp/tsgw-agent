@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs/config";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -107,4 +108,14 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  sentryUrl: process.env.SENTRY_URL ?? "https://cat.tossp.com",
+  org: process.env.SENTRY_ORG ?? "sentry",
+  project: process.env.SENTRY_PROJECT ?? "tsgw-agent",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  telemetry: false,
+  silent: true,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+  release: { name: `tsgw-agent@${version}` },
+  buildTimeInstrumentation: false,
+});

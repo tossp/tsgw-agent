@@ -66,7 +66,7 @@ export function proxy(request: NextRequest) {
       ? NextResponse.redirect(new URL("/", request.url))
       : NextResponse.next();
   }
-  if (request.nextUrl.pathname === "/api/web-auth") return NextResponse.next();
+  if (request.nextUrl.pathname === "/api/web-auth" || request.nextUrl.pathname === "/api/cat-config") return NextResponse.next();
 
   if (!authenticated) {
     if (!isApiRequest) {

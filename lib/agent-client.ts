@@ -7,6 +7,8 @@
 // Call sites previously repeated the same 5-line fetch block 13× in
 // hooks/useAgentSession.ts. This helper collapses that down to one line.
 
+import { reportCatError } from "./cat-monitoring";
+
 export class AgentCommandError extends Error {
   constructor(
     message: string,
@@ -39,25 +41,52 @@ export async function sendAgentCommand<T = unknown>(
   sessionId: string,
   command: Record<string, unknown>,
 ): Promise<T> {
-  const res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(command),
-  });
-  const body = (await res.json().catch(() => ({}))) as {
+  // Monitoring only: the command's type and the session, never its body (a prompt can
+  // be long and carries nothing a broken reply needs).
+  const tags = {
+    source: "agent-command",
+    operation: typeof command.type === "string" ? command.type : undefined,
+    session_id: sessionId,
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+    });
+  } catch (error) {
+    reportCatError(error, tags);
+    throw error;
+  }
+
+  type Body = {
     success?: boolean;
     data?: T;
     error?: string;
     code?: string;
     accepted?: boolean;
   };
+  let body: Body = {};
+  try {
+    body = (await res.json()) as Body;
+  } catch (error) {
+    // A 2xx whose body is not JSON is a broken reply, reported here; a non-2xx one
+    // is reported below as its status, never twice.
+    if (res.ok) reportCatError(error, { ...tags, status: res.status });
+  }
+
   if (!res.ok || body.error) {
-    throw new AgentCommandError(
+    const error = new AgentCommandError(
       body.error ?? `HTTP ${res.status}`,
       res.status,
       body.code,
       body.accepted,
     );
+    // A 4xx is a refusal the caller shows as is; a 5xx, or a 2xx carrying `error`, is a failure.
+    if (res.ok || res.status >= 500) reportCatError(error, { ...tags, status: res.status });
+    throw error;
   }
   return body.data as T;
 }

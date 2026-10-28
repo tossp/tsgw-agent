@@ -1,5 +1,9 @@
 # Sessions, branching and live events
 
+## TSGW-only CAT error monitoring
+- Configuration, scope and checks live in [../cat-monitoring.md](../cat-monitoring.md). Initialize only when runtime `SENTRY_DSN` is set; browser settings come from `/api/cat-config`, not build-time `NEXT_PUBLIC_*`.
+- `reportCatError()` observes caught failures; `reportCatAgentEvent()` reads provider/prompt failure events at the wrapper’s emission boundary, once regardless of how many browsers subscribe. Never move capture into per-browser SSE forwarding. Normal abort/close paths stay unchanged. No custom scrubbing, offline queues or rate limiting.
+
 ## AgentSession lifecycle (`lib/rpc-manager.ts`)
 - One `AgentSessionWrapper` per session id in `globalThis.__piSessions` (`globalThis` survives Next.js hot reload; a module-level Map does not). Concurrent `startRpcSession()` calls share one start Promise (`globalThis.__piStartLocks`). Idle timeout: 10 minutes (`PI_WEB_IDLE_TIMEOUT_MS`, `0` disables). A main wrapper still owing a non-cancelled family-completion decision stays warm while descendants are unsettled, even without a page lease; its own `isRunning()` remains false. Normal idle cleanup resumes after completion; Stop/forced cleanup is not held by this notification lease.
 - Stop cannot cancel a run awaiting a promise that ignores the abort signal (a third-party extension handler or tool): `inner.abort()` never returns. So Stop (`abort`, `abort_bash`) sets `forceShutdownOnIdle` and arms the idle timer, shutting the wrapper down one idle timeout after the first Stop even while it runs. Later commands (a reload's `get_tools`, Stop again) must not push that deadline back; with `PI_WEB_IDLE_TIMEOUT_MS=0` it still arms, at 10 minutes.
