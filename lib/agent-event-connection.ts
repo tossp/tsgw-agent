@@ -1,5 +1,6 @@
 import type { AgentEventLike } from "./agent-event-wire";
 import { reportCatError } from "./cat-monitoring";
+import type { DebugEventConnectionSnapshot, DebugStreamCloseReason } from "./debug-types";
 
 export interface AgentEventSourceLike {
   readonly readyState: number;
@@ -33,7 +34,15 @@ type Connection = {
   source: AgentEventSourceLike;
   attempt: Attempt;
   watchdog: ReturnType<typeof setInterval> | null;
+  openedAt: number;
+  connectedAt: number | null;
+  /** Last data of any kind, heartbeats included; null before the first. */
+  lastSeenAt: number | null;
+  lastHeartbeatAt: number | null;
+  events: number;
 };
+
+type FailReason = NonNullable<DebugEventConnectionSnapshot["lastError"]>["reason"];
 
 export interface AgentEventConnectionOptions {
   createSource(sessionId: string): AgentEventSourceLike;
@@ -54,14 +63,48 @@ const EVENT_SOURCE_OPEN = 1;
 /** Owns the EventSource, agent-readiness handshake, and passive reconnect. */
 export class AgentEventConnection {
   private current: Connection | null = null;
-  private retry: { sessionId: string; timer: ReturnType<typeof setTimeout> } | null = null;
+  private retry: { sessionId: string; timer: ReturnType<typeof setTimeout>; dueAt: number } | null = null;
   private retryGeneration = 0;
+  // Bookkeeping for snapshot() only: nothing here decides what the connection does.
+  private opens = 0;
+  private retries = 0;
+  private lastError: DebugEventConnectionSnapshot["lastError"] = null;
+  private lastClose: DebugEventConnectionSnapshot["lastClose"] = null;
 
   constructor(private readonly options: AgentEventConnectionOptions) {}
 
-  close(): void {
+  /**
+   * `reason` only labels the close in snapshot(). An idle connection left by an error no close has
+   * ended yet (a startup error, a retry nobody wanted) is stamped too: the close ends that outage.
+   */
+  close(reason?: DebugStreamCloseReason): void {
+    const openError = this.lastError !== null && !(this.lastClose && this.lastClose.at >= this.lastError.at);
+    if (this.current || this.retry || openError) this.lastClose = { reason: reason ?? null, at: Date.now() };
     this.stopRetrying();
     if (this.current) this.discard(this.current, new AgentEventConnectionError("closed"));
+  }
+
+  /** What the connection holds now, as a plain copy. Reads fields only: it opens, closes and arms nothing. */
+  snapshot(): DebugEventConnectionSnapshot {
+    const connection = this.current;
+    const retry = this.retry;
+    return {
+      sessionId: connection?.sessionId ?? retry?.sessionId ?? null,
+      state: connection ? (connection.attempt.ready ? "connected" : "connecting") : retry ? "retrying" : "idle",
+      readyState: connection ? connection.source.readyState : null,
+      openedAt: connection?.openedAt ?? null,
+      connectedAt: connection?.connectedAt ?? null,
+      lastSeenAt: connection?.lastSeenAt ?? null,
+      lastHeartbeatAt: connection?.lastHeartbeatAt ?? null,
+      events: connection?.events ?? 0,
+      opens: this.opens,
+      retries: this.retries,
+      retryDueAt: retry?.dueAt ?? null,
+      watchdogArmed: Boolean(connection && connection.watchdog !== null),
+      staleAfterMs: this.options.staleAfterMs ?? null,
+      lastError: this.lastError ? { ...this.lastError } : null,
+      lastClose: this.lastClose ? { ...this.lastClose } : null,
+    };
   }
 
   maintain(sessionId: string): void {
@@ -98,6 +141,7 @@ export class AgentEventConnection {
       if (connection.source.readyState === EVENT_SOURCE_OPEN) return;
 
       // A once-ready EventSource may otherwise remain CONNECTING indefinitely.
+      this.lastClose = { reason: "stuck", at: Date.now() };
       const closed = new AgentEventConnectionError("closed");
       reportCatError(closed, {
         source: "agent-events",
@@ -109,16 +153,18 @@ export class AgentEventConnection {
   }
 
   private open(sessionId: string): Connection {
-    if (this.current) this.discard(this.current, new AgentEventConnectionError("closed"));
+    if (this.current) {
+      this.lastClose = { reason: "replaced", at: Date.now() };
+      this.discard(this.current, new AgentEventConnectionError("closed"));
+    }
 
     let source: AgentEventSourceLike;
     try {
       source = this.options.createSource(sessionId);
     } catch (error) {
-      const connectionError = new AgentEventConnectionError(
-        "closed",
-        error instanceof Error ? error.message : String(error),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastError = { reason: "error", message, at: Date.now() };
+      const connectionError = new AgentEventConnectionError("closed", message);
       reportCatError(connectionError, {
         source: "agent-events",
         session_id: sessionId,
@@ -126,6 +172,7 @@ export class AgentEventConnection {
       });
       throw connectionError;
     }
+    this.opens += 1;
 
     let settled = false;
     let resolve!: () => void;
@@ -135,7 +182,7 @@ export class AgentEventConnection {
       reject = rejectPromise;
     });
     const timeout = setTimeout(() => {
-      this.fail(connection, new AgentEventConnectionError("ready_timeout"));
+      this.fail(connection, new AgentEventConnectionError("ready_timeout"), "ready_timeout");
     }, this.options.readinessTimeoutMs);
     const attempt: Attempt = {
       promise,
@@ -153,13 +200,23 @@ export class AgentEventConnection {
         reject(error);
       },
     };
-    const connection: Connection = { sessionId, source, attempt, watchdog: null };
+    const openedAt = Date.now();
+    const connection: Connection = {
+      sessionId,
+      source,
+      attempt,
+      watchdog: null,
+      openedAt,
+      connectedAt: null,
+      lastSeenAt: null,
+      lastHeartbeatAt: null,
+      events: 0,
+    };
     this.current = connection;
-    let lastSeen = Date.now();
 
     source.onmessage = (message) => {
       if (this.current !== connection) return;
-      lastSeen = Date.now();
+      connection.lastSeenAt = Date.now();
       let event: AgentEventLike;
       try {
         event = JSON.parse(message.data) as AgentEventLike;
@@ -167,8 +224,12 @@ export class AgentEventConnection {
         return;
       }
 
-      if (event.type === "heartbeat") return;
+      if (event.type === "heartbeat") {
+        connection.lastHeartbeatAt = connection.lastSeenAt;
+        return;
+      }
       if (event.type === "connected") {
+        connection.connectedAt ??= connection.lastSeenAt;
         attempt.ready = true;
         attempt.succeed();
         this.stopRetrying();
@@ -177,27 +238,29 @@ export class AgentEventConnection {
           // Checked against the clock, so a background tab's throttled timer
           // only reconnects later, never wrongly.
           connection.watchdog = setInterval(() => {
-            if (Date.now() - lastSeen > staleAfterMs) {
-              this.fail(connection, new AgentEventConnectionError("closed"));
+            if (Date.now() - (connection.lastSeenAt ?? openedAt) > staleAfterMs) {
+              this.fail(connection, new AgentEventConnectionError("closed"), "stale");
             }
           }, Math.max(1_000, Math.floor(staleAfterMs / 3)));
         }
       } else if (event.type === "startup_error") {
         const message = typeof event.errorMessage === "string" ? event.errorMessage : undefined;
-        this.fail(connection, new AgentEventConnectionError("startup_error", message));
+        this.fail(connection, new AgentEventConnectionError("startup_error", message), "startup_error");
         return;
       }
+      connection.events += 1;
       this.options.onEvent(event);
     };
     source.onerror = () => {
-      this.fail(connection, new AgentEventConnectionError("closed"));
+      this.fail(connection, new AgentEventConnectionError("closed"), "error");
     };
 
     return connection;
   }
 
-  private fail(connection: Connection, error: AgentEventConnectionError): void {
+  private fail(connection: Connection, error: AgentEventConnectionError, reason: FailReason): void {
     if (this.current !== connection) return;
+    this.lastError = { reason, message: reason === "startup_error" ? error.message : null, at: Date.now() };
     // A real failure of this stream: a readiness timeout, a refused start, an error event,
     // or a ready stream gone silent. A discard on its own is not one — a manual close, a
     // session switch and a hidden page releasing its stream all pass through `discard`.
@@ -227,9 +290,10 @@ export class AgentEventConnection {
     const timer = setTimeout(() => {
       if (this.retry?.timer !== timer) return;
       this.retry = null;
+      this.retries += 1;
       this.maintain(sessionId);
     }, this.options.reconnectDelayMs);
-    this.retry = { sessionId, timer };
+    this.retry = { sessionId, timer, dueAt: Date.now() + this.options.reconnectDelayMs };
   }
 
   private stopRetrying(): void {

@@ -81,7 +81,9 @@ export async function checkFontPreferences(page) {
   // Changing font metrics must refit a draft without requiring another keystroke.
   await page.keyboard.press("Escape");
   const textarea = page.locator(".chat-input-textarea");
-  await textarea.fill("iiii llll mmmm wwww sample text ".repeat(12));
+  // Twelve repetitions wrap to four lines in both Linux fallback fonts.
+  // Sixteen keep their heights distinct without reaching the 200px cap.
+  await textarea.fill("iiii llll mmmm wwww sample text ".repeat(16));
   await openSettings();
   await ui.fill("serif");
   const serifHeight = await textarea.evaluate((el) => el.clientHeight);

@@ -59,10 +59,35 @@ export function usageDetailsText(summary: MessageUsageSummary, t: Translate, loc
     lines.push(`${t("chat.usageDuration")}: ${(durationMs / 1_000).toLocaleString(locale, { maximumFractionDigits: 3 })}s`);
   }
   const rate = averageOutputRate(summary);
-  if (rate !== undefined) lines.push(`${t("chat.usageAverage")}: ${rate.toFixed(1)} t/s`);
+  if (rate !== undefined) {
+    lines.push(`${t("chat.usageAverage")}: ${rate.toFixed(1)} t/s`, t("chat.usageAverageHint"));
+  }
   if (!summary.complete) lines.push(t("chat.usageIncomplete"));
   if (response && scope === "response") lines.push(...responseDetailsText(response, t, locale));
   return lines.join("\n");
+}
+
+// Preserve the upstream footer's copied/read-aloud text without relying on
+// font glyphs for the visible marks. Inline children keep each count on one line.
+const USAGE_PREFIX: Record<UsageIconKind, string> = { input: "↑", output: "↓", cacheRead: "R", cacheWrite: "W" };
+
+export function UsageDuration({ durationMs }: { durationMs: number }) {
+  const { t } = useI18n();
+  if (!Number.isFinite(durationMs) || durationMs < 0) return null;
+  const time = formatTurnDuration(durationMs);
+  const label = t("chat.turnDuration", { time });
+  const index = label.indexOf(time);
+  if (index < 0) return <span>{label}</span>;
+  return (
+    <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+      <span style={{ fontSize: 0 }}>{label.slice(0, index)}</span>
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "inline", verticalAlign: "-0.1em", marginRight: 3 }}>
+        <path d="M6 1.25a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 1 0 0-9.5M6 3.5V6l1.75 1" />
+      </svg>
+      {time}
+      <span style={{ fontSize: 0 }}>{label.slice(index + time.length)}</span>
+    </span>
+  );
 }
 
 export function MessageUsage({ summary, response, onShowDetails }: {
@@ -75,13 +100,14 @@ export function MessageUsage({ summary, response, onShowDetails }: {
   const parts = (["input", "output", "cacheRead", "cacheWrite"] as UsageIconKind[])
     .filter((kind) => usage[kind] > 0)
     .map((kind) => (
-      <span key={kind} title={t(`session.${kind}`)} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-        <UsageIcon kind={kind} />{formatUsageTokens(usage[kind])}
+      <span key={kind} title={t(`session.${kind}`)}>
+        <span style={{ fontSize: 0 }}>{USAGE_PREFIX[kind]}</span>
+        <UsageIcon kind={kind} style={{ display: "inline", verticalAlign: "-0.05em", marginRight: 3 }} />{formatUsageTokens(usage[kind])}
       </span>
     ));
   if (usage.cost?.total) parts.push(<span key="cost">${formatUsageCost(usage.cost.total)}</span>);
   if (durationMs !== undefined && Number.isFinite(durationMs) && durationMs >= 0) {
-    parts.push(<span key="duration">{t("chat.turnDuration", { time: formatTurnDuration(durationMs) })}</span>);
+    parts.push(<UsageDuration key="duration" durationMs={durationMs} />);
   }
   const rate = averageOutputRate(summary);
   if (rate !== undefined) {
@@ -98,13 +124,19 @@ export function MessageUsage({ summary, response, onShowDetails }: {
       aria-label={onShowDetails ? `${t("chat.usageDetails")}\n${details}` : undefined}
       onClick={onShowDetails ? () => onShowDetails(details) : undefined}
       style={{
-        display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: "2px 5px",
+        display: "inline-flex", alignItems: "center", flexWrap: "wrap", rowGap: 2, columnGap: 7,
         minWidth: 0, maxWidth: "100%", padding: "2px 0", border: "none", background: "none",
         font: "inherit", fontSize: 11, color: "var(--text-dim)", textAlign: "left",
         cursor: onShowDetails ? "pointer" : "default", fontVariantNumeric: "tabular-nums",
       }}
     >
-      {parts.map((part, index) => <Fragment key={part.key}>{index > 0 && <span aria-hidden="true">·</span>}{part}</Fragment>)}
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 && " "}
+          {index > 0 && (part.key === "duration" || part.key === "rate") && <><span>·</span>{" "}</>}
+          {part}
+        </Fragment>
+      ))}
     </Tag>
   );
 }

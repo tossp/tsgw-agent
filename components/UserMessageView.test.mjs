@@ -40,12 +40,24 @@ test("keeps rendered user messages as the default and adds Source after existing
   assert.match(html, /aria-hidden="true" focusable="false"><polyline points="7 6 1 12 7 18"/);
 });
 
-test("offers Source for HTML that the existing rendered view hides (#1407)", () => {
+test("shows user HTML as literal text by default while keeping the Source action (#1407)", () => {
   const text = '<TableOperator v-model="columns" :tableId="TABLE_ID_CONST.BUSINESS.${basic.businessModule.toUpperCase()}.Demo" :refresh="queryData" /> 后文';
   const html = renderUser(text);
   assert.match(html, /后文/);
-  assert.doesNotMatch(html, /TableOperator|BUSINESS/);
+  assert.match(html, /&lt;TableOperator v-model=&quot;columns&quot;/);
+  assert.match(html, /TABLE_ID_CONST.BUSINESS/);
+  assert.doesNotMatch(html, /<TableOperator\b/);
   assert.match(html, /aria-label="Source"/);
+});
+
+test("textualizes profile and div wrappers without swallowing content or disabling other Markdown", () => {
+  const html = renderUser('<user-profile>\nProfile **literal** body\n</user-profile>\n\n<div class="card">HTML body</div>\n\n## Markdown heading\n\n**Markdown bold** and `inline code`');
+  assert.match(html, /&lt;user-profile&gt;<br\/>Profile \*\*literal\*\* body<br\/>&lt;\/user-profile&gt;/);
+  assert.match(html, /&lt;div class=&quot;card&quot;&gt;HTML body&lt;\/div&gt;/);
+  assert.match(html, /<h2>Markdown heading<\/h2>/);
+  assert.match(html, /<strong>Markdown bold<\/strong>/);
+  assert.match(html, /<code[^>]*>inline code<\/code>/);
+  assert.doesNotMatch(html, /<user-profile|<div class="card"/);
 });
 
 test("does not offer a text display switch for empty or image-only messages", () => {

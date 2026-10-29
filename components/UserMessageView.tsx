@@ -5,7 +5,7 @@ import { SafeMarkdownBody } from "./SafeMarkdownBody";
 import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
-import { skillExpansionToCommand } from "@/lib/slash-display";
+import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
 import type { UserMessage, TextContent, ImageContent } from "@/lib/types";
 
 // Keep long prompts inside a scrollable bubble.
@@ -206,7 +206,7 @@ export function UserMessageView({ time, message, cwd, onOpenFile, entryId, onFor
                 )}
               </div>
               {expanded && (
-                <SafeMarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>
+                <SafeMarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{skillExpansionContent(content) ?? content}</SafeMarkdownBody>
               )}
             </div>
           ) : (

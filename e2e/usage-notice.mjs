@@ -10,6 +10,11 @@ import { dirname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
+const { getLocalePlugin } = await jiti.import("../lib/i18n/registry.ts");
+const averageHint = getLocalePlugin("en").messages["chat.usageAverageHint"];
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const lockPath = join(root, ".next/dev/lock");
@@ -96,6 +101,7 @@ function expectedDetails(original, startMs, durationMs, stopReason = "stop") {
   const lines = original.split("\n");
   const costIndex = lines.findIndex((line) => line.startsWith("Cost: "));
   lines.splice(costIndex + 1, 0, "Input cost: $0", "Output cost: $0", "Cache Read cost: $0", "Cache Write cost: $0");
+  if (lines.some((line) => line.startsWith("Average output speed: "))) lines.push(averageHint);
   if (original.startsWith("Turn usage")) return lines.join("\n");
   lines.push("Model: usage-fixture", "Provider: test");
   const time = (ms) => new Date(epoch + ms).toLocaleString("en-US", {
@@ -138,7 +144,7 @@ async function exactToast(button, expected, keyboard = false) {
 async function assertParts(button, expected) {
   await button.waitFor();
   const parts = await button.locator(":scope > span[title]").allTextContents();
-  assert.deepEqual(parts.map((part) => part.trim()), expected, "compact input/output/cache counts");
+  assert.deepEqual(parts.map((part) => part.trim().replace(/^[↑↓RW](?=\d)/, "")), expected, "compact input/output/cache counts (copied prefixes stay hidden)");
   assert.doesNotMatch(await button.textContent(), /\d+\.0[KM]\b/, "no redundant .0 in K/M counts");
   await button.scrollIntoViewIfNeeded();
   const bounds = await button.boundingBox();
@@ -153,7 +159,11 @@ async function assertArrows(button) {
     assert.equal(await svg.locator("line").getAttribute("y1"), from, `${label} arrow origin`);
     assert.equal(await svg.locator("line").getAttribute("y2"), to, `${label} arrow direction`);
     assert.equal(await svg.locator("polyline").getAttribute("points"), points, `${label} arrowhead`);
+    const prefix = button.locator(`span[title="${label}"] > span`);
+    assert.equal(await prefix.textContent(), label === "Input" ? "↑" : "↓", `${label} copy/read-aloud prefix`);
+    assert.equal(await prefix.evaluate((element) => getComputedStyle(element).fontSize), "0px", "the font glyph never duplicates its visible SVG");
   }
+  assert.equal(await button.locator('svg[viewBox="0 0 12 12"]').count(), 1, "the upstream duration clock remains visible");
 }
 let base;
 try {
@@ -225,6 +235,10 @@ Module._load = function(request, parent, isMain) {
     await context.route("**/*", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
+      // Keep synthetic monitoring traffic local without creating a failed-resource console error.
+      if (url.origin === "https://cat.tossp.com" && url.pathname === "/api/10/envelope/") {
+        return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      }
       if (url.origin !== base) return route.abort();
       requests.push(`${request.method()} ${url.pathname}`);
       const type = request.method() === "POST" && /^\/api\/agent\/[^/]+$/.test(url.pathname) ? request.postDataJSON()?.type : undefined;

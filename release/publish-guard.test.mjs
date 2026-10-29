@@ -8,6 +8,14 @@ const workflow = load(readFileSync(new URL("../.github/workflows/tsgw-npm.yml", 
 const step = workflow.jobs.publish.steps.find((item) => item.name === "Confirm the registry allows this publish");
 const code = step.run.match(/<<'NODE'\n([\s\S]*?)\nNODE/)[1];
 
+test("the upstream publisher never runs in the fork", () => {
+  const upstream = load(readFileSync(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8"));
+  assert.equal(upstream.jobs.publish.if, "github.repository == 'agegr/pi-web'");
+  assert.match(workflow.jobs.build.if, /github\.repository == 'tossp\/tsgw-agent'/);
+  assert.deepEqual(workflow.on.push.branches, ["tsgw"]);
+  assert.deepEqual(workflow.on.push.tags, ["v*"]);
+});
+
 // Execute the actual CI guard with fetch mocked, without credentials, network
 // access, npm commands or any publication side effects.
 const scenarios = [

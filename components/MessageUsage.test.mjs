@@ -32,11 +32,14 @@ test("compact summary uses shared thin SVGs, decimal K/M and actual average outp
   assert.match(html, /1\.6M/);
   assert.match(html, /\$0\.8608/);
   assert.match(html, /724\.1 t\/s/);
-  assert.match(html, /took 10s/);
+  assert.match(html.replace(/<[^>]+>/g, ""), /\$0\.8608 · took 10s · 724\.1 t\/s/);
+  assert.match(html, /column-gap:7px/);
+  assert.match(html, /viewBox="0 0 12 12"/);
+  assert.match(html.replace(/<[^>]+>/g, ""), /↑314\.1K ↓7\.2K R1\.6M/);
   assert.match(html, /<line x1="5" y1="8.5" x2="5" y2="1.5"/);
   assert.match(html, /<line x1="5" y1="1.5" x2="5" y2="8.5"/);
   assert.match(html, /<button type="button" class="message-usage"/);
-  assert.equal((html.match(/<svg/g) ?? []).length, 3);
+  assert.equal((html.match(/<svg/g) ?? []).length, 4);
   assert.doesNotMatch(html, /cache R|cache W|♻|📥|📤/);
 });
 
@@ -44,7 +47,7 @@ test("message SVGs inherit the counts color and shared toolbar icons stay neutra
   const withWrite = { ...summary, usage: { ...summary.usage, cacheWrite: 12_000 } };
   const html = render(MessageUsage, { summary: withWrite });
   const icons = [...html.matchAll(/<svg\b[^>]*>/g)].map(([tag]) => tag);
-  assert.equal(icons.length, 4);
+  assert.equal(icons.length, 5);
   for (const icon of icons) {
     assert.match(icon, /stroke="currentColor"/);
     assert.doesNotMatch(icon, /style="[^"]*color:/);
@@ -64,6 +67,7 @@ test("details contain exact counts, total, cost, timing and scope in all three l
     const text = usageDetailsText(summary, translate(locale), locale);
     for (const count of ["314,138", "7,241", "1,600,640", "1,922,019", "$0.8608", "724.1 t/s"]) assert.ok(text.includes(count), `${locale}: ${count}`);
     assert.ok(text.startsWith(translate(locale)("chat.usageTurn")));
+    assert.ok(text.includes(translate(locale)("chat.usageAverageHint")), "details explain that elapsed time includes tools and waiting");
     assert.ok(!text.includes(`\n${translate(locale)("session.cacheWrite")}:`), "zero cache write tokens are omitted");
   }
 });

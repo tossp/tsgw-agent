@@ -14,7 +14,10 @@ loopback port. Run it in a checkout without an active dev server; Next.js
 shares `.next/dev/lock` within a checkout. All fixtures are created before
 startup in a temporary `PI_CODING_AGENT_DIR` and removed on completion.
 No model credentials or existing Pi sessions are needed. Git is required for
-the linked-worktree fixture.
+the linked-worktree fixture. The synthetic server sets `PI_WEB_SKIP_VERSION_CHECK=1`
+so navigation checks do not depend on the public npm registry or the fork’s
+initial `latest` placeholder; release/channel behavior has separate route and
+release-script tests.
 
 CI runs lint, type checking, and unit tests in one job. A separate job builds
 the application in a clean checkout and runs the same browser tests with

@@ -121,13 +121,14 @@ test("provides count and description translations in every supported locale", ()
   }
 });
 
-test("inserts the independent block while preserving both original status blocks in ChatWindow", () => {
+test("inserts the independent block while preserving both upstream status blocks in ChatWindow", () => {
   const shell = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
   const chat = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
   const component = readFileSync(new URL("./RunningSubagentsStatus.tsx", import.meta.url), "utf8");
-  const mainPhase = `{agentRunning && !hasStreamingContent && (agentPhase || isCompacting) && (
+  // Pinned d128bae blocks: compaction/queue-label changes are upstream behavior, not this independent status UI.
+  const mainPhase = `{(agentRunning || isCompacting) && !hasStreamingContent && (agentPhase || isCompacting) && (
               <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t, isCompacting)}</span>
+                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0))}</span>
               </div>
             )}`;
   const command = `{bashRunning && !pendingBash && (
@@ -137,7 +138,7 @@ test("inserts the independent block while preserving both original status blocks
             )}`;
   const subagentBlock = "<RunningSubagentsStatus runningSubagents={runningSubagents} />";
   assert.match(shell, /runningSubagents=\{activeSessionFamily \? getRunningSubagents\(activeSessionFamily\.subagents, runningSessionIds\) : \[\]\}/);
-  assert.ok(chat.includes(mainPhase), "The main phase condition, markup and pulse stay unchanged in ChatWindow");
+  assert.ok(chat.includes(mainPhase), "The upstream main/compaction phase condition, queued-message label and pulse remain independent");
   assert.ok(chat.includes(command), "The command condition, markup and pulse stay unchanged in ChatWindow");
   assert.ok(chat.indexOf(mainPhase) < chat.indexOf(subagentBlock));
   assert.ok(chat.indexOf(subagentBlock) < chat.indexOf(command));

@@ -1,7 +1,7 @@
 # tsgw 分支的 npm 发布
 
 本仓库的 tsgw fork 用一条独立工作流发布 npm 包：`.github/workflows/tsgw-npm.yml`。
-它只服务 `tsgw` 开发发布分支，不读写默认分支，不依赖 `main`；已有的 `.github/workflows/ci.yml`、`demo-pages.yml` 和 `package.json` 的 `scripts.release` 保持上游原样。
+它只服务 `tsgw` 开发发布分支，不读写默认分支，不依赖 `main`；已有的 `.github/workflows/ci.yml`、`demo-pages.yml` 和 `package.json` 的 `scripts.release` 保持上游原样。上游新增的 `publish.yml` 仅允许 `agegr/pi-web` 仓库执行，fork 中不会形成第二条发布路径。
 
 - 包：`tsgw-agent`（身份持久化在源 `package.json`，CI 不替换）
 - 预览版：push 到 `tsgw` → `next` dist-tag
@@ -141,7 +141,7 @@ git push origin tsgw                                        # 让 tag 提交落�
 git push origin v0.1.0                                      # 按名推送，禁止 git push --tags
 ```
 
-版本号规则：预览版不回写 Git；稳定 tag 必须等于该提交的源版本。正式版发布后，把 `package.json` 与 lock 的源版本一起提升到下一轮目标（如 `0.1.1`），后续预览即为 `0.1.1-dev.*`，准备就绪再打 `v0.1.1`。也可以在打 tag 前单独提交目标版本的 bump。`npm run release` 是上游脚本（自行 bump 版本、`next build`、直接 `npm publish` 到 `latest`），在 tsgw 分支不使用它。
+版本号规则：预览版不回写 Git；稳定 tag 必须等于该提交的源版本。正式版发布后，把 `package.json` 与 lock 的源版本一起提升到下一轮目标（如 `0.1.1`），后续预览即为 `0.1.1-dev.*`，准备就绪再打 `v0.1.1`。也可以在打 tag 前单独提交目标版本的 bump。`npm run release` 保持上游脚本 `npm version patch -m "Release v%s"`，只在本地修改版本、提交并创建标签，不构建、不发布。tsgw 日常仍按上述分支与标签流程发布；本次同步不执行该脚本、不创建标签。
 
 ## 5. 验证与排障
 
