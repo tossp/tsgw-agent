@@ -107,9 +107,12 @@ jobs:
           NODE
 
       # 干净 CI 才能构建：dev 写 .next/dev，e2e 的 start 模式写 route-cache，都不该进包。
+      # CAT 的 source map 上传只服务 tsgw 分支的预览构建：只有 refs/heads/tsgw 才注入
+      # SENTRY_RELEASE（本次通道版本）与上传凭据；v* 标签构建照旧发布，但不做 CAT 上传。
       - name: Build
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_RELEASE: ${{ github.ref == 'refs/heads/tsgw' && format('tsgw-agent@{0}', steps.version.outputs.version) || '' }}
+          SENTRY_AUTH_TOKEN: ${{ github.ref == 'refs/heads/tsgw' && secrets.SENTRY_AUTH_TOKEN || '' }}
         run: npm run build
 
       - name: Check the build output

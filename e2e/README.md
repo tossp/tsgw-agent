@@ -64,10 +64,11 @@ Coverage:
 
 The TSGW-only CAT regression is standalone: `node e2e/cat-monitoring.mjs`, or
 `E2E_SERVER_MODE=start node e2e/cat-monitoring.mjs` in a clean production-build
-checkout. It uses a temporary local collector for real browser/server SDK envelopes,
-checks runtime DSN configuration, disabled mode and the existing auth boundary.
-Only an explicit `CAT_E2E_DSN` sends test events to a real Sentry instance; then
-verify server receipt through `ts_tool → cat` as well. No model calls are made.
+checkout. It checks the fixed project DSN, the server hostname, the package release
+and the auth boundary. Browser SDK envelopes are intercepted locally by default;
+server errors are not deliberately triggered. `CAT_E2E_LIVE=1` enables live uploads
+and one server error; verify receipt and source frames through `ts_tool → cat`.
+Do not run it while CAT is upgrading. No model calls are made.
 
 Model prompts, live model streaming, and agent execution are outside this suite.
 Failures save a screenshot, Playwright trace, and server log under
