@@ -234,6 +234,7 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 自建 CAT（Sentry，实例 `cat.tossp.com`、org `sentry`、project `tsgw-agent`）的构建期 source map 上传是 fork 自有功能，只挂在 `tsgw` 分支的预览构建上，不改变上游 CI、`scripts.release` 或标签发布流程。
 
 - **生效范围**：`Build` 步骤的两个变量都以 `github.ref == 'refs/heads/tsgw'` 为条件；触发入口仍是 `branches: [tsgw]` 与 `tags: ["v*"]`，没有新增分支、手动触发或 job。`v*` 标签构建保留原有发布流程，但拿不到这两个值（空字符串），因此不做 CAT 上传，也不会把标签构建改成 `tsgw` 专属行为。
+- **CI 直连通道**：仅 `tsgw` 构建在 runner 的 `/etc/hosts` 中把 `cat.tossp.com` 指向 `mctx` 公网 IP `1.13.102.6`，保留原 Host/SNI 和 TLS 校验；上传前检查健康接口确实连接该 IP。Release API 和服务端返回的同域名分片地址因此一起走新通道，不修改公共 DNS、scnet、运行时 DSN 或 `SENTRY_URL`。解析覆盖仅存在于该次临时 runner；标签构建不执行此步骤。
 - **凭据位置**：GitHub 仓库 Settings → Secrets and variables → Actions → **Repository secrets** 中的 `SENTRY_AUTH_TOKEN`。必须放**仓库级**：`build` job 不声明 `environment`，只有 `publish` job 用 `npm` environment，所以放在 `npm` environment 下的同名 secret 对构建不可见。2026-10-28 已配置并回读确认仓库级 `SENTRY_AUTH_TOKEN`；`npm` environment 不需要重复配置。
 - **无凭据时**：`SENTRY_AUTH_TOKEN` 缺失或为空 → `next.config.ts` 关闭 source map（不生成也不上传），普通构建照常完成；本地开发与不含该变量的构建行为不变。
 - **有凭据时**：构建生成 source map 并上传，release 名为 `tsgw-agent@<本次通道版本>`。CI 通过 `SENTRY_RELEASE=tsgw-agent@<steps.version.outputs.version>` 显式给出该名字；本地或标签构建没有该变量时回落到源 `package.json` 版本。打包前 `release/version.mjs` 已把 `package.json` 改成同一通道版本，因此构建期 release、产物版本与运行时 `lib/cat-config.ts` 的 release 一致。部署时不需要再设置 `SENTRY_RELEASE`。

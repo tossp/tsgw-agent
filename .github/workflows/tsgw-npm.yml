@@ -106,6 +106,17 @@ jobs:
           }
           NODE
 
+      # 只改本次 runner 的解析，保留 CAT 的 Host/SNI，让 API 和分片上传一起绕过 CDN。
+      - name: Route CAT uploads through mctx
+        if: github.ref == 'refs/heads/tsgw'
+        run: |
+          set -euo pipefail
+          printf '1.13.102.6 cat.tossp.com\n' | sudo tee -a /etc/hosts > /dev/null
+          remote_ip=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+            --output /dev/null --write-out '%{remote_ip}' https://cat.tossp.com/_health/)
+          test "$remote_ip" = "1.13.102.6"
+          echo "CAT health check passed through mctx ($remote_ip)"
+
       # 干净 CI 才能构建：dev 写 .next/dev，e2e 的 start 模式写 route-cache，都不该进包。
       # CAT 的 source map 上传只服务 tsgw 分支的预览构建：只有 refs/heads/tsgw 才注入
       # SENTRY_RELEASE（本次通道版本）与上传凭据；v* 标签构建照旧发布，但不做 CAT 上传。

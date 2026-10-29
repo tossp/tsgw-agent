@@ -91,6 +91,20 @@ test("only the tsgw branch build receives the CAT release and upload token", () 
   assert.equal(workflow.jobs.publish.environment, "npm");
 });
 
+test("only tsgw routes CAT through mctx before uploading, with normal TLS verification", () => {
+  const steps = workflow.jobs.build.steps;
+  const route = steps.find((step) => step.name === "Route CAT uploads through mctx");
+  assert.ok(route);
+  assert.equal(route.if, tsgwOnly);
+  assert.ok(steps.indexOf(route) < steps.indexOf(build));
+  assert.match(route.run, /1\.13\.102\.6 cat\.tossp\.com/);
+  assert.match(route.run, /sudo tee -a \/etc\/hosts/);
+  assert.match(route.run, /https:\/\/cat\.tossp\.com\/_health\//);
+  assert.match(route.run, /test "\$remote_ip" = "1\.13\.102\.6"/);
+  assert.doesNotMatch(route.run, /--insecure|--resolve|SENTRY_AUTH_TOKEN/);
+  assert.equal(build.env.SENTRY_URL, undefined, "the canonical CAT upload URL remains unchanged");
+});
+
 test("a build without an upload token resolves the source version and uploads nothing", () => {
   const { status, stderr, config } = readBuildConfig({ SENTRY_AUTH_TOKEN: "" });
   assert.equal(status, 0, stderr);
