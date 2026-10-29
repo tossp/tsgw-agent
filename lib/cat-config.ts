@@ -1,11 +1,12 @@
+import { hostname } from "node:os";
 import packageJson from "../package.json";
 
 export function getCatConfig(env: NodeJS.ProcessEnv = process.env) {
   return {
-    dsn: env.SENTRY_DSN ?? "",
+    dsn: "https://24d86d19be5d513074e45febd5b004b8@cat.tossp.com/10",
     environment: env.SENTRY_ENVIRONMENT ?? env.NODE_ENV ?? "production",
-    release: env.SENTRY_RELEASE ?? `tsgw-agent@${packageJson.version}`,
+    release: `tsgw-agent@${packageJson.version}`,
     tracesSampleRate: 0,
-    initialScope: { tags: { instance: env.SENTRY_INSTANCE ?? "" } },
+    initialScope: { tags: { instance: hostname() } },
   };
 }

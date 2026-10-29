@@ -12,6 +12,12 @@ try {
   piVersion = (JSON.parse(readFileSync(piPkgPath, "utf8")) as { version: string }).version;
 } catch { /* package not found, use default */ }
 
+// CI passes the channel version only to the tsgw branch build, so the CAT release
+// matches the npm artifact; local and v* tag builds fall back to the source version.
+const sentryRelease = process.env.SENTRY_RELEASE || `tsgw-agent@${version}`;
+// No token means no source map upload: the same build stays reproducible without credentials.
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN?.trim() || undefined;
+
 // mdast-util-gfm-autolink-literal (remark-gfm) ships a RegExp lookbehind that
 // Safari parses only from 16.4, which blanked `/` on iOS 16.2 (#753). The loader
 // swaps it for an equivalent built at runtime; both bundlers must run it.
@@ -112,10 +118,14 @@ export default withSentryConfig(nextConfig, {
   sentryUrl: process.env.SENTRY_URL ?? "https://cat.tossp.com",
   org: process.env.SENTRY_ORG ?? "sentry",
   project: process.env.SENTRY_PROJECT ?? "tsgw-agent",
-  authToken: process.env.SENTRY_AUTH_TOKEN,
+  authToken: sentryAuthToken,
   telemetry: false,
-  silent: true,
-  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
-  release: { name: `tsgw-agent@${version}` },
+  silent: !sentryAuthToken,
+  // The SDK treats some upload failures as recoverable; fail this build instead.
+  errorHandler: (error) => {
+    throw error;
+  },
+  sourcemaps: { disable: !sentryAuthToken },
+  release: { name: sentryRelease },
   buildTimeInstrumentation: false,
 });

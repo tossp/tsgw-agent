@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 
-// NEXT_PUBLIC_* is frozen at build time; this package is configured after installation.
+// The DSN is fixed, but the deployment's hostname is only available at runtime.
 void fetch("/api/cat-config", { cache: "no-store" })
   .then(async (response) => {
     if (!response.ok) return;
