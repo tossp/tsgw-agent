@@ -66,6 +66,7 @@ try {
       assert.equal(config.dsn, "https://24d86d19be5d513074e45febd5b004b8@cat.tossp.com/10");
       assert.equal(config.initialScope.tags.instance, hostname());
       assert.equal(config.environment, "test");
+      assert.equal(config.dataCollection.userInfo, true);
       assert.match(config.release, /^tsgw-agent@/);
       assert.equal(response.headers.get("cache-control"), "no-store");
       break;
@@ -108,6 +109,7 @@ try {
     assert.equal(event.tags.instance, hostname());
     assert.equal(event.environment, "test");
     assert.equal(event.release, config.release);
+    assert.equal(event.sdk.settings.infer_ip, "auto");
   }
   if (live) {
     // Live mode also sends one server-side error; receipt must be confirmed via ts_tool → cat.

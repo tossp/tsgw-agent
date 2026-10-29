@@ -7,6 +7,7 @@ export function getCatConfig(env: NodeJS.ProcessEnv = process.env) {
     environment: env.SENTRY_ENVIRONMENT ?? env.NODE_ENV ?? "production",
     release: `tsgw-agent@${packageJson.version}`,
     tracesSampleRate: 0,
+    dataCollection: { userInfo: true },
     initialScope: { tags: { instance: hostname() } },
   };
 }

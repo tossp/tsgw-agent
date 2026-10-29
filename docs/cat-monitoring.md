@@ -20,6 +20,7 @@
 - 实例标签直接使用服务端 `os.hostname()`，不读取 `SENTRY_INSTANCE`。
 - Release 固定为产物的 `tsgw-agent@<package.json.version>`，部署时不需要设置 `SENTRY_RELEASE`。CI 的版本准备步骤先改写产物版本，再把同一 Release 交给上传插件。
 - `SENTRY_ENVIRONMENT` 仅用于可选的环境标签，未配置时使用 `NODE_ENV`。
+- 前后端共用 `dataCollection.userInfo: true`，显式保留 SDK v11 默认的 IP／用户信息采集；请求头、User-Agent、URL 查询参数等沿用 SDK 标准采集，不新增自定义采集或开启录屏、日志、追踪。CAT 现有浏览器验收事件已回读到 IP 和地理信息；服务端项目设置接口本轮返回 403，未修改服务端隐私设置。
 
 浏览器在启动时读取 `/api/cat-config`，取得部署机器名等公开 SDK 配置；该只读接口仍受原有 Host/Origin 校验，不需要登录。它不返回上传令牌或其他环境配置。配置读取失败不阻止页面启动；读取完成前发生的浏览器错误没有采集保证。
 
