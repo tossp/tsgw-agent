@@ -1,6 +1,6 @@
 # CAT 错误收集（TSGW 自有功能）
 
-本功能仅在 TSGW fork 维护，不提交上游。接入自建 Sentry `cat.tossp.com`；项目为 `sentry/tsgw-agent`，项目 ID 为 `10`。管理、DSN 查询和错误检索统一使用 `ts_tool → cat`。
+本功能仅在 TSGW fork 维护，不提交上游。接入自建 Sentry `cat.tossp.com`；项目为 `av8d/tsgw-agent`，项目 ID 为 `10`。管理、DSN 查询和错误检索统一使用 `ts_tool → cat`。
 
 ## 范围
 
@@ -16,10 +16,11 @@
 
 无需配置环境变量即可启用，前后端共用 `lib/cat-config.ts`：
 
-- DSN 固定为 `sentry/tsgw-agent` 项目的公开采集地址，安装后默认启用，不读取 `SENTRY_DSN`。
+- DSN 固定为 `av8d/tsgw-agent` 项目的公开采集地址，安装后默认启用，不读取 `SENTRY_DSN`。
 - 实例标签直接使用服务端 `os.hostname()`，不读取 `SENTRY_INSTANCE`。
 - Release 固定为产物的 `tsgw-agent@<package.json.version>`，部署时不需要设置 `SENTRY_RELEASE`。CI 的版本准备步骤先改写产物版本，再把同一 Release 交给上传插件。
 - `SENTRY_ENVIRONMENT` 仅用于可选的环境标签，未配置时使用 `NODE_ENV`。
+- 前后端共用 `dataCollection.userInfo: true`，显式保留 SDK v11 默认的 IP／用户信息采集；请求头、User-Agent、URL 查询参数等沿用 SDK 标准采集，不新增自定义采集或开启录屏、日志、追踪。CAT 现有浏览器验收事件已回读到 IP 和地理信息；服务端项目设置接口本轮返回 403，未修改服务端隐私设置。
 
 浏览器在启动时读取 `/api/cat-config`，取得部署机器名等公开 SDK 配置；该只读接口仍受原有 Host/Origin 校验，不需要登录。它不返回上传令牌或其他环境配置。配置读取失败不阻止页面启动；读取完成前发生的浏览器错误没有采集保证。
 
@@ -27,11 +28,13 @@
 
 ## 源码映射
 
-`next.config.ts` 接入官方构建插件。仅 `tsgw` 分支的构建步骤从 GitHub **Repository secrets** 读取 `SENTRY_AUTH_TOKEN`，并用本次通道版本设置构建期 `SENTRY_RELEASE`；上传目标默认是自建实例的 `sentry/tsgw-agent`。`v*` 标签仍按原流程发布，但不注入这两个值、不做 CAT 上传。上传凭据不进入浏览器配置。
+`next.config.ts` 使用官方插件。`tsgw` 构建注入本次通道的 `SENTRY_RELEASE` 和 `CAT_DEFER_UPLOAD=1`，离线生成并保留带 Debug ID 的 JS/map，不读取上传令牌、访问 CAT 或创建 Release。SDK 的 `disable-upload` 模式负责注入 ID，Webpack 显式生成 server `source-map`、client `hidden-source-map`。
 
-有令牌时生成 server `source-map`、client `hidden-source-map` 并由官方插件上传；上传失败抛错终止构建，成功记录在构建日志中。`build` job 不声明 `npm` environment，故该环境内的 Secret 不对构建生效。
+构建的原始 JS/map、逐文件 SHA-256、Debug ID、版本、commit 与 BUILD_ID 归档到七牛 `s3://tsoht/tsgw-agent/cat/<版本>/`。CI 通过标准 AWS CLI、端点 `https://s3.us-north-1.qiniucs.com`、区域 `us-north-1` 和仓库级 `CAT_S3_ACCESS_KEY_ID` / `CAT_S3_SECRET_ACCESS_KEY` 操作；不在 CI 使用 rclone。归档成功后才能发布，map 不进 npm 包。
 
-没有上传令牌时跳过源码映射生成/上传，错误上报仍工作，但生产压缩代码的可读性受限。现有 npm files 规则排除 JS map。
+独立 `cat-upload` job 从 S3 恢复并校验原产物，使用仓库级 `SENTRY_AUTH_TOKEN` 创建 Release、补传源码映射；默认目标 `av8d/tsgw-agent`。补传失败保持可见失败状态，但 `publish` 仅依赖 `build`，不会被 CAT 网络阻塞。可只重跑失败 CAT job，不重新构建或发布 npm。
+
+运行时错误采集、版本标签与机器名不变。补传前不保证源码还原，不能承诺已处理旧事件自动重新还原。`v*` 标签跳过归档和补传；普通本地构建没有令牌时仍不生成/上传 map，显式给出令牌时保留原同步上传行为。详细凭据、路径与重试边界见 `docs/tsgw-release.md` 第 10 节。
 
 ## 验证入口
 
@@ -53,7 +56,7 @@
 - 宿主重启后补充复核：相关测试及发布测试合计 89 项通过，类型检查、lint、diff 检查通过。独立只读审阅完成，无必须修复的阻塞项；首次带上传令牌的构建仍需单独验收源码映射上传结果。
 - 上述验收不包含发布或部署；提交与合并状态以 Git 记录为准。
 
-## 固定配置修正验收（本地端到端已通过，真实 CI 待验证）
+## 固定配置修正与历史验收
 
 - DSN 默认启用、机器名标签、产物版本及 `tsgw` 分支门控已完成源码和测试修正，独立只读审阅无阻塞代码问题。
 - 全量测试 3042 项通过、1 项原有跳过；相关及发布测试 93 项通过；类型检查、lint 和 diff 检查通过。变更文件主动 LSP 无 TypeScript 诊断；`next.config.ts` 的 4 条原有辅助规则提示未扩大范围处理。
@@ -80,7 +83,7 @@
 - 修复后 120 秒内相关缺失报错由 752 条降为 0，但队列 lag 仍从 1578 增至 1854，目标配置缓存未回填。这排除了“缺失检测器报错仍未修复”，不证明剩余队列阻塞已解决；不能继续把两者当成同一原因。
 - 10:14（UTC+8）复用已上传映射的同一构建，仅做前后端各一次新验收：浏览器事件 `c2c2934549e34518a673421503331766` 得到 200 和匹配 ID，但随后 `ts_tool → cat` 仍查不到本轮浏览器和服务端错误。证据位于 `/root/.cache/pi-web-cat-verification/cat-post-detector-1793240074982/`。没有重复上传/构建或扩大写入范围；服务端执行及授权详见运维仓库 `operations/changes/2026-10-28-sentry-26.10-upgrade.md`。
 
-### 最新验收：2026-10-29 10:34（UTC+8）新事件及源码还原通过
+### 本地端到端验收：2026-10-29 10:34（UTC+8）新事件及源码还原通过
 
 - 用户另行明确授权一次原生配置构建诊断后，10:32:28 以 UID/GID 999:999 对活跃的本项目公开 key 同步执行 `build_project_config` 恰好一次，耗时 **11.858 毫秒**，未抛异常或捕获 ERROR；未入队、重试、重启或改参数。
 - **执行前配置及 revision 缓存已存在**（TTL 8144 秒），执行后 TTL 8400 秒；debounce 前后均不存在。不能把已有缓存的恢复归功于本次手动调用，也不把一次缓存刷新视为长期修复。
@@ -90,4 +93,15 @@
 - 两条事件的 Release 均为 `tsgw-agent@0.1.0-catverify.1793193732116.g304c4ebb7555`，`instance=claw`、`environment=test`；原始源码片段与独立构建快照对应行逐项比对一致。此项证明了 SDK → CAT 摄入/检索 → 已上传映射 → 前后端源码堆栈的本地端到端链路，不再只是 HTTP 200 或上传日志。
 - 安全元数据、发送回执及验收结果位于 `/root/.cache/pi-web-cat-verification/cat-post-config-diagnostic-1793241254346/`；未保存凭据或完整业务响应。没有重复构建/上传、关闭测试 issue 或改告警规则。
 - 10:37 收尾只读核验共享队列 lag 从前窗 1854 降至 **3**，进度接近队尾；目标配置 TTL 为 8117 秒，最近五分钟本项目 pending、worker ERROR／缺失 detector 日志均为 0，Web/taskworker healthy。不是只靠本次事件通过推断后台恢复，但仍不外推所有服务或长期稳定性。
-- **尚未验证/执行**：真实 GitHub Actions 构建及上传、发布和生产部署；共享 CAT 其他升级遗留异常不在本次接入闭环通过的范围内。本次固定配置修正仍未提交、合并或推送。
+- 本地端到端验收不替代 GitHub Actions 发布验收。固定配置已合并、推送；后续 CDN 回源与 mctx 分片传输问题仍阻断原同步 CI，因此用户另行授权下述独立补传方案。共享 CAT 其他升级遗留异常不在本项目范围，生产部署未执行。
+
+### 独立归档与补传：本地验收通过，CI 待运行
+
+- 用户授权 Release 创建、源码映射上传均可后补，并指定七牛 `qn.us:tsoht` 作为同次构建的文件暂存地；明确要求 CI 使用标准 S3，不使用 rclone。
+- 仅在本机进程中读取既有 `qn.us` 的 S3 access/secret key，已安全写入 GitHub 仓库级 `CAT_S3_ACCESS_KEY_ID` / `CAT_S3_SECRET_ACCESS_KEY` 并回读名称、更新时间；没有回显、提交或复制其他 remote 配置。
+- 临时无业务内容对象的写入、读取及 SHA-256 比对通过；标准 SigV4 `GetBucketAcl` 返回 200，没有 AllUsers 或 AuthenticatedUsers 授权。该临时对象已移除，未修改桶 ACL、生命周期或既有数据。
+- 最终独立干净快照离线构建成功；故意将 CAT 指向本地拒绝端点、提供占位 token，仍为 **0 次请求**，证明 Release/上传已从构建解耦。收集 **411 个 JS、224 个 map**；包括 Next 的 `middleware.js` → `proxy.js.map` 异名关联及合法无 map chunk，保持原始字节，不重新注入 ID。
+- 标准 SigV4 将最终 **24,767,795 字节**归档及清单上传七牛，并完整下载逐项 SHA-256 一致；保存路径 `s3://tsoht/tsgw-agent/cat/0.1.0-dev.1793272996787.1.gd181dcf4ce23/`。归档后移除临时构建的 map，真实 npm pack 检查不含 map，411 个原 JS 与包内文件逐字节一致；全新安装、生产 HTTP/认证、login2、浏览器及原生终端 SSE 冒烟通过。
+- 真实补传时发现 CAT 组织已改名为 **`av8d`（组织 ID 1）**，原 `sentry` 路径返回 404。经 `ts_tool → cat` 验证项目仍为 ID 10、固定公开 DSN 完全一致；仅跟进构建/补传默认组织与说明，不改服务配置或 DSN。
+- 使用归档原件运行独立补传脚本 **25.981 秒成功**，未重建、修改 JS/map；`ts_tool → cat` 回读对应 Release（ID 20）、归属 `av8d/tsgw-agent` 正确。SDK 本地 HTTP 故障测试覆盖 Release 创建失败及 Release 成功后的映射上传失败，两种都非零退出，原件不变。
+- 验证：全量 3042 项通过、1 项原有跳过，发布测试 99 项通过；类型检查、lint、独立复审均通过。本地证据位于 `/root/.cache/pi-web-cat-verification/deferred-*`；其中归档与补传验证不等于 GitHub Actions 或 npm 已发布，后两项仍需推送后分别验收。

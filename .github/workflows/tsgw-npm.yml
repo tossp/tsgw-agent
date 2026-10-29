@@ -106,24 +106,11 @@ jobs:
           }
           NODE
 
-      # 只改本次 runner 的解析，保留 CAT 的 Host/SNI，让 API 和分片上传一起绕过 CDN。
-      - name: Route CAT uploads through mctx
-        if: github.ref == 'refs/heads/tsgw'
-        run: |
-          set -euo pipefail
-          printf '1.13.102.6 cat.tossp.com\n' | sudo tee -a /etc/hosts > /dev/null
-          remote_ip=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
-            --output /dev/null --write-out '%{remote_ip}' https://cat.tossp.com/_health/)
-          test "$remote_ip" = "1.13.102.6"
-          echo "CAT health check passed through mctx ($remote_ip)"
-
-      # 干净 CI 才能构建：dev 写 .next/dev，e2e 的 start 模式写 route-cache，都不该进包。
-      # CAT 的 source map 上传只服务 tsgw 分支的预览构建：只有 refs/heads/tsgw 才注入
-      # SENTRY_RELEASE（本次通道版本）与上传凭据；v* 标签构建照旧发布，但不做 CAT 上传。
+      # tsgw 离线生成带 Debug ID 的原始 JS/map，不访问 CAT；标签构建行为不变。
       - name: Build
         env:
           SENTRY_RELEASE: ${{ github.ref == 'refs/heads/tsgw' && format('tsgw-agent@{0}', steps.version.outputs.version) || '' }}
-          SENTRY_AUTH_TOKEN: ${{ github.ref == 'refs/heads/tsgw' && secrets.SENTRY_AUTH_TOKEN || '' }}
+          CAT_DEFER_UPLOAD: ${{ github.ref == 'refs/heads/tsgw' && '1' || '' }}
         run: npm run build
 
       - name: Check the build output
@@ -136,6 +123,29 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Archive CAT build artifacts
+        if: github.ref == 'refs/heads/tsgw'
+        run: node release/cat-artifacts.mjs "$RUNNER_TEMP/tsgw-cat"
+
+      # 先保存同次构建的 JS/map，之后补传不需要重建；凭据只交给标准 S3 CLI。
+      - name: Store CAT build artifacts on S3
+        if: github.ref == 'refs/heads/tsgw'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CAT_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CAT_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-north-1
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          aws --endpoint-url https://s3.us-north-1.qiniucs.com s3 cp \
+            "$RUNNER_TEMP/tsgw-cat" "s3://tsoht/tsgw-agent/cat/$VERSION/" \
+            --recursive --only-show-errors
+
+      # npm 的 files 排除规则不能保证隐藏目录内的 map 都被排除；归档成功后才移除。
+      - name: Remove archived maps from the npm build
+        if: github.ref == 'refs/heads/tsgw'
+        run: find .next -type f -name '*.map' -delete
 
       - name: Pack
         run: node release/pack.mjs "$RUNNER_TEMP/tsgw-package"
@@ -405,4 +415,70 @@ jobs:
             echo '| npmmirror sync | `${{ steps.mirror.outputs.status || 'not requested' }}` |'
             echo '| ref | `${{ github.ref }}` |'
             echo '| commit | `${{ github.sha }}` |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 与 publish 并行，失败保留红色 job 供单独重跑，不阻断或重发 npm。
+  cat-upload:
+    name: Backfill CAT release and source maps
+    needs: build
+    if: github.ref == 'refs/heads/tsgw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Restore CAT build artifacts from S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CAT_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CAT_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-north-1
+        run: |
+          set -euo pipefail
+          aws --endpoint-url https://s3.us-north-1.qiniucs.com s3 cp \
+            "s3://tsoht/tsgw-agent/cat/$VERSION/" "$RUNNER_TEMP/tsgw-cat" \
+            --recursive --only-show-errors
+          cd "$RUNNER_TEMP/tsgw-cat"
+          sha256sum -c SHA256SUMS
+          mkdir "$RUNNER_TEMP/tsgw-cat-restored"
+          tar -xzf artifacts.tar.gz -C "$RUNNER_TEMP/tsgw-cat-restored"
+
+      # 只改补传 runner 的解析，保留原 Host/SNI 与 TLS 校验。
+      - name: Route CAT uploads through mctx
+        run: |
+          set -euo pipefail
+          printf '1.13.102.6 cat.tossp.com\n' | sudo tee -a /etc/hosts > /dev/null
+          remote_ip=$(curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+            --output /dev/null --write-out '%{remote_ip}' https://cat.tossp.com/_health/)
+          test "$remote_ip" = "1.13.102.6"
+          echo "CAT health check passed through mctx ($remote_ip)"
+
+      - name: Upload the original artifacts to CAT
+        env:
+          NODE_ENV: production
+          SENTRY_CONFIG_DIR: ${{ runner.temp }}/cat-cli
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: node release/cat-upload.mjs "$RUNNER_TEMP/tsgw-cat-restored"
+
+      - name: Summarize CAT backfill
+        if: always()
+        run: |
+          {
+            echo '### CAT backfill: ${{ job.status }}'
+            echo ''
+            echo 'Release: `tsgw-agent@${{ needs.build.outputs.version }}`'
+            echo 'Archive: `s3://tsoht/tsgw-agent/cat/${{ needs.build.outputs.version }}/`'
+            echo 'If failed, rerun only this job or restore this archive for backfill. Do not rebuild or republish npm.'
           } >> "$GITHUB_STEP_SUMMARY"

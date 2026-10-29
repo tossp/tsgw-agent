@@ -15,7 +15,8 @@ try {
 // CI passes the channel version only to the tsgw branch build, so the CAT release
 // matches the npm artifact; local and v* tag builds fall back to the source version.
 const sentryRelease = process.env.SENTRY_RELEASE || `tsgw-agent@${version}`;
-// No token means no source map upload: the same build stays reproducible without credentials.
+// Preview CI preserves this build's maps and debug IDs; CAT uploads happen in a separate job.
+const catDeferredUpload = process.env.CAT_DEFER_UPLOAD === "1";
 const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN?.trim() || undefined;
 
 // mdast-util-gfm-autolink-literal (remark-gfm) ships a RegExp lookbehind that
@@ -41,7 +42,11 @@ const nextConfig: NextConfig = {
       "**/mdast-util-gfm-autolink-literal/lib/index.js": { loaders: [gfmAutolinkEmailLoader] },
     },
   },
-  webpack(config) {
+  webpack(config, { dev, isServer }) {
+    // Sentry's disable-upload mode injects IDs but leaves map generation to Next's config.
+    if (catDeferredUpload && !dev) {
+      config.devtool = isServer ? "source-map" : "hidden-source-map";
+    }
     config.module.rules.push({
       test: /[\\/]mdast-util-gfm-autolink-literal[\\/]lib[\\/]index\.js$/,
       loader: gfmAutolinkEmailLoader,
@@ -116,7 +121,7 @@ const nextConfig: NextConfig = {
 
 export default withSentryConfig(nextConfig, {
   sentryUrl: process.env.SENTRY_URL ?? "https://cat.tossp.com",
-  org: process.env.SENTRY_ORG ?? "sentry",
+  org: process.env.SENTRY_ORG ?? "av8d",
   project: process.env.SENTRY_PROJECT ?? "tsgw-agent",
   authToken: sentryAuthToken,
   telemetry: false,
@@ -125,7 +130,15 @@ export default withSentryConfig(nextConfig, {
   errorHandler: (error) => {
     throw error;
   },
-  sourcemaps: { disable: !sentryAuthToken },
-  release: { name: sentryRelease },
+  sourcemaps: {
+    disable: catDeferredUpload ? "disable-upload" : !sentryAuthToken,
+    deleteSourcemapsAfterUpload: catDeferredUpload ? false : undefined,
+  },
+  release: {
+    name: sentryRelease,
+    create: catDeferredUpload ? false : undefined,
+    finalize: catDeferredUpload ? false : undefined,
+    setCommits: catDeferredUpload ? false : undefined,
+  },
   buildTimeInstrumentation: false,
 });
