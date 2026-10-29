@@ -44,11 +44,12 @@ if: >-
 4. `npm ci` → `npm run lint` → `npx tsc --noEmit` → `npm test` → `node --test release/*.test.mjs`（`release/` 里没有测试文件时直接失败，不放行）
 5. `node release/version.mjs`（写 `GITHUB_OUTPUT`：`version`、`tag`）
 6. 字段级校验只有版本号被改写
-7. `npm run build`（仅 `tsgw` 分支注入 CAT 的 `SENTRY_RELEASE` / `SENTRY_AUTH_TOKEN`，见 §10），并拒绝 `.next/dev`、`.next/server/route-cache`
-8. `node release/pack.mjs "$RUNNER_TEMP/tsgw-package"`
-9. `npx playwright install --with-deps chromium`（smoke 用 Playwright 真的开登录页和终端）
-10. `node release/smoke.mjs "$RUNNER_TEMP/tsgw-package"`
-11. 写 step summary（包名、通道版本、dist-tag、ref、commit、事件），上传整个 pack 目录为 artifact `tsgw-npm-<version>`，保留 7 天
+7. `npm run build`（仅 `tsgw` 分支注入 `SENTRY_RELEASE` / `CAT_DEFER_UPLOAD=1`，离线生成带 Debug ID 的 JS/map，不读取 CAT 凭据或访问 CAT），并拒绝 `.next/dev`、`.next/server/route-cache`
+8. 仅 `tsgw` 用 `release/cat-artifacts.mjs` 归档同次构建的 JS/map 和版本清单，标准 S3 CLI 上传到七牛，见 §10；归档失败不能丢失 map 后继续发布
+9. 仅 `tsgw` 在 S3 归档成功后删除临时构建目录内的 `.map`，再运行 `node release/pack.mjs "$RUNNER_TEMP/tsgw-package"`；npm files 排除规则不作为唯一保障
+10. `npx playwright install --with-deps chromium`（smoke 用 Playwright 真的开登录页和终端）
+11. `node release/smoke.mjs "$RUNNER_TEMP/tsgw-package"`
+12. 写 step summary（包名、通道版本、dist-tag、ref、commit、事件），上传整个 pack 目录为 artifact `tsgw-npm-<version>`，保留 7 天
 
 源测试先于版本赋值运行，是为了让 metadata 测试看到源版本，而不是 CI 派生版本。
 
@@ -161,7 +162,7 @@ gh run list --workflow tsgw-npm.yml --limit 5
 - **预览版被跳过**：日志里出现 “origin/tsgw moved to …”，说明该次运行的提交已不是分支 head，更新的运行会发布 `next`。
 - **源测试本来就失败**：工作流不跳过、不放行，保持失败。先在本机 `npm test` 复现并修好，再推分支。
 - **`.next/server/route-cache` 报错**：本地用 `npm run test:e2e`（`start` 模式）跑过后 `.next` 被污染，换干净 checkout 或让 CI 构建。
-- **CAT source map 上传失败**：`tsgw` 分支构建会因此直接失败（`next.config.ts` 的 `errorHandler` 重新抛出 SDK 错误），不会产出看起来成功但没有符号化信息的产物。先核对 `SENTRY_AUTH_TOKEN` 是否在仓库级 secret、是否对该 CAT 项目有效，再重跑；失败日志里的 token 不复制到对话或提交里。
+- **CAT 补传失败**：独立 `cat-upload` job 保留失败状态，`publish` 仅依赖已完成 S3 归档的 `build`，不等待 CAT。先分别核对 npm 发布结果和补传结果，再只重跑失败的 CAT job；不要重跑构建、重发已存在的 npm 版本。S3 归档保留原始 JS/map，可在网络恢复后后补同一 Release。
 
 ## 6. 本地构建与打包
 
@@ -229,16 +230,19 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 
 新包初始化依据：npm 官方 `npm trust` 的 Prerequisites，以及 `staged-publishing` 的新包占位版本说明。
 
-## 10. CAT source map 上传（仅 tsgw 分支）
+## 10. CAT 归档与独立补传（仅 tsgw 分支）
 
-自建 CAT（Sentry，实例 `cat.tossp.com`、org `sentry`、project `tsgw-agent`）的构建期 source map 上传是 fork 自有功能，只挂在 `tsgw` 分支的预览构建上，不改变上游 CI、`scripts.release` 或标签发布流程。
+自建 CAT（`cat.tossp.com`，org `av8d`、project `tsgw-agent`）属于 fork。为避免 CAT 网络问题阻塞发布，`tsgw` 把同次构建的 JS/map 先归档到七牛，再由独立 job 创建 Release 和上传；不改上游 CI、`scripts.release` 或 `v*` 标签发布流程。
 
-- **生效范围**：`Build` 步骤的两个变量都以 `github.ref == 'refs/heads/tsgw'` 为条件；触发入口仍是 `branches: [tsgw]` 与 `tags: ["v*"]`，没有新增分支、手动触发或 job。`v*` 标签构建保留原有发布流程，但拿不到这两个值（空字符串），因此不做 CAT 上传，也不会把标签构建改成 `tsgw` 专属行为。
-- **CI 直连通道**：仅 `tsgw` 构建在 runner 的 `/etc/hosts` 中把 `cat.tossp.com` 指向 `mctx` 公网 IP `1.13.102.6`，保留原 Host/SNI 和 TLS 校验；上传前检查健康接口确实连接该 IP。Release API 和服务端返回的同域名分片地址因此一起走新通道，不修改公共 DNS、scnet、运行时 DSN 或 `SENTRY_URL`。解析覆盖仅存在于该次临时 runner；标签构建不执行此步骤。
-- **凭据位置**：GitHub 仓库 Settings → Secrets and variables → Actions → **Repository secrets** 中的 `SENTRY_AUTH_TOKEN`。必须放**仓库级**：`build` job 不声明 `environment`，只有 `publish` job 用 `npm` environment，所以放在 `npm` environment 下的同名 secret 对构建不可见。2026-10-28 已配置并回读确认仓库级 `SENTRY_AUTH_TOKEN`；`npm` environment 不需要重复配置。
-- **无凭据时**：`SENTRY_AUTH_TOKEN` 缺失或为空 → `next.config.ts` 关闭 source map（不生成也不上传），普通构建照常完成；本地开发与不含该变量的构建行为不变。
-- **有凭据时**：构建生成 source map 并上传，release 名为 `tsgw-agent@<本次通道版本>`。CI 通过 `SENTRY_RELEASE=tsgw-agent@<steps.version.outputs.version>` 显式给出该名字；本地或标签构建没有该变量时回落到源 `package.json` 版本。打包前 `release/version.mjs` 已把 `package.json` 改成同一通道版本，因此构建期 release、产物版本与运行时 `lib/cat-config.ts` 的 release 一致。部署时不需要再设置 `SENTRY_RELEASE`。
-- **失败不静默**：SDK 会把部分上传失败当作可恢复错误，`next.config.ts` 用显式 `errorHandler` 重新抛出，确保上传失败即构建失败；有上传凭据时保留插件日志，便于核实实际上传结果。
-- **实例差异**：`SENTRY_URL` / `SENTRY_ORG` / `SENTRY_PROJECT` 仍可用环境变量覆盖（默认自建实例、`sentry`、`tsgw-agent`）。运行时 DSN 由源码 `lib/cat-config.ts` 固定，与构建期上传凭据无关；构建期只需上传凭据，不需要 DSN。
+- **离线构建**：`Build` 只在 `tsgw` 注入 `SENTRY_RELEASE=tsgw-agent@<通道版本>`、`CAT_DEFER_UPLOAD=1`，不拿到 `SENTRY_AUTH_TOKEN`，不执行 CAT 健康检查。SDK 的 `sourcemaps.disable="disable-upload"` 保留 Debug ID 注入；Webpack 显式生成 server `source-map` / client `hidden-source-map`，保留 map，并禁用构建时 Release 创建、结束和提交关联。
+- **同次产物归档**：`node release/cat-artifacts.mjs <outDir>` 保存 `.next/server`、`.next/static` 下的 JS 及实际生成的对应 map；有 map 时严格校验 Debug ID，一些无 map 的 Next/vendor 小 chunk 也按原字节保留，但不承诺源码还原。产出 `artifacts.tar.gz`、`manifest.json`、`SHA256SUMS`；清单记录版本、Release、commit、BUILD_ID 和每文件 SHA-256。前后端各至少一对有效映射，清单内任一文件丢失或变化则失败；不能仅凭产后目录区分未生成 map 与归档前已丢 map，也不能靠重新构建来补传旧版本。
+- **S3 位置**：`s3://tsoht/tsgw-agent/cat/<通道版本>/`，标准端点 `https://s3.us-north-1.qiniucs.com`、区域 `us-north-1`。CI 使用 runner 已有的 AWS CLI；只在 S3 步骤注入仓库级 `CAT_S3_ACCESS_KEY_ID` / `CAT_S3_SECRET_ACCESS_KEY`，不使用 rclone 或复制本机配置。未配置清理或生命周期策略，归档按版本保留。
+- **发布边界**：S3 归档成功后从临时构建目录移除 `.map`（不改 JS），再打包、冒烟和发布 npm；不能只依赖 npm files 排除规则。`publish` 与 `cat-upload` 均只 `needs: build`，互不依赖，因此 CAT 不可达或补传失败不会阻断已验收产物发布。S3 归档失败仍阻断，避免 map 丢失。
+- **独立补传**：`cat-upload` 下载原版本归档并校验外层 SHA-256，`release/cat-upload.mjs` 再校验每文件 hash、版本及 Debug ID，使用 SDK 已依赖的官方插件公开 API 创建 Release、直接上传已带 Debug ID 的归档目录，绕过可能静默跳过文件的准备步骤。原 JS/map 不修改，不再注入 ID，也不重新构建。该 job 独占仓库级 `SENTRY_AUTH_TOKEN`；错误仍抛出，job 保持失败而非静默成功。
+- **网络入口**：只有补传 runner 将 `cat.tossp.com` 临时解析到 `mctx 1.13.102.6` 并校验 TLS 和健康接口；API 和同域分片地址都走该通道。未改公共 DNS、scnet、DSN、分片大小、并发或 30 秒请求时限。
+- **重试方式**：只重跑该运行的失败 CAT job；它读取已成功 `build` 的原版本和 S3 字节，不运行 `release/version.mjs`，不重发 npm。需要人工补传时也可通过标准 S3 下载这三个文件，校验、解压后以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node release/cat-upload.mjs <解压目录>`。
+- **状态与排队**：CAT job 失败可令整条 workflow 显示红色，但 npm 可能已发布成功，应分别读取两个 job 的结果。沿用原 workflow 级同 ref 并发锁，慢补传仍可能延迟下一次同分支运行；本轮不重构并发策略。
+- **运行时不变**：DSN 默认启用，Release 仍由产物版本确定，机器名仍取 `os.hostname()`；不依赖 CAT 已存在 Release。补传前不保证源码还原，不能承诺旧事件补传后自动重新处理。
+- **本地与标签**：不设置 `CAT_DEFER_UPLOAD` 时保留原行为：没有 token 不生成/上传 map；显式提供 token 的本地构建仍同步上传且失败抛错。`v*` 标签没有上述两个构建值，跳过 S3 归档和 CAT job，原正式版流程不变。
 
-验证边界：`release/cat-ci.test.mjs` 在本地用真实 `.github/workflows/tsgw-npm.yml`（js-yaml）与真实 `next.config.ts`（子进程加载并驱动 SDK 的 webpack 包装）核对分支范围、凭据位置、release 名与 source map 开关，不联网、不上传。**本地构建到真实 CAT 的端到端验收已通过**：仓库级 `SENTRY_AUTH_TOKEN` 已配置。独立干净快照的真实构建成功，Node/Edge/Client 插件上传成功，CAT 可回读 Release 及浏览器/服务端 Debug ID 对应的 artifact。2026-10-29 10:34（UTC+8）两条新错误经 `ts_tool → cat` 回读，分别还原到 `hooks/useAgentSession.ts:1007:23` 和 `app/api/agent/new/route.ts:51:13`，源码片段与产物快照一致；Release 和机器名标签正确。上传被本地测试端点以 403 拒绝时真实构建会失败。此项不等于真实 GitHub Actions 已运行或 npm 已发布；推送/发布仍需授权，完整证据和 CAT 后台观察边界见 `docs/cat-monitoring.md`。
+测试入口：`node --test release/cat-ci.test.mjs release/cat-artifacts.test.mjs release/cat-upload.test.mjs`。覆盖真实 SDK 包装、工作流依赖、S3 参数、真实 tar、逐文件完整性及真实 SDK 的本地 HTTP 拒绝路径；不向真实 CAT 发单元测试事件。首次独立上传、CI、npm 及 S3 回读结果分别记录在 `docs/cat-monitoring.md`，不可将其中一个结果当作全部完成。

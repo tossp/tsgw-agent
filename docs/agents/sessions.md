@@ -1,7 +1,7 @@
 # Sessions, branching and live events
 
 ## TSGW-only CAT error monitoring
-- Configuration, scope and checks live in [../cat-monitoring.md](../cat-monitoring.md). The project DSN is fixed in source and collection is enabled by default; `instance` is the server's `os.hostname()` and release follows the package version. Browser settings come from `/api/cat-config`; only tsgw branch builds receive the upload token and CI release label.
+- Configuration, scope and checks live in [../cat-monitoring.md](../cat-monitoring.md). The project DSN is fixed in source and collection is enabled by default; `instance` is the server's `os.hostname()` and release follows the package version. Browser settings come from `/api/cat-config`. Only tsgw preview builds receive the CI release label and archive original JS/maps to S3; the independent CAT backfill job alone receives the upload token and never blocks npm publication.
 - `reportCatError()` observes caught failures; `reportCatAgentEvent()` reads provider/prompt failure events at the wrapper’s emission boundary, once regardless of how many browsers subscribe. Never move capture into per-browser SSE forwarding. Normal abort/close paths stay unchanged. No custom scrubbing, offline queues or rate limiting.
 
 ## AgentSession lifecycle (`lib/rpc-manager.ts`)
