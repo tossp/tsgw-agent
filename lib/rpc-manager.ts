@@ -2,6 +2,9 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
+import { createSessionOwnerAccess } from "../tsgw/wakeups/session-owner";
+import { createWakeupExtension } from "../tsgw/wakeups/extension";
+import { getWakeupRuntime } from "../tsgw/wakeups/host";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
@@ -17,7 +20,7 @@ import {
   createProjectCommandBashOperations,
   preferUserBashExtension,
 } from "./project-command-env";
-import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
+import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, readLatestSessionEntryId, readSessionHeader, resolveSessionPath } from "./session-reader";
 import { computeLiveSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { notifySessionComplete } from "./web-push";
@@ -256,6 +259,7 @@ const COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT = new Set([
 ]);
 
 export interface RpcSessionStartOptions {
+  requireExistingSession?: boolean;
   toolNames?: string[];
   initialModel?: { provider: string; modelId: string };
   allowInitialModelFallback?: boolean;
@@ -965,7 +969,7 @@ export class AgentSessionWrapper {
     }
   }
 
-  private async acquirePromptAdmission(): Promise<() => void> {
+  async acquirePromptAdmission(): Promise<() => void> {
     const previous = this.promptAdmissionTail;
     let release!: () => void;
     this.promptAdmissionTail = new Promise<void>((resolve) => {
@@ -3047,6 +3051,9 @@ export async function startRpcSession(
     return waiting;
   }
 
+  if (options.requireExistingSession && (!sessionFile || readSessionHeader(sessionFile)?.id !== sessionId)) {
+    throw new Error(`Existing session not found or ID changed: ${sessionId}`);
+  }
   let sessionManager: SessionManager;
   if (sessionFile) {
     sessionManager = SessionManager.open(sessionFile, undefined);
@@ -3172,6 +3179,13 @@ export async function startRpcSession(
             extensionFactories: [
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
+              createWakeupExtension(getWakeupRuntime({
+                getSession: getRpcSession,
+                reopenSession: async (id, file) => (await startRpcSession(id, file, undefined, { requireExistingSession: true })).session,
+                withSessionOwner: createSessionOwnerAccess(
+                  getRpcSession, (id) => getLocks().get(id) ?? closingRpcSessionWait(id),
+                ),
+              })),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,

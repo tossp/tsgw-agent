@@ -1,5 +1,7 @@
 # Tool selection and built-in extensions
 
+TSGW's model-callable one-shot wakeup tools, their process-memory lifetime, metadata and ordinary-session-only boundary are documented in [wakeups.md](wakeups.md); the [module rules](../../tsgw/wakeups/AGENTS.md) list every upstream integration point.
+
 ## New session tool preset
 Tool names are passed at session creation (`POST /api/agent/new` → `toolNames[]`) and persisted in versioned `pi-web:tool-selection` custom entries (ADR 0002). No entry, or a later `cleared: true` one, means no pin: the session follows pi's `defaultTools`, as the `configured` preset ("From settings.json defaultTools") does by sending no `toolNames`. An empty array is Chat only, resolved before services are created: no extensions/skills/prompts/themes, and the ordered contents of Pi's discovered context files replace Pi's base prompt. Crossing the Chat-only boundary or clearing a pin rebuilds the wrapper; changing between nonempty presets updates it in place.
 
