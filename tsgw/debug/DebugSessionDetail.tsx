@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import type { Locale } from "@/lib/i18n/types";
 import type { DebugSessionDetail as DebugSessionDetailData } from "@/lib/debug-types";
-import { MCP_SESSION_STATE_KEYS } from "../mcp-config-helpers";
+import { MCP_SESSION_STATE_KEYS } from "@/components/mcp-config-helpers";
 import {
   DEBUG_RUN_STATUS_KEYS,
   barFraction,
@@ -18,7 +18,7 @@ import {
   type DebugTitleOf,
   type DebugTone,
   type Translate,
-} from "../debug-panel-state";
+} from "@/components/debug-panel-state";
 import { debugPageText, type DebugPageKey } from "./messages";
 import styles from "./DebugPageView.module.css";
 
@@ -117,7 +117,7 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
         {wrapper?.state === "closing" && (
           <Chip tone="warning">{wrapper.closingAt !== null ? t("debug.server.closingSince", { time: ago(wrapper.closingAt) }) : t("debug.state.closing")}</Chip>
         )}
-        {live && wrapper.extensions === "failed" && <Chip tone="warning">{`${t("debug.server.extensions")} ${t("debug.server.extensions.failed")}`}</Chip>}
+        {live && <Chip tone={wrapper.extensions === "binding" || wrapper.extensions === "failed" ? "warning" : "dim"}>{`${t("debug.server.extensions")} ${t(`debug.server.extensions.${wrapper.extensions}`)}`}</Chip>}
         {wrapper?.chatOnly && <Chip tone="dim">{t("debug.server.chatOnly")}</Chip>}
         {wrapper?.subagent && <Chip tone="dim">{t("debug.server.subagent")}</Chip>}
         {wrapper?.stale && <Chip tone="warning">{t("debug.server.stale")}</Chip>}
@@ -127,6 +127,15 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
       </div>
 
       <div className={styles.detailGrid}>
+        {live && <Block title={text("board.timing")}>
+          <Entry name={text("board.listeners", { count: wrapper.eventListeners })} lines={[
+            wrapper.createdAt !== null && text("board.created", { time: ago(wrapper.createdAt) }),
+            wrapper.idle.lastResetAt !== null && text("board.idleReset", { time: ago(wrapper.idle.lastResetAt) }),
+            wrapper.idle.nextCheckAt !== null && text("board.nextCheck", { time: formatCountdown(clock.remaining(wrapper.idle.nextCheckAt), t) }),
+            wrapper.idle.timeoutMs > 0 ? t("debug.server.idleTimeout", { time: formatCountdown(wrapper.idle.timeoutMs, t) }) : t("debug.server.idleDisabled"),
+            t(wrapper.idle.forcedByStop ? "debug.server.idleForced" : "debug.server.idleHint"),
+          ]} />
+        </Block>}
         {lifecycle && (
           <Block title={text("detail.history")}>
             <Entry
@@ -149,6 +158,7 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
               lines={[
                 stream.client,
                 stream.address,
+                text("board.streamOpened", { time: ago(stream.openedAt) }),
                 stream.connectedAt !== null
                   ? t("debug.server.streamConnected", { time: ago(stream.connectedAt) })
                   : t("debug.server.streamStarting"),
@@ -192,6 +202,8 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
                 name={titleOf(subagentRun.sessionId) ?? subagentRun.profile ?? shortDebugId(subagentRun.sessionId)}
                 lines={[
                   translateDebugCode(subagentRun.status, DEBUG_RUN_STATUS_KEYS, t),
+                  subagentRun.profile,
+                  text("board.parent", { name: titleOf(subagentRun.parentSessionId) ?? shortDebugId(subagentRun.parentSessionId) }),
                   subagentRun.background && t("debug.server.background"),
                   subagentRun.resumed && t("debug.server.resumed"),
                   subagentRun.dispatchedAt !== null && ago(subagentRun.dispatchedAt),
@@ -203,7 +215,8 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
             {subagents.notifications.map((notification, index) => (
               <div key={`${notification.sessionId}:${index}`} className={`${styles.entryLine} ${styles.warnText}`}>
                 {joinParts([
-                  t("debug.server.notifying", { parent: shortDebugId(notification.parentSessionId) }),
+                  titleOf(notification.sessionId) ?? shortDebugId(notification.sessionId),
+                  t("debug.server.notifying", { parent: titleOf(notification.parentSessionId) ?? shortDebugId(notification.parentSessionId) }),
                   notification.since !== null && ago(notification.since),
                 ])}
               </div>
@@ -211,7 +224,7 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
           </Block>
         )}
 
-        {mcp && (mcp.servers.length > 0 || mcp.problems > 0 || mcp.disposed) && (
+        {mcp && (
           <Block
             title="MCP"
             extra={(
@@ -221,6 +234,7 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
               </>
             )}
           >
+            <p className={styles.entryLine}>{text("board.mcpState", { active: text(mcp.active ? "board.yes" : "board.no"), running: text(mcp.runActive ? "board.yes" : "board.no") })}</p>
             {mcp.servers.map((server, index) => {
               const { tone, filled } = mcpServerTone(server);
               const stateWord = translateDebugCode(server.state, MCP_SESSION_STATE_KEYS, t);
@@ -239,9 +253,7 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
                     <Dot tone={tone} ring={!filled} />
                     <span className={server.released ? styles.faint : undefined}>{server.name}</span>
                   </span>
-                  {(server.state !== "connected" || server.hasError) && (
-                    <span className={styles.entryLine}>{server.hasError && server.state === "connected" ? t("debug.server.mcpError") : stateWord}</span>
-                  )}
+                  <span className={styles.entryLine}>{joinParts([server.scope, stateWord, server.released && t("debug.server.mcpReleased"), server.hasError && t("debug.server.mcpError")])}</span>
                 </div>
               );
             })}
