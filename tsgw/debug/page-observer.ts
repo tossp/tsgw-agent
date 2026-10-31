@@ -1,4 +1,4 @@
-import { createDebugPoller, type DebugPollerOptions } from "../debug-panel-state";
+import { createDebugPoller, type DebugPollerOptions } from "@/components/debug-panel-state";
 import type { SessionInfo } from "@/lib/types";
 
 export const CATALOG_REFRESH_MS = 30_000;
@@ -44,6 +44,7 @@ export function createDebugPageObserver(options: Options) {
       void readCatalog();
     },
     sync: () => debug.sync(),
+    inFlightSince: () => debug.inFlightSince(),
     dispose() {
       disposed = true;
       debug.dispose();

@@ -31,7 +31,7 @@ test("standalone route mounts only fork observer UI, not chat or upstream DebugP
   const route = await readFile(new URL("../../app/debug/page.tsx", import.meta.url), "utf8");
   const client = await readFile(new URL("./DebugPage.tsx", import.meta.url), "utf8");
   const observer = await readFile(new URL("./page-observer.ts", import.meta.url), "utf8");
-  assert.match(route, /components\/tsgw-debug\/DebugPage/);
+  assert.match(route, /tsgw\/debug\/DebugPage/);
   assert.doesNotMatch(route + client + observer, /AppShell|ChatWindow|useAgentSession|new EventSource|sendAgentCommand|\/lease|\/api\/agent\/running|searchParams|localStorage/);
   assert.match(client, /selectedRef\.current === id \? null : id/);
 });
