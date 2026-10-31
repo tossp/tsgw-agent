@@ -120,6 +120,25 @@ test("hidden pages start no requests; visible pages catch up; no overlapping pol
   h.observer.dispose();
 });
 
+test("visibility catch-up preserves the caller's next scheduled poll instead of inventing a new phase", async () => {
+  const h = harness();
+  h.time(1500);
+  h.observer.poll(2000);
+  assert.equal(h.observer.nextDebugCheckAt(), 2000);
+  answer(h.requests[0], snapshot());
+  answer(h.requests[1], { sessions: [] });
+  await flush();
+  h.visible(false);
+  h.time(2000);
+  h.observer.poll(4000);
+  assert.equal(h.observer.nextDebugCheckAt(), 2000, "hidden checks do not claim a request is scheduled");
+  h.visible(true);
+  h.time(3500);
+  h.observer.poll(4000);
+  assert.equal(h.observer.nextDebugCheckAt(), 4000);
+  h.observer.dispose();
+});
+
 test("failed catalog keeps prior rows with an explicit error; debug keeps its last successful snapshot", async () => {
   const h = harness();
   h.observer.poll();
@@ -134,6 +153,44 @@ test("failed catalog keeps prior rows with an explicit error; debug keeps its la
   assert.equal(h.readings.at(-1).failure.kind, "http");
   assert.deepEqual(h.readings.at(-1).reply, snapshot());
   assert.deepEqual(h.catalogs.at(-1), { rows: null, failed: true });
+  h.observer.dispose();
+});
+
+test("catalog telemetry records actual start, elapsed durations, failure samples and recovery without fabricating success", async () => {
+  const h = harness();
+  assert.equal(h.observer.nextDebugCheckAt(), null);
+  assert.equal(h.observer.catalogTelemetry().receivedAt, null);
+  h.observer.poll();
+  assert.equal(h.observer.nextDebugCheckAt(), 2000);
+  assert.equal(h.observer.catalogTelemetry().inFlightSince, 0);
+  h.time(140);
+  answer(h.requests[0], snapshot());
+  answer(h.requests[1], { sessions: [] });
+  await flush();
+  assert.deepEqual(h.observer.catalogTelemetry(), {
+    inFlightSince: null, nextCheckAt: CATALOG_REFRESH_MS + 140, receivedAt: 140,
+    roundTripMs: 140, requests: 1, failures: 0, consecutiveFailures: 0, failed: false,
+    samples: [{ at: 140, ms: 140, failed: false }],
+  });
+  h.time(CATALOG_REFRESH_MS + 140);
+  h.observer.poll();
+  h.time(CATALOG_REFRESH_MS + 3140);
+  answer(h.requests[2], snapshot());
+  answer(h.requests[3], {}, 503);
+  await flush();
+  const failed = h.observer.catalogTelemetry();
+  assert.equal(failed.receivedAt, 140, "failure cannot become last success");
+  assert.equal(failed.roundTripMs, 3000);
+  assert.equal(failed.failures, 1);
+  assert.equal(failed.consecutiveFailures, 1);
+  assert.deepEqual(failed.samples.at(-1), { at: CATALOG_REFRESH_MS + 3140, ms: 3000, failed: true });
+  h.time(failed.nextCheckAt);
+  h.observer.poll();
+  answer(h.requests[4], snapshot());
+  answer(h.requests[5], { sessions: [] });
+  await flush();
+  assert.equal(h.observer.catalogTelemetry().consecutiveFailures, 0);
+  assert.equal(h.observer.catalogTelemetry().failures, 1);
   h.observer.dispose();
 });
 

@@ -7,7 +7,7 @@ import { copyText } from "@/lib/clipboard";
 import { readHttpProtocol, readPageVisibility, startPageVisibilityTracking } from "@/lib/page-debug";
 import type { ObserverTelemetry } from "./ObserverPanel";
 import type { SessionInfo } from "@/lib/types";
-import { DEBUG_POLL_MS, DEBUG_TICK_MS, EMPTY_DEBUG_SERVER_READING, type DebugServerReading } from "@/components/debug-panel-state";
+import { debugPollSample, DEBUG_POLL_MS, DEBUG_TICK_MS, EMPTY_DEBUG_SERVER_READING, type DebugServerReading } from "@/components/debug-panel-state";
 import { createDebugPageObserver } from "./page-observer";
 import { DebugPageView } from "./DebugPageView";
 
@@ -32,6 +32,8 @@ export function DebugPage() {
   useEffect(() => {
     mountedRef.current = true;
     startPageVisibilityTracking();
+    let inspectedInitial = false;
+    let nextPollAt = Date.now() + DEBUG_POLL_MS;
     const observer = createDebugPageObserver({
       fetch: (url, init) => fetch(url, init),
       sessionId: () => selectedRef.current,
@@ -43,10 +45,23 @@ export function DebugPage() {
           inFlightSince: null,
           protocol: readHttpProtocol(),
           visibility: readPageVisibility(),
-          samples: reading.failure || reading.roundTripMs === null || reading.receivedAt === null
-            ? previous.samples
-            : [...previous.samples, { at: reading.receivedAt, ms: reading.roundTripMs }].slice(-24),
+          samples: (() => {
+            const sample = debugPollSample(reading);
+            return sample === null ? previous.samples : [...previous.samples, { ...sample, at: reading.failure?.at ?? reading.receivedAt ?? Date.now() }].slice(-24);
+          })(),
         }));
+        // A read-only detail query, not startRpcSession or a chat mount.
+        if (!inspectedInitial && reading.reply && reading.reply.sessions.length > 0) {
+          inspectedInitial = true;
+          const first = reading.reply.sessions.find(session => session.running && !session.awaitingInput)
+            ?? reading.reply.sessions.find(session => session.awaitingInput)
+            ?? reading.reply.sessions[0];
+          if (selectedRef.current === null && first) {
+            selectedRef.current = first.sessionId;
+            setSelectedSessionId(first.sessionId);
+            observer.sync();
+          }
+        }
       },
       onCatalog: (catalog, failed) => {
         if (catalog) {
@@ -63,17 +78,20 @@ export function DebugPage() {
       setTelemetry(previous => ({ ...previous, visibility: readPageVisibility() }));
       if (!isHidden) {
         setNow(Date.now());
-        observer.poll();
+        observer.poll(nextPollAt);
       }
     };
     visibilityChanged();
     const tick = setInterval(() => {
       if (document.visibilityState === "visible") {
         setNow(Date.now());
-        setTelemetry(previous => ({ ...previous, inFlightSince: observer.inFlightSince(), protocol: readHttpProtocol(), visibility: readPageVisibility() }));
+        setTelemetry(previous => ({ ...previous, inFlightSince: observer.inFlightSince(), nextDebugCheckAt: observer.nextDebugCheckAt(), catalog: observer.catalogTelemetry(), protocol: readHttpProtocol(), visibility: readPageVisibility() }));
       }
     }, DEBUG_TICK_MS);
-    const poll = setInterval(() => observer.poll(), DEBUG_POLL_MS);
+    const poll = setInterval(() => {
+      nextPollAt = Date.now() + DEBUG_POLL_MS;
+      observer.poll(nextPollAt);
+    }, DEBUG_POLL_MS);
     document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       mountedRef.current = false;

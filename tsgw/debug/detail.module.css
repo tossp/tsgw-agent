@@ -1,0 +1,255 @@
+/*
+ * The expanded session's detail, owned by DebugSessionDetail.tsx alone.
+ *
+ * It is deliberately separate from DebugPageView.module.css: the page's own layout moves with the
+ * board, while this surface keeps one compact reading grid — capsules for states, one line per
+ * fact, and native disclosures for the long connection and run records that should not hold the
+ * default height. Colours inherit the page's module-scoped console palette, independent of
+ * the workspace theme.
+ */
+
+.detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--dbg-line, #2c3f58);
+  border-radius: 6px;
+  background: linear-gradient(145deg, #17283b, var(--dbg-card, #111c2e));
+  box-shadow: inset 2px 0 var(--dbg-accent, #58deef);
+  color: var(--dbg-ink, #242520);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.detail,
+.detail *,
+.detail *::before,
+.detail *::after { box-sizing: border-box; }
+
+/* ── The session's own line: id, state words, what the run is doing or waiting on ── */
+
+.meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px 7px; }
+.metaId {
+  color: var(--dbg-muted, #5d6058);
+  font-family: var(--dbg-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.metaNote { color: var(--dbg-dim, #6c6e64); font-size: 11px; }
+.metaActivity {
+  flex-basis: 100%;
+  color: var(--dbg-muted, #5d6058);
+  font-family: var(--dbg-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 2px;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+.chip_dim { color: var(--dbg-muted, #5d6058); }
+.chip_accent { color: var(--dbg-orange, #b74706); }
+.chip_warning { color: var(--dbg-warn, #925500); }
+.chip_error { color: var(--dbg-err, #b03829); }
+
+/* ── The reading grid: blocks of capsules and one-line facts ── */
+
+.grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 208px), 1fr));
+  align-items: start;
+  gap: 10px 20px;
+}
+.block { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.block[data-kind="mcp"] { grid-column: 1 / -1; grid-row: 1; }
+.block[data-kind="timing"] { grid-column: 1 / -1; }
+.block[data-kind="timing"] .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 8px; }
+.blockTitle {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--dbg-soft-line, #dddbd2);
+  color: var(--dbg-ink, #242520);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.blockTitleText { min-width: 0; }
+
+.tags { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; }
+
+/* A server, stream, provider or run as one capsule: lamp, name, and a short state in words. */
+.tag {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--dbg-line, #c9c8be) 92%, transparent);
+  border-radius: 999px;
+  background: #0d1929;
+  box-shadow: inset 0 1px #cceeff08;
+  color: var(--dbg-ink, #e5eefb);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tagName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tagState {
+  min-width: 0;
+  color: var(--dbg-muted, #5d6058);
+  overflow-wrap: anywhere;
+}
+.tagState::before { content: "· "; color: var(--dbg-dim, #6c6e64); }
+.tagDim { border-style: dashed; background: transparent; color: var(--dbg-muted, #5d6058); }
+.tagDim .tagName { color: var(--dbg-dim, #6c6e64); }
+
+.facts { display: grid; min-width: 0; gap: 1px; }
+.fact {
+  min-width: 0;
+  color: var(--dbg-muted, #5d6058);
+  font-family: var(--dbg-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.note { margin: 0; color: var(--dbg-dim, #6c6e64); font-size: 10.5px; }
+.warnLine {
+  margin: 0;
+  color: var(--dbg-warn, #925500);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.empty { margin: 0; color: var(--dbg-dim, #6c6e64); font-size: 11px; }
+
+/* ── Native disclosures: the long records stay folded, one click away ── */
+
+.records { margin-top: 1px; }
+.recordsTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dbg-muted, #5d6058);
+  cursor: pointer;
+  font-size: 10.5px;
+  list-style: none;
+}
+.recordsTitle::-webkit-details-marker { display: none; }
+.recordsTitle::before { color: var(--dbg-dim, #6c6e64); content: "▸"; font-size: 9px; }
+.records[open] > .recordsTitle::before { content: "▾"; }
+.recordsTitle:hover { color: var(--dbg-ink, #242520); }
+.recordsTitle:focus-visible { outline: 2px solid var(--dbg-orange, #b74706); outline-offset: 2px; }
+.recordsBody {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 5px;
+  padding-left: 10px;
+  border-left: 1px solid var(--dbg-soft-line, #dddbd2);
+}
+.record { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.recordName { color: var(--dbg-ink, #242520); font-size: 11px; overflow-wrap: anywhere; }
+
+/* ── MCP idle release: its own clock and bar, never a hover-only fact ── */
+
+.release { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 2px; }
+.meter {
+  display: inline-block;
+  width: 64px;
+  height: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--dbg-line, #c9c8be);
+  background: var(--dbg-card, #f7f5ef);
+}
+.meterFill { display: block; height: 100%; background: linear-gradient(90deg, #4299c9, var(--dbg-accent, #58deef)); box-shadow: 0 0 6px #58deef40; }
+.releaseText {
+  color: var(--dbg-ink, #242520);
+  font-family: var(--dbg-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The lamp: an outer ring, a lit core and a faint halo; shape says what kind of state ── */
+
+.lamp {
+  position: relative;
+  display: inline-grid;
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--dbg-muted, #5d6058);
+}
+.lamp[data-shape="dashed"] { border-style: dashed; }
+.lamp[data-shape="dotted"] { border-color: var(--dbg-dim, #6c6e64); border-style: dotted; }
+.lamp[data-tone="ok"] { color: var(--dbg-ok, #327149); }
+.lamp[data-tone="accent"] { color: var(--dbg-orange, #b74706); }
+.lamp[data-tone="warning"] { color: var(--dbg-warn, #925500); }
+.lamp[data-tone="error"] { color: var(--dbg-err, #b03829); }
+.lamp[data-tone="dim"] { color: var(--dbg-dim, #6c6e64); }
+
+.lampCore {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, currentColor 26%, transparent),
+    0 0 5px 1px color-mix(in srgb, currentColor 60%, transparent),
+    0 0 12px color-mix(in srgb, currentColor 20%, transparent);
+}
+.lamp[data-shape="dotted"] .lampCore {
+  width: 3px;
+  height: 3px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* Only a state still on its way there breathes; a settled one holds its light. */
+.lamp[data-pulse="on"] { animation: lampHalo 3200ms ease-in-out infinite; }
+.lamp[data-pulse="on"] .lampCore { animation: lampCoreBreathe 3200ms ease-in-out infinite; }
+
+@keyframes lampHalo {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent); }
+}
+@keyframes lampCoreBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .62; }
+}
+
+@media (max-width: 560px) {
+  .detail { padding: 8px; }
+  .block[data-kind="timing"] .facts { grid-template-columns: minmax(0, 1fr); }
+  .grid { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp,
+  .lampCore,
+  .meterFill { animation: none !important; transition: none !important; }
+}

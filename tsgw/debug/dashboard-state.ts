@@ -1,4 +1,4 @@
-import type { DebugSessionDetail, DebugSnapshotResponse } from "@/lib/debug-types";
+import type { DebugSessionDetail, DebugSessionSummary, DebugSnapshotResponse } from "@/lib/debug-types";
 import type { SessionInfo } from "@/lib/types";
 import { projectNameOf } from "@/lib/session-tree";
 import { sessionRowTitle } from "@/components/SessionTree";
@@ -7,6 +7,40 @@ import { groupDebugSessions, type DebugServerReading, type DebugSessionGroup, ty
 
 export type TaskFilter = "all" | "held" | "running" | "awaiting" | "subagents" | "catalog";
 export type TaskSort = "recent" | "name";
+
+/**
+ * Runtime totals for the board's summary strip. `held`/`running`/`awaiting`/`subagents`/`catalog`/
+ * `total` keep their published meaning; the role fields split the runtime snapshot further so
+ * ordinary sessions and subagents are counted apart. A fork is a top-level session, never a
+ * delegation. A context parent is not resident, so it is in none of the activity counts.
+ */
+export interface DashboardCounts {
+  /** Wrapper summaries: the sessions the server holds right now. */
+  held: number;
+  /** Held sessions executing (running, not awaiting input), both roles. */
+  running: number;
+  /** Held sessions waiting for the user, both roles. */
+  awaiting: number;
+  /** Held sessions by the server's own summary flag; see `subagentResident` for the role total. */
+  subagents: number;
+  /** Catalog entries with no wrapper summary: saved history, runtime state unknown. */
+  catalog: number;
+  /** The union of held and catalog ids. */
+  total: number;
+  /** Held ordinary sessions (not a subagent); forks included. */
+  ordinary: number;
+  /** Held ordinary sessions executing. */
+  ordinaryRunning: number;
+  /** Held subagents by role (summary flag or catalog subagent relation): `ordinary + this === held`. */
+  subagentResident: number;
+  /** Held subagents executing. */
+  subagentRunning: number;
+  /**
+   * Non-resident parents kept only as context because a resident subagent needs its family root.
+   * They are placeholders: not held, not running, and they hide no resident subagent.
+   */
+  contextParents: number;
+}
 export interface DashboardIssue {
   id: string;
   tone: "error" | "warning";
@@ -67,7 +101,7 @@ export function filterDashboardGroups(groups: readonly DebugSessionGroup[], filt
     if (filter === "held" && !summary) return false;
     if (filter === "running" && (!summary?.running || summary.awaitingInput)) return false;
     if (filter === "awaiting" && !summary?.awaitingInput) return false;
-    if (filter === "subagents" && !child) return false;
+    if (filter === "subagents" && (!summary || !child)) return false;
     if (filter === "catalog" && summary) return false;
     if (!needle) return true;
     return [row.id, row.info?.name, row.info?.cwd, row.info?.projectRoot, projectName, row.info?.firstMessage, row.info?.relation?.kind === "subagent" ? row.info.relation.description : undefined].some(value => value?.toLocaleLowerCase().includes(needle));
@@ -81,6 +115,7 @@ export function filterDashboardGroups(groups: readonly DebugSessionGroup[], filt
     const selected = families.map(family => {
       const matching = family.filter(row => matches(row, group.name));
       if (matching.length === 0) return [];
+      if (filter === "catalog") return matching.map(row => ({ ...row, depth: 0 as const, placeholder: false }));
       // Keep a runtime parent as context; never sort a matching child away from its family.
       return family[0].depth === 0 && !matching.includes(family[0]) ? [family[0], ...matching] : matching;
     }).filter(family => family.length > 0);
@@ -89,16 +124,50 @@ export function filterDashboardGroups(groups: readonly DebugSessionGroup[], filt
   }).filter(group => group.rows.length > 0);
 }
 
-export function dashboardCounts(reply: DebugSnapshotResponse | null, catalog: readonly SessionInfo[]) {
+const executing = (summary: DebugSessionSummary): boolean => summary.running && !summary.awaitingInput;
+
+/** The role the snapshot proves: the wrapper's flag or the catalog's relation; a fork is ordinary. */
+function subagentSummary(summary: DebugSessionSummary, info: SessionInfo | undefined): boolean {
+  return summary.subagent || info?.relation?.kind === "subagent";
+}
+
+/** `groups` let a caller that already has this snapshot's families skip grouping them again. */
+export function dashboardCounts(
+  reply: DebugSnapshotResponse | null,
+  catalog: readonly SessionInfo[],
+  groups: readonly DebugSessionGroup[] = dashboardGroups(reply, catalog),
+): DashboardCounts {
   const summaries = reply?.sessions ?? [];
+  const byId = new Map(catalog.map(info => [info.id, info]));
   const held = new Set(summaries.map(summary => summary.sessionId));
+  let ordinary = 0;
+  let ordinaryRunning = 0;
+  let subagentResident = 0;
+  let subagentRunning = 0;
+  for (const summary of summaries) {
+    if (subagentSummary(summary, byId.get(summary.sessionId))) {
+      subagentResident += 1;
+      if (executing(summary)) subagentRunning += 1;
+    } else {
+      ordinary += 1;
+      if (executing(summary)) ordinaryRunning += 1;
+    }
+  }
+  // A placeholder is exactly a family root the server holds no summary for; it exists because a
+  // resident subagent pointed at it. Catalog-only groups and unlisted rows are never placeholders.
+  const contextParents = groups.reduce((count, group) => count + group.rows.filter(row => row.placeholder).length, 0);
   return {
     held: summaries.length,
-    running: summaries.filter(summary => summary.running && !summary.awaitingInput).length,
+    running: summaries.filter(executing).length,
     awaiting: summaries.filter(summary => summary.awaitingInput).length,
     subagents: summaries.filter(summary => summary.subagent).length,
     catalog: catalog.filter(info => !held.has(info.id)).length,
     total: new Set([...catalog.map(info => info.id), ...held]).size,
+    ordinary,
+    ordinaryRunning,
+    subagentResident,
+    subagentRunning,
+    contextParents,
   };
 }
 
