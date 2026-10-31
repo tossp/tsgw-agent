@@ -95,7 +95,8 @@ test("failed polls keep the last answer with its age and consecutive failures", 
 test("initial and failed-first observations never assert runtime zero or task completion", () => {
   const html = render({ server: EMPTY_DEBUG_SERVER_READING });
   assert.match(visibleText(html), /Waiting for data/);
-  assert.match(visibleText(html), /Catalog · runtime state unknown/);
+  assert.deepEqual(rowNames(html), [], "saved sessions do not leak into the runtime-first view");
+  assert.equal([...html.matchAll(/class="metricNumber">—/g)].length, 6);
   assert.doesNotMatch(visibleText(html), /Snapshot current/);
   const failed = render({ server: { ...EMPTY_DEBUG_SERVER_READING, failure: { kind: "network", status: null, at: LOCAL - SECOND }, requests: 1, failures: 1, consecutiveFailures: 1 } });
   assert.match(visibleText(failed), /The request failed \(network or server down\)/);
@@ -103,15 +104,15 @@ test("initial and failed-first observations never assert runtime zero or task co
 });
 
 test("unloaded catalog is unknown, successful empty catalog is zero, later failures keep the known count", () => {
-  const count = html => html.match(/Catalog only<\/span><strong class="metricNumber">([^<]+)/)?.[1];
+  const count = html => html.match(/Saved directory <span class="catalogBadge">([^<]+)/)?.[1];
   assert.equal(count(render({ catalogReceivedAt: null, catalogError: true })), "—");
   assert.equal(count(render({ catalogReceivedAt: LOCAL, sessions: [] })), "0");
   assert.equal(count(render({ catalogReceivedAt: LOCAL, catalogError: true, sessions: [...catalog, { ...catalog[0], id: "saved" }] })), "1");
 });
 
-test("selected session retains its collapse control before detail arrives even when no longer listed", () => {
+test("selected session retains a close control in the resource pane before detail arrives even when no longer listed", () => {
   const html = render({ server: server({ reply: { ...reply(), sessions: [], session: null } }), selectedSessionId: "absent", sessions: [] });
-  assert.match(html, /class="row rowOpen residual" aria-expanded="true" aria-controls="debug-session-absent"/);
+  assert.match(html, /<button[^>]+aria-label="Close details"/);
   assert.match(html, /id="debug-session-absent">Waiting for the server's answer/);
 });
 
@@ -122,14 +123,15 @@ test("hidden state and catalog failures preserve observed data and identify the 
   assert.match(text, /Connected pages · 2/);
 });
 
-test("residual selected detail stays visible and closable above the groups", () => {
+test("residual selected detail stays in the resource pane with a close control", () => {
   const answer = reply();
   answer.sessions = answer.sessions.filter(entry => entry.sessionId !== "s1");
   const html = render({ server: server({ reply: answer }), selectedSessionId: "s1", sessions: catalog.filter(entry => entry.id !== "s1") });
-  assert.match(html, /class="row rowOpen residual" aria-expanded="true" aria-controls="debug-session-s1"/);
-  assert.match(visibleText(html), /The last answer still holds this session, but its list has no row/);
+  assert.match(html, /<button[^>]+aria-label="Close details"/);
+  assert.match(html, /<section class="inspector" aria-label="Session resources"/);
+  assert.doesNotMatch(rowNames(html).join("|"), /Current chat/);
   assert.equal(html.split('class="detail"').length - 1, 1);
-  assert.ok(html.indexOf('class="row rowOpen residual"') < html.indexOf('class="group"'));
+  assert.match(html, /id="debug-session-s1" role="group" aria-label="s1"/);
 });
 
 test("selection does not reorder families; server-clock countdown retains forced-Stop warning", () => {
@@ -137,19 +139,20 @@ test("selection does not reorder families; server-clock countdown retains forced
   const answer = reply();
   answer.sessions = [summary("s1", { forcedByStop: true, nextIdleCheckAt: SERVER + 4 * MINUTE })];
   const html = render({ server: server({ reply: answer }) });
-  assert.ok(titles(html).some(title => title.startsWith("Reap countdown 3m 50s · timeout 10m 00s · Stopped:")));
-  assert.match(html, /aria-label="closes in 3m 50s \(after Stop\)"/);
+  assert.match(visibleText(html), /3m 50s Stop/);
+  assert.ok(titles(html).some(title => title.includes("Next idle check, not a guaranteed shutdown")));
+  assert.match(html, /class="rowIdle forcedIdle"/);
   assert.match(visibleText(render({ now: LOCAL + MINUTE })), /7m 20s/);
 });
 
-test("catalog-only sessions are visible but never claimed completed; real parent and assignment are shown", () => {
+test("catalog-only sessions stay out of default rows but their read-only inspection retains real relation facts", () => {
   const child = { ...catalog[1], id: "old-child", name: "Historical subagent", relation: { ...catalog[1].relation, status: "completed" } };
   const answer = reply();
   answer.session.sessionId = child.id;
   answer.session.wrapper = null;
   const html = render({ sessions: [...catalog, child], selectedSessionId: child.id, server: server({ reply: answer }) });
   const text = visibleText(html);
-  assert.match(text, /Catalog · runtime state unknown/);
+  assert.ok(!rowNames(html).includes("Historical subagent"));
   assert.match(text, /not a task completion record/);
   assert.match(text, /Parent: Current chat/);
   assert.match(text, /Assignment: Inspect source/);
@@ -165,7 +168,41 @@ test("observer measurements are labeled, measured and not confused with other ch
   assert.match(text, /Last round trip 42 ms/);
   assert.match(text, /Request in flight 500 ms/);
   assert.match(text, /HTTP protocol h2/);
-  assert.match(html, /<polyline points="8,29 272,10"/);
+  assert.equal([...html.matchAll(/<rect /g)].length, 2);
+  assert.match(html, /Measured poll durations; failed requests are full-height markers/);
+});
+
+test("runtime-first view separates identities and shows parent context without counting it as resident", () => {
+  const answer = reply();
+  answer.sessions = [summary("sub-xyz-789", { subagent: true, running: true, nextIdleCheckAt: SERVER + MINUTE })];
+  const html = render({ server: server({ reply: answer }) });
+  assert.deepEqual(rowNames(html), ["Current chat", "explore the repo"]);
+  assert.match(visibleText(html), /Parent context · not resident/);
+  assert.match(visibleText(html), /Subagents executing 1/);
+  assert.match(visibleText(html), /50s/);
+  assert.doesNotMatch(visibleText(html), /Weekly plan/);
+  const missing = render({ sessions: [], server: server({ reply: answer }), selectedSessionId: "sub-xyz-789" });
+  assert.match(missing, /class="inspectorName"><strong>sub-xyz-<\/strong><span class="catalogBadge">Subagent/);
+  const unknown = render({ sessions: [], server: server({ reply: { ...answer, sessions: [] } }), selectedSessionId: "absent" });
+  assert.match(unknown, /class="inspectorName"><strong>absent<\/strong><span class="catalogBadge">Not observed/);
+});
+
+test("both poll rows show actual slow requests, failure markers and next-check timing", () => {
+  const telemetry = {
+    samples: [{ at: LOCAL, ms: 20 }, { at: LOCAL + 1, ms: 0, failed: true }],
+    inFlightSince: LOCAL - 2500, nextDebugCheckAt: LOCAL + SECOND, protocol: "h2",
+    catalog: { inFlightSince: null, nextCheckAt: LOCAL + 20 * SECOND, receivedAt: LOCAL - SECOND, roundTripMs: 120,
+      requests: 3, failures: 1, consecutiveFailures: 0, failed: false, samples: [{ at: LOCAL, ms: 120 }] },
+  };
+  const html = render({ telemetry });
+  assert.match(visibleText(html), /Runtime snapshot Slow 2500 ms/);
+  assert.match(visibleText(html), /Session directory Answered 120 ms Next poll check 20s/);
+  assert.match(html, /class="sampleFailed"/);
+  assert.match(html, /height="23" rx="1" class="sampleFailed"/);
+  const failed = render({ telemetry: { ...telemetry, inFlightSince: null }, server: server({ failure: { kind: "timeout", status: null, at: LOCAL } }) });
+  assert.match(visibleText(failed), /Runtime snapshot Failed —/);
+  const hidden = render({ telemetry, hidden: true });
+  assert.match(visibleText(hidden), /Runtime snapshot Paused/);
 });
 
 test("view is read-only and timer-free; controls are native and SVG is decorative", () => {
