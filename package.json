@@ -37,7 +37,6 @@
     "public",
     "docs/login2.md",
     "docs/tsgw-release.md",
-    "docs/cat-monitoring.md",
     "next.config.ts",
     "package.json"
   ],

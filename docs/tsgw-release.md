@@ -162,7 +162,7 @@ gh run list --workflow tsgw-npm.yml --limit 5
 - **预览版被跳过**：日志里出现 “origin/tsgw moved to …”，说明该次运行的提交已不是分支 head，更新的运行会发布 `next`。
 - **源测试本来就失败**：工作流不跳过、不放行，保持失败。先在本机 `npm test` 复现并修好，再推分支。
 - **`.next/server/route-cache` 报错**：本地用 `npm run test:e2e`（`start` 模式）跑过后 `.next` 被污染，换干净 checkout 或让 CI 构建。
-- **CAT 补传失败**：独立 `cat-upload` job 保留失败状态，`publish` 仅依赖已完成 S3 归档的 `build`，不等待 CAT。先分别核对 npm 发布结果和补传结果，再只重跑失败的 CAT job；不要重跑构建、重发已存在的 npm 版本。S3 归档保留原始 JS/map，可在网络恢复后后补同一 Release。
+- **CAT 补传失败**：独立 `cat-upload` job 保留失败状态，`publish` 仅依赖已完成 S3 归档的 `build`，不等待 CAT。先分别核对 npm 发布结果和补传结果；超时失败按 §10 在其他已授权任务完成后主动手动补传，作为本轮收尾，不等待用户提醒。不要重跑构建、重发已存在的 npm 版本；只使用 S3 保存的同次构建原始 JS/map。
 
 ## 6. 本地构建与打包
 
@@ -240,9 +240,9 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 - **发布边界**：S3 归档成功后从临时构建目录移除 `.map`（不改 JS），再打包、冒烟和发布 npm；不能只依赖 npm files 排除规则。`publish` 与 `cat-upload` 均只 `needs: build`，互不依赖，因此 CAT 不可达或补传失败不会阻断已验收产物发布。S3 归档失败仍阻断，避免 map 丢失。
 - **独立补传**：`cat-upload` 下载原版本归档并校验外层 SHA-256，`release/cat-upload.mjs` 再校验每文件 hash、版本及 Debug ID，使用 SDK 已依赖的官方插件公开 API 创建 Release、直接上传已带 Debug ID 的归档目录，绕过可能静默跳过文件的准备步骤。原 JS/map 不修改，不再注入 ID，也不重新构建。该 job 独占仓库级 `SENTRY_AUTH_TOKEN`；错误仍抛出，job 保持失败而非静默成功。
 - **网络入口**：只有补传 runner 将 `cat.tossp.com` 临时解析到 `mctx 1.13.102.6` 并校验 TLS 和健康接口；API 和同域分片地址都走该通道。未改公共 DNS、scnet、DSN、分片大小、并发或 30 秒请求时限。
-- **重试方式**：只重跑该运行的失败 CAT job；它读取已成功 `build` 的原版本和 S3 字节，不运行 `release/version.mjs`，不重发 npm。需要人工补传时也可通过标准 S3 下载这三个文件，校验、解压后以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node release/cat-upload.mjs <解压目录>`。
+- **重试与收尾**：CAT job 超时失败时，在本轮发布、部署及其他已授权任务完成后主动追加手动补传，不等待用户提醒。先确认版本、job 和服务端现状，成功或结果未知时不盲目重复上传；仅下载对应版本同次构建的上述三份归档，校验外层摘要、解压后，以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node release/cat-upload.mjs <解压目录>`。随后回读 Release、artifact bundle 与版本关联；索引暂不完整时只做有界只读复核，不立即重传。不改 hosts、中转、分片或超时参数，不重新构建、不运行 `release/version.mjs`、不重发 npm。如使用 CI 重试，只重跑该运行的失败 CAT job，仍使用已归档原件。
 - **状态与排队**：CAT job 失败可令整条 workflow 显示红色，但 npm 可能已发布成功，应分别读取两个 job 的结果。沿用原 workflow 级同 ref 并发锁，慢补传仍可能延迟下一次同分支运行；本轮不重构并发策略。
 - **运行时不变**：DSN 默认启用，Release 仍由产物版本确定，机器名仍取 `os.hostname()`；不依赖 CAT 已存在 Release。补传前不保证源码还原，不能承诺旧事件补传后自动重新处理。
 - **本地与标签**：不设置 `CAT_DEFER_UPLOAD` 时保留原行为：没有 token 不生成/上传 map；显式提供 token 的本地构建仍同步上传且失败抛错。`v*` 标签没有上述两个构建值，跳过 S3 归档和 CAT job，原正式版流程不变。
 
-测试入口：`node --test release/cat-ci.test.mjs release/cat-artifacts.test.mjs release/cat-upload.test.mjs`。覆盖真实 SDK 包装、工作流依赖、S3 参数、真实 tar、逐文件完整性及真实 SDK 的本地 HTTP 拒绝路径；不向真实 CAT 发单元测试事件。首次独立上传、CI、npm 及 S3 回读结果分别记录在 `docs/cat-monitoring.md`，不可将其中一个结果当作全部完成。
+测试入口：`node --test release/cat-ci.test.mjs release/cat-artifacts.test.mjs release/cat-upload.test.mjs`。覆盖真实 SDK 包装、工作流依赖、S3 参数、真实 tar、逐文件完整性及真实 SDK 的本地 HTTP 拒绝路径；不向真实 CAT 发单元测试事件。分别核验 CI、npm 发布、S3 原件完整性及 CAT 版本／映射关联，不可将其中一个结果当作全部完成；映射上传成功也不等于已验证事件堆栈还原。
