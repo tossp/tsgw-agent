@@ -64,6 +64,7 @@ import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } fr
 import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import { reportCatAgentEvent } from "./cat-agent-events";
+import { AgentTracer } from "../tsgw/agent-tracing/tracer";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server";
 import {
   appendClearedSessionToolSelection,
@@ -171,6 +172,7 @@ type AgentSessionWrapperOptions = {
   mcpHost?: WrapperMcpHost;
   /** Chat only: the extension-provided model the session wanted, named when a prompt finds no model. */
   chatOnlyExtensionModel?: { provider: string; id: string };
+  agentTracing?: { parentSessionId: string; agentName: string };
 };
 
 /**
@@ -406,6 +408,8 @@ export class AgentSessionWrapper {
   private lastCommandType: string | null = null;
   private lastCommandAt: number | null = null;
 
+  private readonly agentTracer: AgentTracer;
+
   constructor(
     public readonly inner: AgentSessionLike,
     options: AgentSessionWrapperOptions = {},
@@ -416,6 +420,7 @@ export class AgentSessionWrapper {
     this.suppressCompletionNotifications = options.suppressCompletionNotifications ?? false;
     this.mcpHost = options.mcpHost;
     this.chatOnlyExtensionModel = options.chatOnlyExtensionModel;
+    this.agentTracer = new AgentTracer(inner, options.agentTracing);
   }
 
   get sessionId(): string {
@@ -565,6 +570,7 @@ export class AgentSessionWrapper {
   start(): void {
     this.startedAt = Date.now();
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      this.agentTracer.onEvent(event);
       this.lastEventType = typeof event.type === "string" ? event.type : null;
       this.lastEventAt = Date.now();
       if (event.type === "agent_start") {
@@ -956,7 +962,7 @@ export class AgentSessionWrapper {
   }
 
   private emit(event: AgentEvent): void {
-    reportCatAgentEvent(event, this.sessionId);
+    this.agentTracer.withScope(() => reportCatAgentEvent(event, this.sessionId), event);
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -1734,6 +1740,7 @@ export class AgentSessionWrapper {
     this.idleDeadlineAt = null;
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
+    this.agentTracer.dispose();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
@@ -2523,7 +2530,14 @@ function registerRpcWrapper(wrapper: AgentSessionWrapper): void {
 const SUBAGENT_CONTROLLER = createSubagentController({
   getSession: (sessionId) => getRegistry().get(sessionId),
   registerSession: (inner, options) => {
+    // SAFETY: readSubagentRun selects the same SDK custom-entry metadata as the existing transcript adapter.
+    const tracingParent = readSubagentRun(
+      inner.sessionManager.getEntries() as unknown as SessionEntry[], inner.sessionId, inner.sessionFile ?? "",
+    );
     const wrapper = new AgentSessionWrapper(inner, {
+      ...(tracingParent ? { agentTracing: {
+        parentSessionId: tracingParent.parentSessionId, agentName: tracingParent.profile,
+      } } : {}),
       ...(options?.exactSystemPrompt !== undefined
         ? { exactSystemPrompt: options.exactSystemPrompt }
         : {}),
@@ -3314,7 +3328,13 @@ export async function startRpcSession(
         : undefined;
     exactSystemPromptRef.current = exactSystemPrompt;
     const mcpHost = builtins?.mcpHost ?? subagentMcp?.mcpHost;
+    const tracingParent = subagentResources
+      ? readSubagentRun(sessionEntries, inner.sessionId, inner.sessionFile ?? "")
+      : null;
     const wrapper = new AgentSessionWrapper(inner, {
+      ...(tracingParent ? { agentTracing: {
+        parentSessionId: tracingParent.parentSessionId, agentName: tracingParent.profile,
+      } } : {}),
       exactSystemPrompt,
       chatOnly,
       onAgentRunComplete: (completedSessionId, sessionName) => {

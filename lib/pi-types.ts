@@ -6,7 +6,7 @@ import type {
   SlashCommandInfo,
   Theme,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentMessage as PiAgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage as PiAgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
 export interface ContextUsage {
@@ -150,6 +150,8 @@ export interface AgentSessionLike {
    */
   readonly systemPrompt: string;
   readonly agent: {
+    /** Public SDK request boundary, including compaction and session naming. */
+    streamFunction?: StreamFn;
     state?: {
       /** Replayed from the transcript's system messages since Pi 0.86; never assign it. */
       readonly systemPrompt?: string;
