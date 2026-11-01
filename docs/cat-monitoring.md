@@ -1,4 +1,4 @@
-# CAT 错误收集（TSGW 自有功能）
+# CAT 错误收集与 Agent Tracing（TSGW 自有功能）
 
 本功能仅在 TSGW fork 维护，不提交上游。接入自建 Sentry `cat.tossp.com`；项目为 `av8d/tsgw-agent`，项目 ID 为 `10`。管理、DSN 查询和错误检索统一使用 `ts_tool → cat`。
 
@@ -10,7 +10,7 @@
 - 服务端关键 API catch、模型请求错误、异步 prompt 和扩展错误。
 - 保留原错误及其堆栈，并附带 source、session_id、operation、provider/model 等定位标签。
 
-按自建实例需求，不实现自定义脱敏、离线缓存、限流、告警规则或管理界面；不启用录屏、日志、指标、性能追踪、Seer。SDK 自带的默认处理仍保留，可能携带请求上下文；不额外附加整段对话或工具结果。不改变原有重试、消息发送和会话管理。
+既有错误收集不实现自定义脱敏、离线缓存、限流、告警规则或管理界面；不启用录屏、日志、指标、普通性能追踪、Seer。SDK 自带的默认处理仍保留，可能携带请求上下文；不额外附加整段对话或工具结果。不改变原有重试、消息发送和会话管理。新增 Agent Tracing 默认启用，不改变已有错误内容策略；“只采元数据”并非已确认政策，当前手动字段与尚未决定的正文范围见下文。
 
 ## 运行时配置
 
@@ -20,11 +20,58 @@
 - 实例标签直接使用服务端 `os.hostname()`，不读取 `SENTRY_INSTANCE`。
 - Release 固定为产物的 `tsgw-agent@<package.json.version>`，部署时不需要设置 `SENTRY_RELEASE`。CI 的版本准备步骤先改写产物版本，再把同一 Release 交给上传插件。
 - `SENTRY_ENVIRONMENT` 仅用于可选的环境标签，未配置时使用 `NODE_ENV`。
-- 前后端共用 `dataCollection.userInfo: true`，显式保留 SDK v11 默认的 IP／用户信息采集；请求头、User-Agent、URL 查询参数等沿用 SDK 标准采集，不新增自定义采集或开启录屏、日志、追踪。CAT 现有浏览器验收事件已回读到 IP 和地理信息；服务端项目设置接口本轮返回 403，未修改服务端隐私设置。
+- 前后端共用 `dataCollection.userInfo: true`，显式保留 SDK v11 默认的 IP／用户信息采集；错误事件的请求头、User-Agent、URL 查询参数等沿用 SDK 标准采集，不新增自定义错误采集或开启录屏、日志。Agent Tracing 不增加自定义字段白名单或发送前裁剪，也不改变错误事件。CAT 现有浏览器验收事件已回读到 IP 和地理信息；服务端项目设置接口本轮返回 403，未修改服务端隐私设置。
 
 浏览器在启动时读取 `/api/cat-config`，取得部署机器名等公开 SDK 配置；该只读接口仍受原有 Host/Origin 校验，不需要登录。它不返回上传令牌或其他环境配置。配置读取失败不阻止页面启动；读取完成前发生的浏览器错误没有采集保证。
 
 浏览器和服务端直接向 DSN 采集端点上报，MCP 不转发事件。完全断网时事件不保证保存或补报；SSE error 本身无法证明具体 DNS/TLS/代理根因。按要求不增加限流，持续断流时会随现有重连逐次上报（单浏览器可能约每秒一条），不改变原重连机制。
+
+## Agent Tracing（仅服务端，默认启用）
+
+模块规则、宿主接入清单及升级检查见 [`tsgw/agent-tracing/AGENTS.md`](../tsgw/agent-tracing/AGENTS.md)。
+
+### 默认行为与边界
+
+- 手动 Agent/model/tool spans 默认启用，100%采样；无需环境变量，不提供额外运行时启停开关。不启用浏览器、Edge 或普通 HTTP 性能追踪；原错误、Release 和源码映射链路不变。
+- 撤销自定义 span 字段白名单、schema/links/status 重建、envelope/DSC 字段裁剪及已采样子 spans 的二次丢弃；名称与 segment 交由 SDK 按实际 span/根 span 输出。实例在手动 span 建立时设置，不靠发送钩子重写。
+- 不再强制设置 genAI/MCP inputs/outputs 为 false，沿用 SDK 默认采集选项及标准上下文处理；因此不能承诺最终数据仅含手动设置的字段。仍排除重叠自动埋点，避免重复记录。
+- 本模块当前只映射模型/provider、工具名、用量/估算费用、耗时/状态及会话关系等已有字段，尚未映射提示词、模型回复、工具参数/结果；这不是永久的元数据限制，也不等于已实现聊天正文回放。正文范围、是否补充具体错误详情仍待确认，本轮不主动扩大。
+- 会话通过 Pi session UUID 的 `gen_ai.conversation.id` 关联；每轮独立 trace，子代理拥有独立会话，当前保留父会话 ID 与 profile，未添加任务描述或文件路径映射。
+- 不因当前磁盘占用约80%而缩短保留期或降低采样；本次不扩容、不改服务端配置。用户倾向接近90%占用再考虑扩容，这不是自动清理或扩容任务授权。
+
+### 采集与生命周期
+
+- 一次逻辑 run 为 `gen_ai.invoke_agent`；第一个 `agent_start` 开始，最终 `agent_settled` 结束，不在低层 `agent_end` 关闭。失败后成功重试按最终结果归类；取消/释放分别标记 cancelled/interrupted。
+- 每次公开 `agent.streamFunction` 请求为 `gen_ai.chat`，观察同一 stream 的最终 `result()`，不增加流迭代器。每次低层重试单独计请求，provider 内部 HTTP 重试仍属于该逻辑请求。模型与工具为兄弟 spans，模型耗时不包含工具执行。
+- 原始 `tool_execution_start/end` 生成 `gen_ai.execute_tool`，采用顶层最终 `isError`，通过 `parentToolCallId` 关联 codemode/MCP 嵌套调用，不额外重复采集 MCP spans。
+- 内建压缩、summary、自动命名经过公开 stream；使用其独立 routing ID 区分为辅助请求，即使与主 run 并发也为独立 root，不继承当前或上一轮 run ID。cache warming 与扩展直接访问 Models/ModelRuntime/provider 的调用不在保证范围，run 不含首次 agent_start 前准备耗时。
+- 一套 wrapper 的原始事件只采一次，不依赖浏览器或 SSE 连接；不改变后台任务寿命、取消、重试、消息发送或完成通知行为。dispose 收尾并恢复原函数。
+
+### token、费用与容量
+
+- Sentry `gen_ai.usage.input_tokens = Pi input + cacheRead + cacheWrite`，缓存计数另放 `cache_read.input_tokens`、`cache_creation.input_tokens`；output 不额外叠加其 reasoning 子集。
+- 总 token 为上述输入总数加 output。仅模型 spans 携带 token/费用，不复制到 Agent 或工具父节点以免重复聚合。
+- `gen_ai.cost.total_tokens` 是 USD 金额，来自 Pi `usage.cost.total`；当前实现依照 Pi 的严格阈值选择实际价格档位，该档缺失/全零时省略；失败/取消的合成全零 usage 也省略，部分实际 usage 保留。这些是现有推断规则，不是 SDK 原样透传：全零价格无法区分免费和未配置，全零失败用量也可能是真实零值。用户尚未决定其整改方式，本轮保留，不将推断描述成已确认事实。费用是配置价格估算，不等于 AIH/供应商最终扣费。
+- 模型字段来自 SDK 的请求 model 与最终 message.model；不据此声称已识别 AIH 内部真实路由或供应商模型。
+- 容量按100%采集规划：span 数约为 run＋模型请求＋工具调用，含重试、嵌套与子代理。单条未压缩1–4 KB仅为初始预算假设，不是实际落盘量；获准受控验收后量测 envelope 与存储增量，再形成扩容预算。
+- 2026-10-31 只读核验现网 Sentry/Snuba 的 `SENTRY_EVENT_RETENTION_DAYS=90`，spans 按记录 retention_days 的 ClickHouse TTL 异步清理；每日 UTC00:00（北京时间08:00）的 `sentry cleanup --days 90` 不能代替 spans TTL，亦不保证所有文件保留90天。首次实际摄入后仍需回读 AI spans 的 retention_days。
+
+### 验证状态
+
+2026-10-31：实现位于独立工作树 `/root/proj/pi-web-agent-tracing`、分支 `feat/cat-agent-tracing`，以本地 `tsgw` 的 `68b3248` 为基线；未提交、合并、推送、发布或部署，现网尚未改变。代码与本地验证不代表接入已完成，实际 CAT 入库及展示核对仍是完工条件。
+
+- 已按用户要求移除默认关闭行为及独立环境开关，默认启用 Agent tracing 并100%采样；代码、测试与文档不保留该开关。整改前一轮模块34项及全量3386项通过，原有1项跳过；这些计数为历史验证，不代替下述整改后的重跑。
+- 用户随后批准六项整改：保留 span 原名称、撤销 segment 固定命名、删除自定义 span 白名单/重建、删除第二层 envelope 过滤、撤销 AI/MCP 强制关闭、同步测试文档。正文新增映射与零值/错误详情仍未决。整改前“只采元数据为已批准政策”的表述及对应强制断言已撤销。
+- 六项整改后重跑模块34项全通过；最终全量3386项通过、1项原有跳过、0失败（日志 `/tmp/pi-web-agent-tracing-rectified-final.log`）。覆盖名称与真实根 segment、子 span 先结束发送、SDK 原生属性/links/DSC 不裁剪、合法未标记子 span 保留、默认 AI/MCP 选项及既有错误策略。TypeScript、lint、diff 及变更核心2文件主动 LSP 均通过。
+- 既有 CAT／RPC 定向14项在整改后重跑通过。全量按既有约定仅对测试进程撤去 DAC override/read-search capabilities，不修改或跳过只读权限用例。
+- 此前及本轮首遍全量均曾遇到未修改的 MCP idle 20ms 时序测试失败；此前本分支及基线分别定向54项通过，本轮定向54项及全量重跑也通过。未修改该无关用例或降低检查。
+- TypeScript、ESLint、diff 检查通过。新增核心/策略/服务配置4文件主动 LSP 检查0诊断；宿主大文件既有辅助规则提示未扩大范围处理。
+- 独立审阅发现的价格档位判定问题已修复，并以安装版本的真实 `calculateCost()` 交叉回归，复审无新增重要问题。
+- 六项整改独立只读复审未发现有证据的阻塞或重要问题，审阅代理独立重跑模块34项及 diff 检查通过；未据此声称已验证 CAT 入库。
+- 名称/segment 整改依据官方 Node 手动埋点文档，以及实装 `@sentry/core@11.9.0` 的 `tracing/spans/captureSpan.js`；采集开关按官方 Options 与实装 SDK 回归核验。通用核验已更新 Blinko #1094，项目不据此推定正文已获采集授权。
+- 未执行 Next 构建、未升级依赖、未调用收费模型，也未向 CAT 发送真实 AI 测试遥测；本地 HTTP 集成测试仅访问本机临时端点，遥测 transport 全部在内存。
+
+Conversations、费用展示、生产打包及实际摄入尚未验收。获准端到端发送后，须通过 `ts_tool → cat` 核对会话关联、token、耗时、工具与 retention_days，HTTP 接受不等于入库成功。
 
 ## 源码映射
 
@@ -38,6 +85,7 @@
 
 ## 验证入口
 
+- `node --test tsgw/agent-tracing/*.test.mjs`：真实 Sentry SDK＋内存 transport 的 Agent 生命周期、并发隔离、重试/取消、usage、实际名称/segment 及 SDK 数据不被额外裁剪；不发送网络遥测。
 - `node --experimental-strip-types --test lib/cat-monitoring.test.mjs lib/agent-client.test.mjs lib/agent-event-connection.test.mjs hooks/cat-new-session.test.mjs`
 - `node_modules/.bin/tsc --noEmit`、`npm run lint`、`npm test`
 - `node --test release/cat-ci.test.mjs` 检查分支门控、Release 和官方 webpack 包装的源码映射开关，不执行上传。
