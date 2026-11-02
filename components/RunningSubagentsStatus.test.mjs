@@ -88,10 +88,11 @@ test("removes settled runs and their descriptions using the live running list", 
     child("error", "Error", "failed"),
     child("interrupted", "Interrupted", "interrupted"),
     child("queued", "Queued", "queued"),
+    { id: "side", name: "Side chat", relation: { kind: "side", parentSessionId: "main" } },
   ];
-  const html = renderStatus(getRunningSubagents(subagents, new Set(["active", "elsewhere"])));
+  const html = renderStatus(getRunningSubagents(subagents, new Set(["active", "side", "elsewhere"])));
   assert.match(html, /1 subagent running \(Still running\)/);
-  assert.doesNotMatch(html, /Done|Stopped|Error|Interrupted|Queued/);
+  assert.doesNotMatch(html, /Done|Stopped|Error|Interrupted|Queued|Side chat|side/);
   assert.equal(renderStatus(getRunningSubagents(subagents, new Set())), "");
 });
 

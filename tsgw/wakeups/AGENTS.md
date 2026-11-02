@@ -4,13 +4,13 @@
 
 只实现进程内存中的一次性定时唤醒：支持自身及跨普通会话交接，拒绝子代理；只传递交接消息，不共享来源上下文或增加授权。重启丢失、不恢复、不补发、不重试；不做周期任务、数据库、独立后台服务或新增界面。子代理只能由被唤醒的主代理通过已有机制恢复。
 
-- `extension.ts`：`createWakeupExtension()` 注册 `schedule_wakeup`、`list_wakeups`、`cancel_wakeup`、`list_session_wakeups`；只注入普通非 Chat-only 会话。
+- `extension.ts`：`createWakeupExtension()` 注册 `schedule_wakeup`、`list_wakeups`、`cancel_wakeup`、`list_session_wakeups`；普通非 Chat-only 会话可用。上游侧聊的工具 allow-list 会排除这四工具，保持未注册、不可调用；这不构成侧聊作为投递目标的禁令。
 - `scheduler.ts`：`WakeupScheduler` 保存进程内待触发项、单次触发及取消，长等待分段处理。
 - `runtime.ts`：`WakeupRuntime` 校验入口参数、生成 SDK UUIDv7、协调历史与调度；`submitted` 只表示 SDK 接受或排队，不是模型任务完成。
 - `history.ts`：`pi-web:wakeup` custom meta 的只读聚合；`pi-web:wakeup-notification` 是另行进入模型上下文的通知。查询全部分支，不迁移文件、不启动会话。
 - `host.ts`：唯一的宿主适配层，提供 `createWakeupHost()`、进程级 `getWakeupRuntime()`；对接现有会话、文件及 SDK 投递。
 - `session-owner.ts`：通过宿主注入的现有 wrapper、启动／关闭 Promise 协调写入；不持有另一个会话注册表或锁。
-- `*.test.mjs`：单元测试及真实 SDK、SessionManager、AgentSessionWrapper 配合本地 faux provider 的集成测试。
+- `*.test.mjs`：单元测试及真实 SDK、SessionManager、AgentSessionWrapper 配合本地 faux provider 的集成测试。`side-session.integration.test.mjs` 使用真实 `createSideSession()`、`startRpcSession()`、宿主注册表和 `createWakeupHost()` 验证侧聊目标、严格重开、工具限制及静默完成；不修改上游运行时。
 
 详细行为、历史格式及验证记录以 [../../docs/agents/wakeups.md](../../docs/agents/wakeups.md) 为准。本文件是模块接入清单，不重复维护完整设计。
 
@@ -46,7 +46,7 @@
 
 ## 升级上游时的复核点
 
-1. `startRpcSession()` 的子代理／Chat-only 分支和启动／关闭等待顺序是否变化；严格目标检查仍必须位于真正 open 前。
+1. `startRpcSession()` 的子代理／Chat-only／侧聊分支和启动／关闭等待顺序是否变化；严格目标检查仍必须位于真正 open 前。侧聊工具 allow-list 与完成通知静默沿用上游，其他普通会话仍可调度已有侧聊目标，不新增目标禁令。
 2. prompt admission、MCP 准备、Stop 取消、手动压缩及暂存 prompt 的时序；只协调准备与接受，不能持有整轮或等待需要自身 admission 才能排出的 prompt。
 3. wrapper 对 manager 的独占关系、文件删除语义及缓存失效方式；不新增多进程同文件写入支持。
 4. SDK 空闲发送的 Promise 等整轮、忙碌发送只等排队的语义，以及通知事件匹配方式；审计写入失败不能改称投递失败或自动重投。
@@ -58,7 +58,7 @@
 在仓库根目录执行：
 
 ```bash
-node --experimental-strip-types --test "tsgw/wakeups/*.test.mjs" app/api/sessions/rename-route.test.mjs lib/message-display.test.mjs
+node --experimental-strip-types --test "tsgw/wakeups/*.test.mjs" lib/rpc-manager-side.integration.test.mjs app/api/sessions/rename-route.test.mjs lib/message-display.test.mjs
 node_modules/.bin/tsc --noEmit --incremental false
 npm run lint
 npm test

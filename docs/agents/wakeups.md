@@ -4,7 +4,7 @@
 
 ## 范围与工具
 
-仅普通、非 Chat-only 会话加载 `createWakeupExtension()`；不依赖内置子代理开关。子代理不加载这些工具。工具为普通扩展工具，可由模型直接调用，也可通过 `ctx.executeTool()`（包括 Code mode）调用，返回文本、`details` 和符合 `outputSchema` 的 `structuredContent`。
+普通、非 Chat-only 会话可使用 `createWakeupExtension()` 的工具；不依赖内置子代理开关。子代理不加载这些工具。侧聊沿用上游严格工具 allow-list，四个 wakeup 工具不进入其注册表、模型声明或可调用集合，不能自行调用。工具可用的普通会话既可由模型直接调用，也可通过 `ctx.executeTool()`（包括 Code mode）调用，返回文本、`details` 和符合 `outputSchema` 的 `structuredContent`。
 
 - `schedule_wakeup({ session_id?, after_seconds?, at?, message })`：默认当前会话；相对秒数与带时区的 ISO 时间二选一。时间必须在未来，消息不可为空。返回 SDK `uuidv7()` 生成的 `wakeupId` 及确定的 UTC 时间，不等待到点。
 - `list_wakeups({})`：查询本服务进程内全部尚未触发的定时器，不是历史。
@@ -12,6 +12,10 @@
 - `list_session_wakeups({ session_id })`：只读目标文件内全部分支的定时器记录，不启动模型，不恢复计时。
 
 允许跨普通会话的定时交接，不传递来源会话的完整上下文或额外授权。所有创建、投递目标都必须已有持久化会话文件。含 `pi-web:subagent` custom entry 的目标直接拒绝，不能只依据文件头的 `parentSession` 判断，因为普通 fork 也有该字段。到点重新检查目标；子代理只能由被唤醒的主代理通过既有机制恢复。
+
+### 侧聊的不对称行为
+
+侧聊自身不能调用 wakeup 工具，但其他普通会话可以将已有侧聊作为 `schedule_wakeup` 的目标；`pi-web:side` 不等于 `pi-web:subagent`，不新增侧聊目标禁令。侧聊空闲回收后，投递仍通过真实 `startRpcSession(..., { requireExistingSession: true })` 严格重开，保留上游工具限制与完成通知静默。目标被删除时不重建，包括宿主读取有效快照后、严格重开前删除的竞态。此处只是 fork 增项与上游行为的集成，不改变上游侧聊、会话 API 或运行时。
 
 ## 内存与生命周期
 
@@ -47,7 +51,7 @@ SDK 的 send Promise 在空闲时等整轮结束，在忙碌时只等排队。ho
 ## 验证入口
 
 ```bash
-node --experimental-strip-types --test "tsgw/wakeups/*.test.mjs"
+node --experimental-strip-types --test "tsgw/wakeups/*.test.mjs" lib/rpc-manager-side.integration.test.mjs
 node --experimental-strip-types --test app/api/sessions/rename-route.test.mjs lib/message-display.test.mjs
 node_modules/.bin/tsc --noEmit
 npm run lint
@@ -55,6 +59,14 @@ npm test
 ```
 
 集成测试使用真实 pi SDK、SessionManager、AgentSessionWrapper 和本地 faux provider，验证四工具直接/嵌套调用、自唤醒与 live leaf 连通、跨会话 meta 隔离、空闲/忙碌/已关闭目标、普通 fork 与子代理区分、取消、重建 runtime 不恢复、查询字节/mtime 不变、共享发送准备协调、已删除目标不重建及错误目标 ID 拒绝。无真实模型请求或用户会话改动。开发期间不运行 `next build`。
+
+### 上游 v0.14.1 侧聊集成回归（2026-11-02）
+
+- 新增 `tsgw/wakeups/side-session.integration.test.mjs` 两个真实集成用例，单独运行 2/2 通过；与 wakeups 全部原测试、`lib/rpc-manager-side.integration.test.mjs`、重命名和消息分组合跑 80/80 通过。
+- 普通会话由本地模型实际调用 `schedule_wakeup`，向活动侧聊及回收后严格重开的侧聊投递；侧聊的四工具在注册表、模型声明及可调用集合中均不存在，强行发起四个工具调用也全部被 SDK 拒绝。重开后再次验证限制，并以普通会话正常完成推送为对照，确认侧聊完成通知静默。
+- 删除用例覆盖到点前删除，以及宿主读取有效快照后、真实严格重开前删除；后者实际返回 `ENOENT`，目标及替代文件均未生成，也未启动模型。删除目标无法写入失败历史而产生的服务日志属于预期结果。
+- 使用临时 agent/project/session 目录、真实 SDK 与宿主注册表；只注入本地 faux provider、目标路径及内存推送传输。未初始化 CAT client，并阻断网络连接和 fetch；没有真实模型请求、外发遥测、用户数据修改或服务操作。回收验证调用真实 `shutdown()`，不等待空闲定时器；测试不并发制造宿主启动／关闭所有权竞态，相关协调由既有模块用例覆盖。
+- 新测试的 ESLint、`node --check` 及本次三文件 `git diff --check` 通过；本次不改上游运行时、API 或目标准入规则，不承担前端、debug 或整树合并验证。
 
 ### 初次实现验证（2026-10-30）
 

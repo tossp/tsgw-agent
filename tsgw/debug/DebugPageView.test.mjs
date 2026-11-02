@@ -205,6 +205,43 @@ test("both poll rows show actual slow requests, failure markers and next-check t
   assert.match(visibleText(hidden), /Runtime snapshot Paused/);
 });
 
+test("side chat badges, wrapper details and totals never present it as a subagent", () => {
+  const side = { ...catalog[0], id: "side-1", name: "Side investigation", relation: { kind: "side", parentSessionId: "s1" } };
+  const answer = reply();
+  answer.sessions.push(summary(side.id, { subagent: true, running: true }));
+  answer.session.sessionId = side.id;
+  answer.session.wrapper.sessionId = side.id;
+  answer.session.wrapper.subagent = true;
+  answer.session.subagents = { active: false, runs: [], notifications: [] };
+  const props = { sessions: [...catalog, side], server: server({ reply: answer }), selectedSessionId: side.id };
+  const html = render(props);
+  const sideRow = html.match(/<button[^>]+aria-controls="debug-session-side-1"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(sideRow);
+  assert.match(sideRow, /class="badge">Side chat/);
+  assert.doesNotMatch(sideRow, /Subagent|childBadge|rowSub/);
+  assert.match(visibleText(sideRow), /Side chat from: Current chat/);
+  assert.match(html, /class="inspectorName"><strong>Side investigation<\/strong><span class="catalogBadge">Side chat/);
+  const detail = html.slice(html.indexOf('id="debug-session-side-1"'));
+  assert.match(detail, />Side chat<\/span>/, "the wrapper's suppression flag is corrected too");
+  assert.doesNotMatch(detail, /Subagent/);
+  assert.match(html, /class="childBadge"|badge childBadge/, "the true subagent retains its badge");
+  assert.match(visibleText(html), /Runtime subagents 1 Subagents executing 1/);
+  assert.match(visibleText(html), /Ordinary sessions 3 Main \/ side executing 1/);
+  // A selected detail may outlive the summary; the same catalog role must still win.
+  answer.sessions = answer.sessions.filter(entry => entry.sessionId !== side.id);
+  const residual = render(props);
+  assert.match(residual, /class="inspectorName"><strong>Side investigation<\/strong><span class="catalogBadge">Side chat/);
+  assert.doesNotMatch(residual.slice(residual.indexOf('id="debug-session-side-1"')), /Subagent/);
+});
+
+test("saved side chats retain their role and source before any runtime detail arrives", () => {
+  const side = { ...catalog[0], id: "saved-side", name: "Saved side", relation: { kind: "side", parentSessionId: "missing-parent" } };
+  const html = render({ sessions: [...catalog, side], selectedSessionId: side.id });
+  assert.match(html, /class="inspectorName"><strong>Saved side<\/strong><span class="catalogBadge">Side chat/);
+  assert.match(visibleText(html), /Side chat from: missing-/);
+  assert.ok(!rowNames(html).includes(side.name), "saved side chats remain outside runtime rows");
+});
+
 test("view is read-only and timer-free; controls are native and SVG is decorative", () => {
   for (const source of [viewSource, detailSource]) {
     assert.doesNotMatch(source, /fetch\(|EventSource|\/lease|useAgentSession|XMLHttpRequest|setInterval|setTimeout/);

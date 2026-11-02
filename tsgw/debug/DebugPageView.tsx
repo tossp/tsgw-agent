@@ -14,7 +14,7 @@ import { DebugSessionDetailView } from "./DebugSessionDetail";
 import { DashboardArt } from "./DashboardArt";
 import { DashboardOverview } from "./DashboardOverview";
 import { ObserverPanel, type ObserverTelemetry } from "./ObserverPanel";
-import { dashboardCounts, dashboardFreshness, dashboardGroups, dashboardIssues, filterDashboardGroups, type TaskFilter, type TaskSort } from "./dashboard-state";
+import { DASHBOARD_ROLE_KEYS, dashboardRole, dashboardCounts, dashboardFreshness, dashboardGroups, dashboardIssues, filterDashboardGroups, type TaskFilter, type TaskSort } from "./dashboard-state";
 import { debugPageText } from "./messages";
 import styles from "./DebugPageView.module.css";
 
@@ -60,8 +60,8 @@ export function DebugPageView({ server, now, hidden, sessions, catalogError, sel
   const shown = clock !== null ? detail : null;
   const selectedInfo = selectedSessionId === null ? null : byId.get(selectedSessionId);
   const selectedSummary = reply?.sessions.find(session => session.sessionId === selectedSessionId);
-  const selectedRole = selectedSummary?.subagent || shown?.wrapper?.subagent || selectedInfo?.relation?.kind === "subagent"
-    ? "dense.child" : selectedSummary || shown?.wrapper || selectedInfo ? "dense.main" : "board.unknown";
+  const selectedRole = dashboardRole(selectedSummary || shown?.wrapper
+    ? { subagent: Boolean(selectedSummary?.subagent || shown?.wrapper?.subagent) } : null, selectedInfo);
   const issues = dashboardIssues(shown);
   if (!server.failure && telemetry?.inFlightSince != null && now - telemetry.inFlightSince >= 2000) issues.push({ id: "slow-poll", kind: "slowPoll", tone: "warning", name: "", count: now - telemetry.inFlightSince });
   const counts = dashboardCounts(reply, sessions, allGroups);
@@ -127,14 +127,15 @@ export function DebugPageView({ server, now, hidden, sessions, catalogError, sel
         <div className={styles.sessionHead}><h2 className={styles.sectionTitle}><span className={styles.sectionNumber}>02</span>{text("dense.inspect")}</h2>{selectedSessionId !== null && <button className={styles.close} type="button" onClick={() => onToggleSession(selectedSessionId)} aria-label={text("dense.close")}>×</button>}</div>
         <div className={styles.inspectorScroll}>
           {selectedSessionId === null ? <p className={styles.noResults}>{text("dense.pick")}</p> : <>
-            <div className={styles.inspectorName}><strong>{nameOf(selectedSessionId)}</strong><span className={styles.catalogBadge}>{text(selectedRole)}</span></div>
+            <div className={styles.inspectorName}><strong>{nameOf(selectedSessionId)}</strong><span className={styles.catalogBadge}>{text(DASHBOARD_ROLE_KEYS[selectedRole])}</span></div>
             {selectedInfo && <details className={styles.metadata}><summary>{selectedInfo.cwd}</summary><p className={styles.detailId}>{selectedInfo.id}</p><p className={styles.note}>{selectedInfo.branch}</p>
               {selectedInfo.relation?.kind === "subagent" && <><p className={styles.entryLine}>{text("board.parent", { name: nameOf(selectedInfo.relation.parentSessionId) })} · {selectedInfo.relation.profile} · {text("board.recordedStatus", { status: selectedInfo.relation.status })}</p><p className={styles.note}>{text("board.description", { text: selectedInfo.relation.description })}</p></>}
+              {selectedInfo.relation?.kind === "side" && <p className={styles.note}>{text("dense.sideSource", { name: nameOf(selectedInfo.relation.parentSessionId) })}</p>}
               {selectedInfo.relation?.kind === "fork" && <p className={styles.note}>{text("board.fork", { name: nameOf(selectedInfo.relation.originSessionId ?? selectedInfo.parentSessionId ?? "—") })}</p>}
               <p className={styles.note}>{text("board.modified", { time: new Date(selectedInfo.modified).toLocaleString(locale) })}</p>
             </details>}
             {!reply?.sessions.some(session => session.sessionId === selectedSessionId) && <p className={styles.scopeNote}>{text("board.catalogNote")}</p>}
-            {shown !== null && clock !== null ? <DebugSessionDetailView detail={shown} clock={clock} titleOf={titleOf} t={t} locale={locale} id={detailElementId(selectedSessionId)} name={nameOf(selectedSessionId)} /> : <p className={styles.detailWaiting} id={detailElementId(selectedSessionId)}>{text("detail.waiting")}</p>}
+            {shown !== null && clock !== null ? <DebugSessionDetailView detail={shown} role={selectedRole} clock={clock} titleOf={titleOf} t={t} locale={locale} id={detailElementId(selectedSessionId)} name={nameOf(selectedSessionId)} /> : <p className={styles.detailWaiting} id={detailElementId(selectedSessionId)}>{text("detail.waiting")}</p>}
           </>}
         </div>
       </section>
@@ -160,7 +161,8 @@ function SessionRowButton({ row, open, idleTimeoutMs, clock, titleOf, t, locale,
 }) {
   const text = (key: Parameters<typeof debugPageText>[1], params?: Parameters<typeof debugPageText>[2]) => debugPageText(locale, key, params);
   const summary = row.summary;
-  const child = summary?.subagent || row.info?.relation?.kind === "subagent";
+  const role = dashboardRole(summary, row.info);
+  const child = role === "subagent";
   const relation = row.info?.relation;
   const name = row.info ? sessionRowTitle(row.info) : titleOf(row.id) ?? shortDebugId(row.id);
   const remaining = summary?.nextIdleCheckAt != null && clock !== null ? clock.remaining(summary.nextIdleCheckAt) : null;
@@ -171,7 +173,8 @@ function SessionRowButton({ row, open, idleTimeoutMs, clock, titleOf, t, locale,
     <span className={styles.rowStatus}>{state === "running" ? <SpinnerIcon size={13} label={statusLabel} /> : state === "awaiting" ? <span className="session-tree-awaiting" role="img" aria-label={statusLabel} /> : <span className={`${styles.ring} ${state ? RING_CLASS[state] : styles.ringNone}`} role="img" aria-label={statusLabel} />}</span>
     <span className={styles.rowName}>
       <span className={styles.nameLine}>{row.depth === 1 && <span className={styles.rowBranch} aria-hidden="true" />}<span className={styles.nameText}>{name}</span>{summary !== null && summary.starts > 1 && <span className={styles.starts}>↻{summary.starts}</span>}</span>
-      <span className={styles.rowBadges}><span className={`${styles.badge}${child ? ` ${styles.childBadge}` : ""}`}>{text(child ? "dense.child" : "dense.main")}</span><span className={styles.statusLabel}>{statusLabel}</span>{relation?.kind === "fork" && <span className={styles.badge}>{text("dense.fork")}</span>}{summary != null && summary.eventStreams > 0 && <span className={styles.badge}>SSE {summary.eventStreams}</span>}{summary != null && summary.providers > 0 && <span className={styles.badge}>{t("debug.box.provider")} {summary.providers}</span>}</span>
+      <span className={styles.rowBadges}><span className={`${styles.badge}${child ? ` ${styles.childBadge}` : ""}`}>{text(DASHBOARD_ROLE_KEYS[role])}</span><span className={styles.statusLabel}>{statusLabel}</span>{relation?.kind === "fork" && <span className={styles.badge}>{text("dense.fork")}</span>}{summary != null && summary.eventStreams > 0 && <span className={styles.badge}>SSE {summary.eventStreams}</span>}{summary != null && summary.providers > 0 && <span className={styles.badge}>{t("debug.box.provider")} {summary.providers}</span>}</span>
+      {relation?.kind === "side" && <span className={styles.assignment}>{text("dense.sideSource", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })}</span>}
       {relation?.kind === "subagent" && <span className={styles.assignment} title={`${text("board.parent", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })} · ${relation.description}`}>{relation.profile} · {relation.description} · {text("board.parent", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })}</span>}
     </span>
     <span className={`${styles.rowIdle}${summary?.forcedByStop ? ` ${styles.forcedIdle}` : ""}`} title={text("dense.reapHint")}>

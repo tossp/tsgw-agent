@@ -46,6 +46,7 @@ process.once("SIGTERM", interrupt);
 // --- toggling helpers -------------------------------------------------------
 
 const toggleButton = (entry, label) => entry.getByRole("button", { name: label, exact: true });
+const copyButton = (entry) => entry.getByTitle("Copy message", { exact: true });
 
 async function assertToggle(entry, label) {
   const button = toggleButton(entry, label);
@@ -59,7 +60,7 @@ async function assertToggle(entry, label) {
 /** Hovers a message so its action row is interactive, then reads the row. */
 async function actionRow(entry, expected) {
   await entry.hover();
-  const row = entry.getByRole("button", { name: "Copy", exact: true }).locator("..").locator("..");
+  const row = copyButton(entry).locator("..").locator("..");
   await row.getByRole("button", { name: expected.at(-1), exact: true }).waitFor();
   const buttons = row.getByRole("button");
   assert.equal(await buttons.count(), expected.length, "the action row keeps four actions");
@@ -81,7 +82,7 @@ async function assertSource(entry, expected) {
 }
 
 async function copyNow(entry) {
-  const button = entry.getByRole("button", { name: "Copy", exact: true });
+  const button = copyButton(entry);
   await button.waitFor();
   const previous = await page.evaluate(() => window.__e2eClipboard.length);
   await entry.hover();

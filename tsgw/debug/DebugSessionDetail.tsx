@@ -21,6 +21,7 @@ import {
   type Translate,
 } from "@/components/debug-panel-state";
 import { debugPageText, type DebugPageKey } from "./messages";
+import { dashboardRole, type DashboardRole } from "./dashboard-state";
 import d from "./detail.module.css";
 
 export interface DebugSessionDetailViewProps {
@@ -35,6 +36,8 @@ export interface DebugSessionDetailViewProps {
   id: string;
   /** The row's name, the region's accessible name. */
   name: string;
+  /** Catalog-corrected role from the board, shared by summary and wrapper badges. */
+  role?: DashboardRole;
 }
 
 /**
@@ -165,7 +168,7 @@ function runLamp(status: string): { tone: DebugTone; shape: LampShape; pulse: bo
  * capsules and facts are one line each; the long records open on request. Pure: every time comes
  * from the answer and the page's `now`, and nothing here asks the server anything.
  */
-export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, name }: DebugSessionDetailViewProps) {
+export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, name, role = dashboardRole(detail.wrapper) }: DebugSessionDetailViewProps) {
   const text = (key: DebugPageKey, params?: Record<string, string | number>) => debugPageText(locale, key, params);
   const local = (key: DebugDetailKey) => detailText(locale, key);
   const ago = (at: number) => formatAgo(clock.age(at), t);
@@ -211,7 +214,8 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
         )}
         {live && <Chip tone={wrapper.extensions === "binding" || wrapper.extensions === "failed" ? "warning" : "dim"}>{`${t("debug.server.extensions")} ${t(`debug.server.extensions.${wrapper.extensions}`)}`}</Chip>}
         {wrapper?.chatOnly && <Chip tone="dim">{t("debug.server.chatOnly")}</Chip>}
-        {wrapper?.subagent && <Chip tone="dim">{t("debug.server.subagent")}</Chip>}
+        {role === "subagent" && <Chip tone="dim">{t("debug.server.subagent")}</Chip>}
+        {role === "side" && <Chip tone="dim">{text("dense.side")}</Chip>}
         {wrapper?.stale && <Chip tone="warning">{t("debug.server.stale")}</Chip>}
         {doing.map((chip) => <Chip key={chip} tone="dim">{chip}</Chip>)}
         {pending.map((chip) => <Chip key={chip} tone="warning">{chip}</Chip>)}

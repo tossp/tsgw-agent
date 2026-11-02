@@ -40,7 +40,7 @@
 - `tool_execution_end.isError` 是工具最终结论，不能只看抛错或 result.isError；`parentToolCallId` 表达 codemode/MCP 嵌套工具关系。
 - 内建 compaction/summary 和自动命名经过 `agent.streamFunction`；SDK 为其提供不同于主 session UUID 的 routing `options.sessionId`，这些辅助请求独立模型 root，即使与主 run 并发也不继承其 span/run ID。未传 routing ID 的公开 stream 调用按普通请求处理。
 - cache warming 直接访问 ModelRuntime，不在本模块覆盖内；扩展绕过该公开 stream/executeTool 的直接调用也不保证覆盖。preflight 不计入 run 耗时。
-- 子代理独立 session/run，通过父 session ID 关联，不保持等待工具长开，不另建家族完成协议。
+- 子代理独立 session/run，通过父 session ID 关联，不保持等待工具长开，不另建家族完成协议。v0.14.1 的侧聊是独立普通 wrapper：合并时 `sideChat` 与 `agentTracing` 选项并列保留，使用已有独立 conversation/root 行为，不新增侧聊父级字段或改变上游工具、通知策略。整体验证见 [上游同步记录](../../docs/upstream-v0.14.1.md)。
 - Pi input 不含 cacheRead/cacheWrite；Sentry input 包含二者；缓存是输入子集，reasoning 为输出子集，不能重复相加。
 - 仅模型 spans 携带 token/费用，不复制到父 run 或工具；采用 Pi calculateCost 的最高适用价格档位及严格阈值规则，本次命中档价格缺失/全零时省略费用。失败/取消的 SDK 合成全零 usage 视为未知并省略，部分实际 usage 保留；估算不等于供应商/AIH 最终扣费。
 - Sentry 11.9.0 使用 streamed spans；名称、segment、links、状态、属性与 DSC 均按 SDK 标准输出，不自定义重建或删减。segment 名称由 SDK 取实际所属根 span 名称：Agent 子调用共享 run 名称，独立辅助请求使用其模型 root 名称。实例直接在建立手动 span 时取 hostname()。

@@ -256,7 +256,7 @@ try {
     });
     results.push({ name: "latest-palette", evidence: palette });
     assert.ok((palette.background.match(/\d+/g) ?? []).slice(0, 3).every(n => Number(n) < 100), "latest dark graphite palette: " + JSON.stringify(palette));
-    for (const [label, value] of [["Main sessions", 4], ["Executing", 2], ["Awaiting input", 1], ["Runtime sessions", 6], ["Runtime subagents", 2], ["SSE connections", 7]]) await metric(label, value);
+    for (const [label, value] of [["Ordinary sessions", 4], ["Executing", 2], ["Awaiting input", 1], ["Runtime sessions", 6], ["Runtime subagents", 2], ["SSE connections", 7]]) await metric(label, value);
     await names(runtimeNames); assert.equal(await filters().getByRole("button", { name: "Runtime", exact: true }).getAttribute("aria-pressed"), "true");
     assert.equal(await landscape().locator('[id^="debug-session-"]').count(), 0, "resources not inline in landscape");
     assert.equal(await resources().locator("#debug-session-alpha").count(), 1);
@@ -293,7 +293,7 @@ try {
   await test("nonresident-parent-and-resident-fork", async () => {
     const seed = fixtures(); seed.runtime = ["beta", "gamma", "omega", "child", "grandchild", "fork"]; await load(seed);
     await names([...runtimeNames, "Saved fork"]); await visible(row("Observation alpha").getByText("Parent context · not resident", { exact: true }));
-    await metric("Runtime sessions", 6); await metric("Main sessions", 4); await metric("Runtime subagents", 2); assert.equal(await row("Saved fork").getByText("Subagent", { exact: true }).count(), 0);
+    await metric("Runtime sessions", 6); await metric("Ordinary sessions", 4); await metric("Runtime subagents", 2); assert.equal(await row("Saved fork").getByText("Subagent", { exact: true }).count(), 0);
     await open("Nested inspector", "grandchild"); await metadata(); await visible(resources().getByText(/Parent: Delegated inspector/));
     await open("Observation alpha", "alpha"); await visible(resources().getByText(/A catalog entry is a saved session/)); await shot("nonresident-parent");
   });
@@ -395,11 +395,11 @@ try {
   await test("mobile-and-empty", async () => {
     await load(); await stableResources(); await page.setViewportSize({ width: 390, height: 844 }); await open("Observation alpha", "alpha"); await traverseMobile("mobile");
     await load({ empty: true }); await visible(landscape().getByText("No runtime sessions in this snapshot", { exact: true })); assert.equal(await rows().count(), 0);
-    for (const label of ["Main sessions", "Executing", "Awaiting input", "Runtime sessions", "Runtime subagents", "SSE connections"]) await metric(label, 0); await shot("empty");
+    for (const label of ["Ordinary sessions", "Executing", "Awaiting input", "Runtime sessions", "Runtime subagents", "SSE connections"]) await metric(label, 0); await shot("empty");
   });
   await test("catalog-failure-and-initial-snapshot-failure", async () => {
     await load({ catalogFailure: true }); await visible(page.getByText("The session list could not be read. Previous metadata is retained if available.", { exact: true })); await until(async () => assert.equal(await rows().count(), 6)); assert.equal(await row("Observation alpha").count(), 0, "no invented catalog metadata"); await metric("Runtime sessions", 6); await shot("catalog-failure");
-    await load({ failure: true }); await visible(page.getByRole("status").getByText("Snapshot stale", { exact: true })); assert.equal(await page.getByText(/Not the latest answer:/).count(), 0, "no fictional last good answer"); await metric("Runtime sessions", "—"); await metric("Main sessions", "—"); assert.equal(await rows().count(), 0, "catalog is never promoted into resident summary"); await shot("initial-failure");
+    await load({ failure: true }); await visible(page.getByRole("status").getByText("Snapshot stale", { exact: true })); assert.equal(await page.getByText(/Not the latest answer:/).count(), 0, "no fictional last good answer"); await metric("Runtime sessions", "—"); await metric("Ordinary sessions", "—"); assert.equal(await rows().count(), 0, "catalog is never promoted into resident summary"); await shot("initial-failure");
   });
   await test("locales-and-reduced-motion", async () => {
     for (const [locale, name] of [["zh-CN", "CN"], ["zh-TW", "TW"], ["en", "EN"]]) { await load({}, locale); await stableResources(); await shot(name); assert.equal(await page.locator("html").getAttribute("lang"), locale); }

@@ -11,7 +11,7 @@ export type TaskSort = "recent" | "name";
 /**
  * Runtime totals for the board's summary strip. `held`/`running`/`awaiting`/`subagents`/`catalog`/
  * `total` keep their published meaning; the role fields split the runtime snapshot further so
- * ordinary sessions and subagents are counted apart. A fork is a top-level session, never a
+ * non-subagent sessions (including side chats) and subagents are counted apart. A fork is a top-level session, never a
  * delegation. A context parent is not resident, so it is in none of the activity counts.
  */
 export interface DashboardCounts {
@@ -21,13 +21,13 @@ export interface DashboardCounts {
   running: number;
   /** Held sessions waiting for the user, both roles. */
   awaiting: number;
-  /** Held sessions by the server's own summary flag; see `subagentResident` for the role total. */
+  /** Held sessions with the summary flag, excluding catalog-confirmed side chats. */
   subagents: number;
   /** Catalog entries with no wrapper summary: saved history, runtime state unknown. */
   catalog: number;
   /** The union of held and catalog ids. */
   total: number;
-  /** Held ordinary sessions (not a subagent); forks included. */
+  /** Held non-subagent sessions; forks and side chats included. */
   ordinary: number;
   /** Held ordinary sessions executing. */
   ordinaryRunning: number;
@@ -77,6 +77,8 @@ export function dashboardIssues(detail: DebugSessionDetail | null): DashboardIss
 /** Keep runtime families intact. Catalog-only rows are explicitly separate, not synthetic summaries. */
 export function dashboardGroups(reply: DebugSnapshotResponse | null, catalog: readonly SessionInfo[]): DebugSessionGroup[] {
   const byId = new Map(catalog.map(info => [info.id, info]));
+  // The host groups only delegated subagents. Side chats remain independent roots in their
+  // project, with their source shown by the board; a copied chat is not a delegated task.
   const groups = reply ? groupDebugSessions(reply.sessions, byId, null) : [];
   const listed = new Set(groups.flatMap(group => group.rows.map(row => row.id)));
   const catalogGroups = new Map<string, DebugSessionGroup>();
@@ -97,7 +99,7 @@ export function filterDashboardGroups(groups: readonly DebugSessionGroup[], filt
   const needle = query.trim().toLocaleLowerCase();
   const matches = (row: DebugSessionRow, projectName: string | null) => {
     const summary = row.summary;
-    const child = summary?.subagent || row.info?.relation?.kind === "subagent";
+    const child = dashboardRole(summary, row.info) === "subagent";
     if (filter === "held" && !summary) return false;
     if (filter === "running" && (!summary?.running || summary.awaitingInput)) return false;
     if (filter === "awaiting" && !summary?.awaitingInput) return false;
@@ -126,10 +128,20 @@ export function filterDashboardGroups(groups: readonly DebugSessionGroup[], filt
 
 const executing = (summary: DebugSessionSummary): boolean => summary.running && !summary.awaitingInput;
 
-/** The role the snapshot proves: the wrapper's flag or the catalog's relation; a fork is ordinary. */
-function subagentSummary(summary: DebugSessionSummary, info: SessionInfo | undefined): boolean {
-  return summary.subagent || info?.relation?.kind === "subagent";
+export type DashboardRole = "ordinary" | "subagent" | "side" | "unknown";
+
+/** The upstream flag means suppressed completion notifications, shared by side chats and subagents.
+ * Only the existing catalog relation distinguishes a side chat; never infer one from its name.
+ */
+export function dashboardRole(summary: { subagent: boolean } | null | undefined, info?: SessionInfo | null): DashboardRole {
+  if (info?.relation?.kind === "side") return "side";
+  if (summary?.subagent || info?.relation?.kind === "subagent") return "subagent";
+  return summary || info ? "ordinary" : "unknown";
 }
+
+export const DASHBOARD_ROLE_KEYS = {
+  ordinary: "dense.main", subagent: "dense.child", side: "dense.side", unknown: "board.unknown",
+} as const;
 
 /** `groups` let a caller that already has this snapshot's families skip grouping them again. */
 export function dashboardCounts(
@@ -145,7 +157,7 @@ export function dashboardCounts(
   let subagentResident = 0;
   let subagentRunning = 0;
   for (const summary of summaries) {
-    if (subagentSummary(summary, byId.get(summary.sessionId))) {
+    if (dashboardRole(summary, byId.get(summary.sessionId)) === "subagent") {
       subagentResident += 1;
       if (executing(summary)) subagentRunning += 1;
     } else {
@@ -160,7 +172,7 @@ export function dashboardCounts(
     held: summaries.length,
     running: summaries.filter(executing).length,
     awaiting: summaries.filter(summary => summary.awaitingInput).length,
-    subagents: summaries.filter(summary => summary.subagent).length,
+    subagents: summaries.filter(summary => summary.subagent && byId.get(summary.sessionId)?.relation?.kind !== "side").length,
     catalog: catalog.filter(info => !held.has(info.id)).length,
     total: new Set([...catalog.map(info => info.id), ...held]).size,
     ordinary,
