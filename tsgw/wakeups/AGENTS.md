@@ -4,6 +4,7 @@
 
 只实现进程内存中的一次性定时唤醒：支持自身及跨普通会话交接，拒绝子代理；只传递交接消息，不共享来源上下文或增加授权。重启丢失、不恢复、不补发、不重试；不做周期任务、数据库、独立后台服务或新增界面。子代理只能由被唤醒的主代理通过已有机制恢复。
 
+- Pi 1.5.0 不再从 `pi-ai` 导出 `Type`；`extension.ts` 与 `wakeup.integration.test.mjs` 直接从 `typebox` 导入，沿用上游 schema 包，不改变工具定义、owner 或 lifecycle。
 - `extension.ts`：`createWakeupExtension()` 注册 `schedule_wakeup`、`list_wakeups`、`cancel_wakeup`、`list_session_wakeups`；普通非 Chat-only 会话可用。上游侧聊的工具 allow-list 会排除这四工具，保持未注册、不可调用；这不构成侧聊作为投递目标的禁令。
 - `scheduler.ts`：`WakeupScheduler` 保存进程内待触发项、单次触发及取消，长等待分段处理。
 - `runtime.ts`：`WakeupRuntime` 校验入口参数、生成 SDK UUIDv7、协调历史与调度；`submitted` 只表示 SDK 接受或排队，不是模型任务完成。

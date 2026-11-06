@@ -120,7 +120,6 @@ try {
     });
     await page.goto(`${base}/?session=${mainId}`, { waitUntil: "domcontentloaded" });
     await page.getByText("Finished", { exact: true }).waitFor();
-    if (width < 600) await page.locator("[data-mobile-toolbar-more]").click();
     await page.getByRole("button", { name: "Agents", exact: true }).click();
     const panel = page.getByRole("listbox", { name: "Agents", exact: true });
     const row = (name) => panel.getByRole("option").filter({ hasText: `E2E ${name}` });

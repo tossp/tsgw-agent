@@ -10,6 +10,7 @@ import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessio
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
 import { openFileTab, saveFileViewerState, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
@@ -21,6 +22,7 @@ import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
+import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { useI18n } from "@/hooks/useI18n";
@@ -76,8 +78,8 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import { formatActiveDuration, formatCompactCount, formatCostShort } from "@/lib/session-stats-format";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
-import { createSideChat } from "@/lib/side-chat-client";
-import { getAgentsBadge, getFoldedMoreAgentsBadge, getRunningSubagents, getSessionFamily, isHiddenRelation, sideChatNameFrom, sideChatTitle } from "@/lib/session-family";
+import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
+import { getAgentsBadge, getRunningSubagents, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
 
@@ -88,7 +90,8 @@ type AutoNameStatus =
   | { kind: "success" }
   | { kind: "error"; message: string };
 
-const TOP_BAR_ICON_BUTTON_SIZE = 36;
+// app/globals.css: 36px, 44px on a phone or touch screen.
+const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
@@ -156,8 +159,10 @@ export function AppShell() {
   const selectedSessionRef = useRef(selectedSession);
   selectedSessionRef.current = selectedSession;
   const [sessionCatalog, setSessionCatalog] = useState<SessionInfo[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const handleSessionsChange = useCallback((sessions: SessionInfo[]) => {
     setSessionCatalog(sessions);
+    setCatalogLoaded(true);
     // The sidebar hydrates metadata after the selected session has already
     // mounted. Merge that update into the active session without changing the
     // ChatWindow key or restarting its history load.
@@ -230,6 +235,8 @@ export function AppShell() {
   }, []);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  // The plain Settings button opens a phone's Settings on its list of sections; shortcuts open theirs.
+  const [settingsOpenAtHome, setSettingsOpenAtHome] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
@@ -244,13 +251,7 @@ export function AppShell() {
     if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
   }, [rightPanelOpen, isMobile]);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
-  // A narrow phone folds the Agents button into More: the folded button says that subagents run.
-  const foldedMoreAgentsBadge = isNarrowMobile ? getFoldedMoreAgentsBadge(agentsBadge, mobileToolbarMoreOpen) : null;
-  const moreControlsLabel = mobileToolbarMoreOpen
-    ? translate("chat.close")
-    : foldedMoreAgentsBadge
-      ? translate("chat.moreControlsAgentsRunning", { count: foldedMoreAgentsBadge.count })
-      : translate("chat.moreControls");
+  const moreControlsLabel = mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls");
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
   const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
@@ -476,6 +477,7 @@ export function AppShell() {
 
   // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
   const openSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsOpenAtHome(false);
     setSettingsSection(section);
   }, []);
 
@@ -569,10 +571,15 @@ export function AppShell() {
   const fileWorkspaceGenerationRef = useRef(0);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalsRestored, setTerminalsRestored] = useState(false);
-  // Subagent work tabs are session-scoped and transient: no persistence, and
-  // they are dropped when the project changes (they belong to its sessions).
+  // Subagent tabs remain open within a project; side tabs follow their main session.
   const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string; side?: boolean }[]>([]);
-  const panelTabs: Tab[] = [
+  const sideTabOwnerRef = useRef<string | null>(null);
+  const sideTabsReadyRef = useRef(false);
+  const sideTabsSavedOnWorkspaceSwitchRef = useRef(false);
+  const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const activeProjectKeyRef = useRef<string | null>(null);
+  const [panelTabOrder, setPanelTabOrder] = useState<string[]>([]);
+  const panelTabs: Tab[] = orderPanelTabs([
     ...fileTabs,
     ...terminalTabs.map((tab) => ({
       id: tab.id,
@@ -583,7 +590,7 @@ export function AppShell() {
     })),
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
-      const label = session ? sideChatTitle(session, tab.label) : tab.label;
+      const label = session ? sideChatTitle(session, translate("agentSwitcher.sideChat"), activeSessionFamily?.subagents ?? []) : tab.label;
       return {
         id: `agent:${tab.sessionId}`,
         label,
@@ -591,7 +598,13 @@ export function AppShell() {
         kind: (tab.side ? "side" : "agent") as "agent" | "side",
       };
     }),
-  ];
+  ], panelTabOrder);
+  // A closed tab leaves the saved order, so reopening it appends it like any new tab.
+  const panelTabIds = panelTabs.map((tab) => tab.id).join("\n");
+  useEffect(() => {
+    const open = new Set(panelTabIds.split("\n"));
+    setPanelTabOrder((order) => order.every((id) => open.has(id)) ? order : order.filter((id) => open.has(id)));
+  }, [panelTabIds]);
 
   useEffect(() => {
     try {
@@ -615,6 +628,22 @@ export function AppShell() {
       }));
     } catch { /* storage is optional */ }
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
+
+  const rememberSideTabs = useCallback((key: string) => {
+    try {
+      const tabs = agentTabs.filter((tab) => tab.side);
+      // A session without side tabs keeps no entry: one per visited session otherwise.
+      if (!tabs.length) {
+        window.sessionStorage.removeItem(sideTabsKey(key));
+        return;
+      }
+      window.sessionStorage.setItem(sideTabsKey(key), JSON.stringify({
+        tabs,
+        activeId: tabs.some((tab) => `agent:${tab.sessionId}` === activeFileTabId) ? activeFileTabId : null,
+        open: rightPanelOpen,
+      }));
+    } catch { /* storage is optional */ }
+  }, [agentTabs, activeFileTabId, rightPanelOpen]);
 
   const handleFileViewerStateChange = useCallback((
     generation: number,
@@ -640,14 +669,18 @@ export function AppShell() {
     fileWorkspaceGenerationRef.current += 1;
     setFileWorkspaceGeneration(fileWorkspaceGenerationRef.current);
     setFileTabs(next.tabs);
-    // Subagent tabs belong to the previous project's sessions: dropped, not parked.
-    setAgentTabs([]);
+    // Subagent tabs are project-scoped; side tabs are saved under their main session.
+    setAgentTabs((tabs) => tabs.filter((tab) => tab.side));
+    if (sideTabsReadyRef.current && sideTabOwnerRef.current) {
+      rememberSideTabs(sideTabOwnerRef.current);
+      sideTabsSavedOnWorkspaceSwitchRef.current = true;
+    }
     // Terminal tabs span workspaces and keep control of the panel while active.
     if (!activeFileTabId || activeFileId || activeFileTabId.startsWith("agent:")) {
       setActiveFileTabId(next.activeTabId);
       setRightPanelOpen(next.open);
     }
-  }, [activeFileTabId, fileTabs, rightPanelOpen]);
+  }, [activeFileTabId, fileTabs, rememberSideTabs, rightPanelOpen]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -669,10 +702,33 @@ export function AppShell() {
 
   const initialSessionId = initialNavigation.sessionId;
   const initialLinkedSessionId = linkedSessionId(initialNavigation);
-  const [activeCwd, setActiveCwd] = useState<string | null>(null);
-  const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  const sideTabOwner = activeSessionFamily?.root.id ?? null;
+  useEffect(() => {
+    if (!catalogLoaded || !initialSessionRestored) return;
+    const previous = sideTabOwnerRef.current;
+    if (!sideTabsReadyRef.current || previous !== sideTabOwner) {
+      if (sideTabsReadyRef.current && previous && !sideTabsSavedOnWorkspaceSwitchRef.current) rememberSideTabs(previous);
+      sideTabsSavedOnWorkspaceSwitchRef.current = false;
+      sideTabsReadyRef.current = true;
+      sideTabOwnerRef.current = sideTabOwner;
+      let restored = { tabs: [] as { sessionId: string; label: string; side: true }[], activeId: null as string | null, open: false };
+      if (sideTabOwner) {
+        try { restored = restoreSideTabs(window.sessionStorage.getItem(sideTabsKey(sideTabOwner)), sideTabOwner, sessionCatalog); }
+        catch { /* storage is optional */ }
+      }
+      setAgentTabs((tabs) => [...tabs.filter((tab) => !tab.side), ...restored.tabs]);
+      const nextId = restored.activeId === `agent:${selectedSession?.id}` ? null : restored.activeId;
+      if (nextId || activeFileTabId?.startsWith("agent:") || !activeFileTabId) {
+        setActiveFileTabId(nextId ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null);
+        setRightPanelOpen(nextId ? restored.open : Boolean(fileTabs.length || terminalTabs.length) && rightPanelOpen);
+      }
+      return;
+    }
+    if (sideTabOwner) rememberSideTabs(sideTabOwner);
+    sideTabsSavedOnWorkspaceSwitchRef.current = false;
+  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs]);
   // sessionStorage is empty during SSR. Applying the tab's remembered session
   // in the useState initializer made the first client tree differ from the
   // server HTML (sidebar "select project" vs ""). Restore after mount instead.
@@ -1267,14 +1323,9 @@ export function AppShell() {
 
   // Subagent work opens in a right-panel tab instead of hijacking the main chat.
   const handleOpenSubagentTab = useCallback((sessionId: string, label: string, side?: boolean) => {
-    setAgentTabs((prev) => {
-      if (prev.some((tab) => tab.sessionId === sessionId)) return prev;
-      // Every side chat has the same name, and `/side` can be used again and
-      // again: the lowest number no open tab shows tells them apart.
-      let numbered = label;
-      for (let number = 2; side && prev.some((tab) => tab.label === numbered); number += 1) numbered = `${label} ${number}`;
-      return [...prev, { sessionId, label: numbered, ...(side ? { side: true } : {}) }];
-    });
+    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId)
+      ? prev
+      : [...prev, { sessionId, label, ...(side ? { side: true } : {}) }]);
     setActiveFileTabId(`agent:${sessionId}`);
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
@@ -1302,7 +1353,18 @@ export function AppShell() {
   // the family's badge folds the new member in.
   const handleSideSession = useCallback((session: SessionInfo, prompt: string | null) => {
     if (prompt) setSideChatPrompts((prev) => ({ ...prev, [session.id]: prompt }));
-    handleOpenSubagentTab(session.id, sideChatTitle(session, (prompt && sideChatNameFrom(prompt)) || translate("sideChat.title")), true);
+    setSessionCatalog((prev) => [session, ...prev.filter((item) => item.id !== session.id)]);
+    const label = translate("agentSwitcher.sideChat");
+    const parentId = session.relation?.kind === "side" ? session.relation.parentSessionId : null;
+    if (parentId && parentId !== sideTabOwnerRef.current) {
+      // The fork landed after the main chat moved on: the tab waits with its own session.
+      try {
+        const key = sideTabsKey(parentId);
+        window.sessionStorage.setItem(key, appendSideTab(window.sessionStorage.getItem(key), session.id, label));
+      } catch { /* storage is optional */ }
+    } else {
+      handleOpenSubagentTab(session.id, label, true);
+    }
     setRefreshKey((key) => key + 1);
   }, [handleOpenSubagentTab, translate]);
 
@@ -1355,6 +1417,22 @@ export function AppShell() {
       return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs);
     });
   }, [fileTabs, terminalTabs, agentTabs]);
+
+  // The Agents switcher's Delete on a side chat: its tab goes with it, and the
+  // main chat showing it goes back to the parent, as the Main agent row does
+  // (`handleSessionDeleted` would leave the family for a fresh composer).
+  const handleDeleteSideChat = useCallback(async (sessionId: string, root: SessionInfo): Promise<string | null> => {
+    const result = await deleteSideChat(sessionId);
+    if (result) return result.error;
+    handleCloseFileTab(`agent:${sessionId}`);
+    if (selectedSessionRef.current?.id === sessionId) {
+      handleSelectSession(root);
+      setRefreshKey((key) => key + 1);
+    } else {
+      handleSessionDeleted(sessionId);
+    }
+    return null;
+  }, [handleCloseFileTab, handleSelectSession, handleSessionDeleted]);
 
   // One session, one chat: opening a subagent or side chat in the main chat closes its tab.
   const selectedSessionId = selectedSession?.id;
@@ -1556,7 +1634,7 @@ export function AppShell() {
             <button
               key={section}
               type="button"
-              onClick={() => setSettingsSection(section)}
+              onClick={() => openSettingsSection(section)}
               disabled={disabled}
               title={disabled ? translate("settings.projectRequired") : label}
               aria-label={label}
@@ -1577,7 +1655,10 @@ export function AppShell() {
         })}
         <button
           type="button"
-          onClick={() => setSettingsSection(getLastSettingsSection(projectTrustCwd))}
+          onClick={() => {
+            setSettingsOpenAtHome(true);
+            setSettingsSection(getLastSettingsSection(projectTrustCwd));
+          }}
           title={translate("common.settings")}
           aria-label={translate("common.settings")}
           style={{
@@ -1676,6 +1757,41 @@ export function AppShell() {
     </span>
   );
 
+  // The Agents switcher's button. A narrow phone shows it left of the More button instead of
+  // folding it into that menu: the bar has the room, and the badge stays in sight.
+  const renderAgentsButton = (mobile: boolean) => (
+    <button
+      type="button"
+      // On a narrow phone it sits outside the More menu, so it leaves that menu as it is.
+      onClick={() => toggleTopPanel("agents", mobile && !isNarrowMobile)}
+      disabled={!activeSessionFamily}
+      title={agentsButtonLabel}
+      aria-label={agentsButtonLabel}
+      aria-pressed={activeTopPanel === "agents"}
+      style={{
+        position: "relative",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+        width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+        height: "100%", padding: mobile ? 0 : "0 12px",
+        background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
+        border: "none",
+        borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
+        borderRight: "1px solid var(--border)",
+        color: activeTopPanel === "agents" ? "var(--text)" : activeSessionFamily ? "var(--text-muted)" : "var(--text-dim)",
+        cursor: activeSessionFamily ? "pointer" : "not-allowed", opacity: activeSessionFamily ? 1 : 0.45,
+        flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+        transition: "color 0.1s, background 0.1s",
+      }}
+      data-mobile-toolbar-action={mobile ? "agents" : undefined}
+    >
+      <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+      </svg>
+      {!mobile && <span>{translate("agentSwitcher.title")}</span>}
+      {agentsBadge && agentsBadge.count > 0 && renderAgentsBadge(agentsBadge, mobile)}
+    </button>
+  );
+
   const renderChatToolbarActions = (mobile: boolean) => {
     if (!mobile && !showChat) return null;
     return (
@@ -1721,8 +1837,8 @@ export function AppShell() {
           data-mobile-toolbar-action={mobile ? "history" : undefined}
         >
           <svg
-            width="12"
-            height="12"
+            width={mobile ? 16 : 12}
+            height={mobile ? 16 : 12}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -1800,16 +1916,16 @@ export function AppShell() {
               data-mobile-toolbar-action={mobile ? "name" : undefined}
             >
               {autoNameStatus.kind === "naming" ? (
-                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <svg className="animate-spin" width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
                   <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               ) : isSuccess ? (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               ) : (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="m15 4 5 5L7 22l-5-5Z" />
                   <path d="m14 5 5 5" />
                   <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
@@ -1819,35 +1935,7 @@ export function AppShell() {
             </button>
           );
         })()}
-        <button
-          type="button"
-          onClick={() => toggleTopPanel("agents", mobile)}
-          disabled={!activeSessionFamily}
-          title={agentsButtonLabel}
-          aria-label={agentsButtonLabel}
-          aria-pressed={activeTopPanel === "agents"}
-          style={{
-            position: "relative",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            color: activeTopPanel === "agents" ? "var(--text)" : activeSessionFamily ? "var(--text-muted)" : "var(--text-dim)",
-            cursor: activeSessionFamily ? "pointer" : "not-allowed", opacity: activeSessionFamily ? 1 : 0.45,
-            flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s",
-          }}
-          data-mobile-toolbar-action={mobile ? "agents" : undefined}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
-          </svg>
-          {!mobile && <span>{translate("agentSwitcher.title")}</span>}
-          {agentsBadge && agentsBadge.count > 0 && renderAgentsBadge(agentsBadge, mobile)}
-        </button>
+        {!(mobile && isNarrowMobile) && renderAgentsButton(mobile)}
         {sessionHasBranches && (mobile ? (
           <button
             type="button"
@@ -1867,7 +1955,7 @@ export function AppShell() {
             }}
             data-mobile-toolbar-action="branches"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
+            <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" />
               <circle cx="6" cy="18" r="3" />
@@ -1917,7 +2005,7 @@ export function AppShell() {
           }}
           data-mobile-toolbar-action={mobile ? "system" : undefined}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />
             <line x1="8" y1="13" x2="16" y2="13" />
@@ -1954,7 +2042,7 @@ export function AppShell() {
           }}
           data-mobile-toolbar-action={mobile ? "tools" : undefined}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
@@ -2145,7 +2233,7 @@ export function AppShell() {
         }}
         data-mobile-toolbar-action={mobile ? "debug" : undefined}
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+        <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
           <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
           <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
           <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
@@ -2335,7 +2423,7 @@ export function AppShell() {
       <div inert={rightPanelFullWidth} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
-        <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
+        <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(var(--top-bar-height) + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -2372,6 +2460,7 @@ export function AppShell() {
                 height: "100%",
               }}
             >
+              {isNarrowMobile && renderAgentsButton(true)}
               {isNarrowMobile && (
                 <button
                   type="button"
@@ -2401,7 +2490,6 @@ export function AppShell() {
                       <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
                     </svg>
                   )}
-                  {foldedMoreAgentsBadge && renderAgentsBadge(foldedMoreAgentsBadge, true)}
                 </button>
               )}
               {!isNarrowMobile && renderChatToolbarActions(true)}
@@ -2419,7 +2507,8 @@ export function AppShell() {
                     top: 0,
                     right: 0,
                     bottom: 0,
-                    left: TOP_BAR_ICON_BUTTON_SIZE,
+                    // Right of the Agents and More buttons, which stay in place.
+                    left: `calc(2 * ${TOP_BAR_ICON_BUTTON_SIZE})`,
                     zIndex: 20,
                     display: "flex",
                     alignItems: "stretch",
@@ -2483,6 +2572,7 @@ export function AppShell() {
                   openSubagentTabIds={openSubagentTabIds}
                   onToggleSubagentTab={handleToggleSubagentTab}
                   onNewSideChat={() => handleNewSideChat(activeSessionFamily.root.id)}
+                  onDeleteSideChat={(sessionId) => handleDeleteSideChat(sessionId, activeSessionFamily.root)}
                 />
               )}
               {activeTopPanel === "system" && (
@@ -2833,7 +2923,7 @@ export function AppShell() {
           display: "flex",
           alignItems: "center",
           flexShrink: 0,
-          height: "calc(36px + env(safe-area-inset-top))",
+          height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
           borderBottom: "1px solid var(--border)",
@@ -2844,6 +2934,7 @@ export function AppShell() {
               activeTabId={activeFileTabId ?? ""}
               onSelectTab={setActiveFileTabId}
               onCloseTab={handleCloseFileTab}
+              onReorderTab={(source, target, after) => setPanelTabOrder(movePanelTab(panelTabs.map((tab) => tab.id), source, target, after))}
             />
           </div>
           <button
@@ -2964,6 +3055,7 @@ export function AppShell() {
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         initialSection={settingsSection}
+        openAtHome={settingsOpenAtHome}
         quoteSelectionEnabled={quoteSelectionEnabled}
         onQuoteSelectionChange={handleQuoteSelectionChange}
         onClose={() => {

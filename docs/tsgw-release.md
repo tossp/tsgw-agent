@@ -1,7 +1,7 @@
 # tsgw 分支的 npm 发布
 
 本仓库的 tsgw fork 用一条独立工作流发布 npm 包：`.github/workflows/tsgw-npm.yml`。
-它只服务 `tsgw` 开发发布分支，不读写默认分支，不依赖 `main`；已有的 `.github/workflows/ci.yml`、`demo-pages.yml` 和 `package.json` 的 `scripts.release` 保持上游原样。上游新增的 `publish.yml` 仅允许 `agegr/pi-web` 仓库执行，fork 中不会形成第二条发布路径。
+它只服务 `tsgw` 开发发布分支，不读写默认分支，不依赖 `main`；已有的 `.github/workflows/ci.yml`、`demo-pages.yml` 和 `package.json` 的 `scripts.release` 保持上游原样。上游 `publish.yml` 的 npm job 仅允许 `agegr/pi-web` 仓库执行，fork 中不会形成第二条 npm 发布路径；其 `check-tag` 与 Docker `container` job 保留上游行为，正式 `v*` 标签仍会触发镜像发布。
 
 - 包：`tsgw-agent`（身份持久化在源 `package.json`，CI 不替换）
 - 预览版：push 到 `tsgw` → `next` dist-tag

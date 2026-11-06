@@ -5,6 +5,7 @@ import type { Span } from "@sentry/nextjs";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { requestAttributes } from "./usage";
+import { inheritRuntimeStreamAuth } from "./sdk-runtime";
 
 type Event = { type: string; [key: string]: unknown };
 type Outcome = "success" | "error" | "cancelled" | "interrupted";
@@ -65,6 +66,7 @@ export class AgentTracer {
       }
     };
     this.wrapped = function (this: Session["agent"], ...args) { return request(this, args); };
+    inheritRuntimeStreamAuth(original, this.wrapped);
     session.agent.streamFunction = this.wrapped;
   }
 

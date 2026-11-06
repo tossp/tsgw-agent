@@ -1,6 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
-  createAgentSessionFromServices,
   createAgentSessionServices,
   getAgentDir,
   initTheme,
@@ -9,6 +8,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike } from "./pi-types";
+import { createTracingAgentSessionFromServices } from "../tsgw/agent-tracing/sdk-runtime";
 import {
   subagentNotificationText,
   subagentToolDetails,
@@ -603,7 +603,7 @@ export function createSubagentController(
         throw new Error(`Invalid subagent thinking level: ${thinking}`);
       }
       const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
-      const { session: inner } = await createAgentSessionFromServices({
+      const { session: inner } = await createTracingAgentSessionFromServices({
         services,
         sessionManager,
         model: (callModel ?? profileModel)?.model ?? parentModel,

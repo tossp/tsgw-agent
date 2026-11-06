@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools, Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import {
   createAgentSessionFromServices, createAgentSessionServices, ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";

@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { createSessionOwnerAccess } from "../tsgw/wakeups/session-owner";
@@ -36,6 +36,7 @@ import type {
   SessionMessageEntry,
   SubagentSessionStatus,
 } from "./types";
+import { extensionUiTheme } from "./extension-ui-theme";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
 import {
   createSubagentExtension,
@@ -71,6 +72,7 @@ import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import { reportCatAgentEvent } from "./cat-agent-events";
 import { AgentTracer } from "../tsgw/agent-tracing/tracer";
+import { createTracingAgentSessionFromServices } from "../tsgw/agent-tracing/sdk-runtime";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server";
 import {
   appendClearedSessionToolSelection,
@@ -282,32 +284,6 @@ const THINKING_LEVEL_NAMES = new Set<ThinkingLevel>(["off", "minimal", "low", "m
 // The SDK's DEFAULT_THINKING_LEVEL (dist/core/defaults.js), which it does not export.
 const SDK_DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
 
-// Extensions require a complete Theme, while the web UI applies its own styling.
-class PlainTextTheme extends Theme {
-  constructor() {
-    super(
-      { muted: "", text: "", thinkingXhigh: "", searchMatchText: "" } as ConstructorParameters<typeof Theme>[0],
-      { selectedBg: "" } as ConstructorParameters<typeof Theme>[1],
-      "truecolor",
-    );
-  }
-
-  override fg(...[, text]: Parameters<Theme["fg"]>): string { return text; }
-  override bg(...[, text]: Parameters<Theme["bg"]>): string { return text; }
-  override bold(text: string): string { return text; }
-  override italic(text: string): string { return text; }
-  override underline(text: string): string { return text; }
-  override inverse(text: string): string { return text; }
-  override strikethrough(text: string): string { return text; }
-  override getFgAnsi(): string { return ""; }
-  override getBgAnsi(): string { return ""; }
-  override getThinkingBorderColor(): (text: string) => string {
-    return (text) => text;
-  }
-  override getBashModeBorderColor(): (text: string) => string { return (text) => text; }
-}
-
-const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
 // Tools that belong to the session, not to a branch of it: the ones that reach other tools,
@@ -2062,7 +2038,7 @@ export class AgentSessionWrapper {
 
     let component: unknown;
     try {
-      component = factory(tui, PLAIN_TEXT_THEME);
+      component = factory(tui, extensionUiTheme());
     } catch (error) {
       this.failExtensionWidget(key, generation, error, hadPrevious);
       return;
@@ -2203,7 +2179,7 @@ export class AgentSessionWrapper {
       stopSignal.addEventListener("abort", onStop, { once: true });
 
       Promise.resolve()
-        .then(() => completed ? undefined : factory(tui, PLAIN_TEXT_THEME, CUSTOM_UI_KEYBINDINGS, done))
+        .then(() => completed ? undefined : factory(tui, extensionUiTheme(), CUSTOM_UI_KEYBINDINGS, done))
         .then((component) => {
           if (completed) {
             try {
@@ -2409,7 +2385,7 @@ export class AgentSessionWrapper {
       addAutocompleteProvider: () => {},
       setEditorComponent: () => {},
       getEditorComponent: () => undefined,
-      get theme() { return PLAIN_TEXT_THEME; },
+      get theme() { return extensionUiTheme(); },
       getAllThemes: () => [],
       getTheme: () => undefined,
       setTheme: () => ({ success: false, error: "Theme switching is not supported in Pi Web extension UI yet" }),
@@ -3292,9 +3268,11 @@ export async function startRpcSession(
     if (chatOnly && deferredInitialModel && !allowInitialModelFallback) {
       throw chatOnlyExtensionModelError(deferredInitialModel.provider, deferredInitialModel.id);
     }
+    // A model outside `enabledModels` is a valid explicit choice, as pi's --model with --models.
+    const availableModels = await services.modelRuntime.getAvailable();
     const effectiveInitialModel = initialModel && !deferredInitialModel && (
       !allowInitialModelFallback
-      || scope.visible.some((model) => model.provider === initialModel.provider && model.id === initialModel.modelId)
+      || availableModels.some((model) => model.provider === initialModel.provider && model.id === initialModel.modelId)
     )
       ? initialModel
       : undefined;
@@ -3316,6 +3294,7 @@ export async function startRpcSession(
         ...(effectiveInitialModel ? { requestedModel: effectiveInitialModel } : {}),
         ...(defaultModel ? { defaultModel } : {}),
         ...(thinkingLevel ? { thinkingLevel } : {}),
+        availableModels,
       });
     const startupModel = restoredModel && services.modelRuntime.hasConfiguredAuth(restoredModel.provider)
       ? restoredModel
@@ -3361,7 +3340,7 @@ export async function startRpcSession(
         ? findDeferredModel(services.modelRuntime, defaultProvider, defaultModelId)
         : undefined)
       : undefined;
-    const { session: inner } = await createAgentSessionFromServices({
+    const { session: inner } = await createTracingAgentSessionFromServices({
       services,
       sessionManager,
       ...(startupModel ? { model: startupModel } : {}),

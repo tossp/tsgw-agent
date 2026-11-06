@@ -44,9 +44,13 @@ export async function checkSideSession({ browser, base, artifacts, parentSession
       assert.deepEqual(tools.map((tool) => tool.name).sort(), ["bash", "read"]);
       await panel.locator("textarea").fill("An unsent side-chat draft");
       assert.equal(await composer.inputValue(), "", "the side composer does not overwrite the main draft");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await panel.getByText("Side chat starts here", { exact: true }).waitFor();
+      assert.equal(await panel.locator("textarea").count(), 1, "the side tab restores its full chat after reload");
+      assert.equal(new URL(page.url()).searchParams.get("session"), parentSessionId);
       await page.screenshot({ path: join(artifacts, `side-session-${viewport.width}.png`) });
       assert.deepEqual(errors, []);
-      console.log(`PASS: ${viewport.width}px /side inherits context, opens a full composer, stays hidden and keeps upstream tools`);
+      console.log(`PASS: ${viewport.width}px /side inherits context, restores its full composer, stays hidden and keeps upstream tools`);
     } finally {
       await context.close();
       if (sideId) {

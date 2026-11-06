@@ -136,10 +136,9 @@ async function withSettings(callback) {
     }
   }
   await settings.click();
-  if (!(await settingsSection().count())) {
-    const tab = page.locator(".settings-section-tabs").getByRole("button", { name: "General", exact: true });
-    if (await tab.isVisible()) await tab.click();
-    else await page.locator(".settings-mobile-section-picker").selectOption("general");
+  if (!(await settingsSection().isVisible())) {
+    const section = page.viewportSize().width <= 640 ? ".settings-phone-home" : ".settings-section-tabs";
+    await page.locator(section).getByRole("button", { name: "General", exact: true }).click();
   }
   await settingsSection().waitFor();
   await callback();
