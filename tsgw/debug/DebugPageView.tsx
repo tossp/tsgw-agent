@@ -1,20 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Locale } from "@/lib/i18n/types";
 import type { SessionInfo } from "@/lib/types";
-import { FolderIcon, SpinnerIcon } from "@/components/SidebarIcons";
 import { sessionRowTitle } from "@/components/SessionTree";
 import {
-  DEBUG_POLL_FAILURE_KEYS, DEBUG_STATUS_KEYS, barFraction, debugServerClock, debugSessionTitle,
-  debugStatusState, formatAgo, formatDebugSeconds, shortDebugId,
-  type DebugServerClock, type DebugServerReading, type DebugSessionRow, type DebugStatusState, type DebugTitleOf, type Translate,
+  DEBUG_POLL_FAILURE_KEYS, debugServerClock, formatAgo, shortDebugId,
+  type DebugServerReading, type DebugTitleOf, type Translate,
 } from "@/components/debug-panel-state";
-import { DebugSessionDetailView } from "./DebugSessionDetail";
+import { ResourceBoard } from "./ResourceBoard";
+import type { ResourceReadings } from "./resource-observer";
+import type { LiveModelReadings } from "./live-model-observer";
 import { DashboardArt } from "./DashboardArt";
 import { DashboardOverview } from "./DashboardOverview";
 import { ObserverPanel, type ObserverTelemetry } from "./ObserverPanel";
-import { DASHBOARD_ROLE_KEYS, dashboardRole, dashboardCounts, dashboardFreshness, dashboardGroups, dashboardIssues, filterDashboardGroups, type TaskFilter, type TaskSort } from "./dashboard-state";
+import { dashboardCounts, dashboardFreshness, dashboardGroups, dashboardIssues, filterDashboardGroups } from "./dashboard-state";
 import { debugPageText } from "./messages";
 import styles from "./DebugPageView.module.css";
 
@@ -23,52 +23,30 @@ export interface DebugPageViewProps {
   now: number;
   hidden: boolean;
   sessions: readonly SessionInfo[];
-  catalogError: boolean;
-  catalogReceivedAt?: number | null;
-  selectedSessionId: string | null;
-  onToggleSession(id: string): void;
   onCopy(): void;
   copied: boolean;
   t: Translate;
   locale: Locale;
   telemetry?: ObserverTelemetry;
+  resources?: ResourceReadings;
+  liveModels?: LiveModelReadings;
 }
 
-const FILTERS: TaskFilter[] = ["held", "running", "awaiting", "subagents"];
-const detailElementId = (id: string) => `debug-session-${id}`;
-
-/** Selection reads an existing debug query; it never activates a saved session. */
-export function DebugPageView({ server, now, hidden, sessions, catalogError, selectedSessionId, onToggleSession, onCopy, copied, t, locale, telemetry, catalogReceivedAt }: DebugPageViewProps) {
-  const [filter, setFilter] = useState<TaskFilter>("held");
-  const [query, setQuery] = useState("");
-  const [project, setProject] = useState("");
-  const [sort, setSort] = useState<TaskSort>("recent");
-  const catalogMode = filter === "catalog";
+/** Only resident families render resources; the session directory supplies metadata. */
+export function DebugPageView({ server, now, hidden, sessions, onCopy, copied, t, locale, telemetry, resources = {}, liveModels = {} }: DebugPageViewProps) {
   const reply = server.reply;
   const clock = reply !== null && server.receivedAt !== null ? debugServerClock(reply.now, server.receivedAt, now) : null;
   const byId = useMemo(() => new Map(sessions.map(session => [session.id, session])), [sessions]);
   const titleOf = useMemo<DebugTitleOf>(() => id => { const info = byId.get(id); return info ? sessionRowTitle(info) : null; }, [byId]);
   const allGroups = useMemo(() => dashboardGroups(reply, sessions), [reply, sessions]);
-  const groups = useMemo(() => filterDashboardGroups(allGroups, filter, query, project, sort), [allGroups, filter, query, project, sort]);
-  const projects = useMemo(() => [...new Map(allGroups.flatMap(group => {
-    if (group.name === null) return [];
-    const key = group.key.replace(/^catalog:/, "");
-    const info = group.rows.find(row => row.info)?.info;
-    return [[key, `${group.name} · ${info?.projectRoot ?? info?.cwd ?? key}`] as const];
-  })).entries()].sort((a, b) => a[1].localeCompare(b[1])), [allGroups]);
-  const detail = reply?.session?.sessionId === selectedSessionId ? reply.session : null;
-  const shown = clock !== null ? detail : null;
-  const selectedInfo = selectedSessionId === null ? null : byId.get(selectedSessionId);
-  const selectedSummary = reply?.sessions.find(session => session.sessionId === selectedSessionId);
-  const selectedRole = dashboardRole(selectedSummary || shown?.wrapper
-    ? { subagent: Boolean(selectedSummary?.subagent || shown?.wrapper?.subagent) } : null, selectedInfo);
-  const issues = dashboardIssues(shown);
-  if (!server.failure && telemetry?.inFlightSince != null && now - telemetry.inFlightSince >= 2000) issues.push({ id: "slow-poll", kind: "slowPoll", tone: "warning", name: "", count: now - telemetry.inFlightSince });
+  const groups = useMemo(() => filterDashboardGroups(allGroups, "held", "", "", "recent"), [allGroups]);
+  const resident = new Set(reply?.sessions.map(session => session.sessionId));
+  const issues = Object.entries(resources).filter(([id]) => resident.has(id)).flatMap(([id, reading]) => dashboardIssues(reading.reply?.session?.sessionId === id ? reading.reply.session : null).map(issue => ({ ...issue, id: `${id}:${issue.id}`, source: titleOf(id) ?? shortDebugId(id) })));
+  if (!server.failure && telemetry?.inFlightSince != null && now - telemetry.inFlightSince >= 2000) issues.push({ id: "slow-poll", kind: "slowPoll", tone: "warning", name: "", count: now - telemetry.inFlightSince, source: "" });
   const counts = dashboardCounts(reply, sessions, allGroups);
   const freshness = dashboardFreshness(server, now, hidden);
   const text = (key: Parameters<typeof debugPageText>[1], params?: Parameters<typeof debugPageText>[2]) => debugPageText(locale, key, params);
   const verdict = freshness === "current" ? issues.some(issue => issue.tone === "error") ? "error" : issues.length > 0 ? "warning" : "ok" : freshness === "waiting" ? "waiting" : "warning";
-  const nameOf = (id: string) => titleOf(id) ?? shortDebugId(id);
   const notices: { tone: "warning" | "error" | "dim"; text: string }[] = [];
   if (server.failure) {
     const reason = t(DEBUG_POLL_FAILURE_KEYS[server.failure.kind], { status: server.failure.status ?? "?" });
@@ -76,7 +54,7 @@ export function DebugPageView({ server, now, hidden, sessions, catalogError, sel
     if (server.consecutiveFailures > 1) notices.push({ tone: "warning", text: text("page.staleCount", { count: server.consecutiveFailures }) });
   }
   if (hidden) notices.push({ tone: "dim", text: t("debug.poll.hidden") });
-  if (catalogError) notices.push({ tone: "warning", text: text("page.catalogFailed") });
+  if (telemetry?.catalog?.failed) notices.push({ tone: "warning", text: text("page.catalogFailed") });
   const metrics = [
     ["dense.ordinary", counts.ordinary, `${text("dense.ordinaryRunning")} ${counts.ordinaryRunning}`],
     ["board.subagents", counts.subagentResident, `${text("dense.childRunning")} ${counts.subagentRunning}`],
@@ -105,82 +83,16 @@ export function DebugPageView({ server, now, hidden, sessions, catalogError, sel
       </div>)}
     </div>
     <div className={styles.body}>
-      <section className={styles.sessions} aria-label={text("board.tasks")}>
-        <div className={styles.sessionHead}><h2 className={styles.sectionTitle}><span className={styles.sectionNumber}>01</span>{catalogMode ? text("dense.history") : text("board.tasks")}</h2><span className={styles.groupCount}>{text("board.shown", { count: groups.reduce((count, group) => count + group.rows.filter(row => !row.placeholder).length, 0) })}</span></div>
-        <div className={styles.toolbar}>
-          <input className={styles.search} type="search" aria-label={text("board.search")} placeholder={text("board.search")} value={query} onChange={event => setQuery(event.target.value)} />
-          <select className={styles.select} aria-label={text("board.project")} value={project} onChange={event => setProject(event.target.value)}><option value="">{text("board.allProjects")}</option>{projects.map(([key, name]) => <option value={key} key={key}>{name}</option>)}</select>
-          <select className={styles.select} aria-label={text("board.sort")} value={sort} onChange={event => setSort(event.target.value as TaskSort)}><option value="recent">{text("board.recent")}</option><option value="name">{text("board.byName")}</option></select>
-          <div className={styles.filters} role="group" aria-label={text("board.tasks")}>{FILTERS.map(value => <button type="button" className={`${styles.filter}${filter === value ? ` ${styles.activeFilter}` : ""}`} aria-pressed={filter === value} onClick={() => setFilter(value)} key={value}>{text(`board.filter.${value}`)}</button>)}</div>
-        </div>
-        <div className={styles.taskScroll}>
-          {groups.length === 0 && <p className={styles.noResults}>{reply === null ? t("debug.poll.waiting") : !catalogMode && counts.held === 0 ? text("dense.noRuntime") : text("board.noResults")}</p>}
-          {groups.map(group => <div key={group.key} className={styles.group}>
-            <div className={styles.groupHead}><FolderIcon size={12} /><span className={styles.groupName}>{group.name ?? t("debug.sessions.unlisted")}</span><span className={styles.groupCount}>{group.rows.filter(row => !row.placeholder).length}</span></div>
-            <div className={styles.rowColumns} aria-hidden="true"><span>{text("board.tasks")}</span><span>{text("dense.reap")}</span></div>
-            {group.rows.map(row => <SessionRowButton key={row.id} row={row} open={selectedSessionId === row.id} idleTimeoutMs={reply?.server.idleTimeoutMs ?? 0} clock={clock} titleOf={titleOf} t={t} locale={locale} onToggle={onToggleSession} />)}
-          </div>)}
-        </div>
-        <div className={styles.catalogFooter}><button type="button" className={styles.filter} aria-pressed={catalogMode} onClick={() => { setFilter(catalogMode ? "held" : "catalog"); setQuery(""); }}>{catalogMode ? text("board.filter.held") : text("dense.history")} <span className={styles.catalogBadge}>{catalogReceivedAt == null ? "—" : counts.catalog}</span></button><span className={styles.scopeNote} title={text("dense.reapHint")}>{catalogMode ? text("board.catalogHint") : text("dense.reapHint")}</span></div>
-      </section>
-      <section className={styles.inspector} aria-label={text("dense.inspect")}>
-        <div className={styles.sessionHead}><h2 className={styles.sectionTitle}><span className={styles.sectionNumber}>02</span>{text("dense.inspect")}</h2>{selectedSessionId !== null && <button className={styles.close} type="button" onClick={() => onToggleSession(selectedSessionId)} aria-label={text("dense.close")}>×</button>}</div>
-        <div className={styles.inspectorScroll}>
-          {selectedSessionId === null ? <p className={styles.noResults}>{text("dense.pick")}</p> : <>
-            <div className={styles.inspectorName}><strong>{nameOf(selectedSessionId)}</strong><span className={styles.catalogBadge}>{text(DASHBOARD_ROLE_KEYS[selectedRole])}</span></div>
-            {selectedInfo && <details className={styles.metadata}><summary>{selectedInfo.cwd}</summary><p className={styles.detailId}>{selectedInfo.id}</p><p className={styles.note}>{selectedInfo.branch}</p>
-              {selectedInfo.relation?.kind === "subagent" && <><p className={styles.entryLine}>{text("board.parent", { name: nameOf(selectedInfo.relation.parentSessionId) })} · {selectedInfo.relation.profile} · {text("board.recordedStatus", { status: selectedInfo.relation.status })}</p><p className={styles.note}>{text("board.description", { text: selectedInfo.relation.description })}</p></>}
-              {selectedInfo.relation?.kind === "side" && <p className={styles.note}>{text("dense.sideSource", { name: nameOf(selectedInfo.relation.parentSessionId) })}</p>}
-              {selectedInfo.relation?.kind === "fork" && <p className={styles.note}>{text("board.fork", { name: nameOf(selectedInfo.relation.originSessionId ?? selectedInfo.parentSessionId ?? "—") })}</p>}
-              <p className={styles.note}>{text("board.modified", { time: new Date(selectedInfo.modified).toLocaleString(locale) })}</p>
-            </details>}
-            {!reply?.sessions.some(session => session.sessionId === selectedSessionId) && <p className={styles.scopeNote}>{text("board.catalogNote")}</p>}
-            {shown !== null && clock !== null ? <DebugSessionDetailView detail={shown} role={selectedRole} clock={clock} titleOf={titleOf} t={t} locale={locale} id={detailElementId(selectedSessionId)} name={nameOf(selectedSessionId)} /> : <p className={styles.detailWaiting} id={detailElementId(selectedSessionId)}>{text("detail.waiting")}</p>}
-          </>}
-        </div>
-      </section>
       <aside className={styles.overview}>
-        <section className={`${styles.panel} ${styles.signals}`} aria-label={text("board.issues")}>
+        <section className={`${styles.panel} ${styles.signals}`} aria-label={text("board.issues")} title={text("resource.scope")}>
           <div className={styles.panelHead}><h2 className={styles.sectionTitle}>{text("board.issues")}</h2><span className={styles.catalogBadge}>{issues.length + notices.length}</span></div>
-          <p className={styles.scopeNote}>{text("board.coverage")}</p>
-          <ul className={styles.issueList} aria-live="polite">{notices.map((notice, index) => <li key={`notice:${index}`} className={`${styles.notice} ${styles[`notice_${notice.tone}`]}`}>{notice.text}</li>)}{issues.map(issue => <li key={issue.id} className={`${styles.issue} ${styles[`issue_${issue.tone}`]}`}>{text(`board.issue.${issue.kind}`, { name: issue.name, count: issue.count ?? 0 })}</li>)}</ul>
+          <ul className={styles.issueList} aria-live="polite">{notices.map((notice, index) => <li key={`notice:${index}`} className={`${styles.notice} ${styles[`notice_${notice.tone}`]}`}>{notice.text}</li>)}{issues.map(issue => <li key={issue.id} className={`${styles.issue} ${styles[`issue_${issue.tone}`]}`}>{issue.source && <strong>{issue.source} · </strong>}{text(`board.issue.${issue.kind}`, { name: issue.name, count: issue.count ?? 0 })}</li>)}</ul>
         </section>
         <ObserverPanel server={server} telemetry={telemetry} now={now} hidden={hidden} t={t} locale={locale} />
         {reply !== null && clock !== null && <DashboardOverview reply={reply} clock={clock} t={t} locale={locale} />}
-        <details className={styles.limitations}><summary>{text("board.limits")}</summary><p>{text("board.limitClients")}</p><p>{text("board.limitTimers")}</p><p>{text("board.limitRuns")}</p></details>
       </aside>
+      <ResourceBoard groups={groups} residentIds={resident} resources={resources} liveModels={liveModels} now={now} summaryClock={clock} idleTimeoutMs={reply?.server.idleTimeoutMs ?? 0} titleOf={titleOf} t={t} locale={locale} />
     </div>
-    <footer className={styles.footer}><span>PI / OPERATIONS · {text("board.footer")}</span><span title={text("board.catalogAge", { time: catalogReceivedAt == null ? "—" : formatAgo(now - catalogReceivedAt, t) })}>{text("dense.history")} {catalogReceivedAt == null ? "—" : formatAgo(now - catalogReceivedAt, t)}</span></footer>
+    <footer className={styles.footer}><span>PI / OPERATIONS · {text("board.footer")}</span></footer>
   </section>;
-}
-
-const RING_CLASS: Record<Exclude<DebugStatusState, "running" | "awaiting">, string> = { alive: styles.ringAlive, closing: styles.ringClosing, none: styles.ringNone, starting: styles.ringStarting };
-
-function SessionRowButton({ row, open, idleTimeoutMs, clock, titleOf, t, locale, onToggle }: {
-  row: DebugSessionRow; open: boolean; idleTimeoutMs: number; clock: DebugServerClock | null; titleOf: DebugTitleOf; t: Translate; locale: Locale; onToggle(id: string): void;
-}) {
-  const text = (key: Parameters<typeof debugPageText>[1], params?: Parameters<typeof debugPageText>[2]) => debugPageText(locale, key, params);
-  const summary = row.summary;
-  const role = dashboardRole(summary, row.info);
-  const child = role === "subagent";
-  const relation = row.info?.relation;
-  const name = row.info ? sessionRowTitle(row.info) : titleOf(row.id) ?? shortDebugId(row.id);
-  const remaining = summary?.nextIdleCheckAt != null && clock !== null ? clock.remaining(summary.nextIdleCheckAt) : null;
-  const state = summary ? debugStatusState(summary) : null;
-  const statusLabel = row.placeholder ? text("dense.context") : state ? t(DEBUG_STATUS_KEYS[state]) : text("board.catalogLabel");
-  const checkLabel = remaining === null ? text("dense.noCheck") : remaining <= 0 ? text("dense.due") : formatDebugSeconds(remaining, t);
-  return <button type="button" className={`${styles.row}${open ? ` ${styles.rowOpen}` : ""}${row.depth === 1 ? ` ${styles.rowSub}` : ""}${row.placeholder ? ` ${styles.contextRow}` : ""}`} aria-expanded={open} {...(open ? { "aria-controls": detailElementId(row.id) } : {})} onClick={() => onToggle(row.id)} title={summary ? debugSessionTitle(summary, remaining, t) : name}>
-    <span className={styles.rowStatus}>{state === "running" ? <SpinnerIcon size={13} label={statusLabel} /> : state === "awaiting" ? <span className="session-tree-awaiting" role="img" aria-label={statusLabel} /> : <span className={`${styles.ring} ${state ? RING_CLASS[state] : styles.ringNone}`} role="img" aria-label={statusLabel} />}</span>
-    <span className={styles.rowName}>
-      <span className={styles.nameLine}>{row.depth === 1 && <span className={styles.rowBranch} aria-hidden="true" />}<span className={styles.nameText}>{name}</span>{summary !== null && summary.starts > 1 && <span className={styles.starts}>↻{summary.starts}</span>}</span>
-      <span className={styles.rowBadges}><span className={`${styles.badge}${child ? ` ${styles.childBadge}` : ""}`}>{text(DASHBOARD_ROLE_KEYS[role])}</span><span className={styles.statusLabel}>{statusLabel}</span>{relation?.kind === "fork" && <span className={styles.badge}>{text("dense.fork")}</span>}{summary != null && summary.eventStreams > 0 && <span className={styles.badge}>SSE {summary.eventStreams}</span>}{summary != null && summary.providers > 0 && <span className={styles.badge}>{t("debug.box.provider")} {summary.providers}</span>}</span>
-      {relation?.kind === "side" && <span className={styles.assignment}>{text("dense.sideSource", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })}</span>}
-      {relation?.kind === "subagent" && <span className={styles.assignment} title={`${text("board.parent", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })} · ${relation.description}`}>{relation.profile} · {relation.description} · {text("board.parent", { name: titleOf(relation.parentSessionId) ?? shortDebugId(relation.parentSessionId) })}</span>}
-    </span>
-    <span className={`${styles.rowIdle}${summary?.forcedByStop ? ` ${styles.forcedIdle}` : ""}`} title={text("dense.reapHint")}>
-      <span className={styles.idleText}>{summary ? checkLabel : "—"}</span>
-      {remaining !== null && idleTimeoutMs > 0 && <span className={styles.idleTrack} aria-hidden="true"><span style={{ width: `${(barFraction(remaining, idleTimeoutMs) ?? 0) * 100}%` }} /></span>}
-      {summary?.forcedByStop && <span className={styles.forced} aria-label={t("debug.server.idleForced")}>Stop</span>}
-    </span>
-  </button>;
 }

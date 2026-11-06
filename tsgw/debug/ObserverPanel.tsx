@@ -64,7 +64,7 @@ function PollLine({ label, now, hidden, locale, t, startedAt, nextAt, intervalMs
       <path d="M0 25H240" fill="none" stroke="currentColor" opacity=".15" />
       {samples.slice(-24).map((sample, index) => {
         const height = sample.failed ? 23 : Math.max(2, sparkHeight(sample.ms) * 23);
-        return <rect key={`${sample.at}:${index}`} x={index * 10 + 1} y={25 - height} width="7" height={height} rx="1" className={sample.failed ? styles.sampleFailed : sample.ms >= DEBUG_POLL_MS ? styles.sampleSlow : styles.sampleOk}><title>{new Date(sample.at).toLocaleTimeString(locale)} · {sample.failed ? text("dense.failed") : `${sample.ms} ms`}</title></rect>;
+        return <rect key={`${sample.at}:${index}`} x={index * 10 + 1} y={25 - height} width="7" height={height} rx="1" className={sample.failed ? styles.sampleFailed : sample.ms >= DEBUG_POLL_MS ? styles.sampleSlow : styles.sampleOk}><title>{`${new Date(sample.at).toLocaleTimeString(locale)} · ${sample.failed ? text("dense.failed") : `${sample.ms} ms`}`}</title></rect>;
       })}
     </svg>
     <p className={styles.scopeNote}>{text("dense.pollStats", { requests, failures, consecutive })}</p>
