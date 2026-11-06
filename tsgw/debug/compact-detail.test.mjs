@@ -19,155 +19,173 @@ const { zhCNLocale } = await jiti.import("@/lib/i18n/messages/zh-CN.ts");
 const { zhTWLocale } = await jiti.import("@/lib/i18n/messages/zh-TW.ts");
 const { interpolateMessage } = await jiti.import("@/lib/i18n/format.ts");
 const { DEBUG_PAGE_MESSAGES } = await jiti.import("./messages.ts");
-
 const source = await readFile(new URL("./DebugSessionDetail.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("./detail.module.css", import.meta.url), "utf8");
-
-const t = (key, params) => {
-  assert.equal(typeof enLocale.messages[key], "string", `missing translation ${key}`);
-  return interpolateMessage(enLocale.messages[key], params);
+const locales = { en: enLocale, "zh-CN": zhCNLocale, "zh-TW": zhTWLocale };
+const translator = locale => (key, params) => {
+  assert.equal(typeof locales[locale].messages[key], "string", `missing translation ${key}`);
+  return interpolateMessage(locales[locale].messages[key], params);
 };
 const decode = html => html.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 const visibleText = html => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 const titleOf = id => catalog.find(entry => entry.id === id)?.name || catalog.find(entry => entry.id === id)?.firstMessage || null;
-
-/** The answer above arrived 10 s before `now`, as the page's own poll timestamps it. */
 const clockAt = now => debugServerClock(SERVER, LOCAL - 10 * SECOND, now);
-
 function render({ detail = reply().session, now = LOCAL, locale = "en", ...rest } = {}) {
   return decode(renderToStaticMarkup(React.createElement(DebugSessionDetailView, {
-    detail, clock: clockAt(now), titleOf, t, locale, id: "debug-session-s1", name: "Current chat", ...rest,
+    detail, clock: clockAt(now), titleOf, t: translator(locale), locale, id: "debug-session-s1", name: "Current chat", ...rest,
   })));
 }
 
-const capsule = (label, tone, shape, inner, extraClass = "", pulse = false) =>
-  `<span class="tag${extraClass}" role="img" aria-label="${label}" title="${label}">`
-  + `<span class="lamp" data-tone="${tone}" data-shape="${shape}"${pulse ? ' data-pulse="on"' : ""} aria-hidden="true">`
-  + `<span class="lampCore"></span></span>${inner}</span>`;
-
-test("MCP servers are one capsule each: a settled one shows its lamp and name, others say why", () => {
-  const html = render();
-  assert.ok(html.includes(capsule("files (global) · Connected", "ok", "solid", '<span class="tagName">files</span>')), html);
-  // The failing one adds the reason in words beside the lamp, not a row per field.
-  assert.ok(html.includes('<span class="tagName">jira</span><span class="tagState">Did not connect</span>'), html);
-  assert.ok(html.includes('aria-label="jira (project) · Did not connect · error"'), html);
-  // Scope and the whole record stay in the tooltip and accessible name: not repeated as visible text.
-  const text = visibleText(html);
-  assert.doesNotMatch(text, /\bglobal\b|\bproject\b/);
-  assert.match(text, /Host active: yes · run active: no/);
-  assert.match(text, /1 problems/);
-  // No per-server block: two servers, two capsules, two states at most.
-  assert.ok(html.split('class="tag').length - 1 >= 2);
-});
-
-test("the lamp is a ring around a lit core, and its shape keeps released, connecting and error apart", () => {
+test("MCP lamps form a compact row; errors and release states remain visible", () => {
   const detail = reply().session;
-  detail.subagents = { active: false, runs: [], notifications: [] };
-  detail.mcp.servers = [
+  detail.mcp.servers.push(
     { name: "idle", scope: "global", state: "connected", hasError: false, released: true },
     { name: "dialing", scope: "project", state: "connecting", hasError: false, released: false },
-    { name: "broken", scope: "project", state: "failed", hasError: true, released: false },
-  ];
+    { name: "released-error", scope: "project", state: "connected", hasError: true, released: true },
+  );
   const html = render({ detail });
-  assert.ok(html.includes(capsule("idle (global) · Connected · released", "dim", "dotted", '<span class="tagName">idle</span><span class="tagState">released</span>', " tagDim")), html);
-  assert.ok(html.includes(capsule("dialing (project) · Connecting", "warning", "dashed", '<span class="tagName">dialing</span><span class="tagState">Connecting</span>', "", true)), html);
-  assert.ok(html.includes(capsule("broken (project) · Did not connect · error", "error", "solid", '<span class="tagName">broken</span><span class="tagState">Did not connect</span>')), html);
-  // Only a state still on its way there breathes; the stylesheet stops even that on request.
-  assert.equal(html.split('data-pulse="on"').length - 1, 1);
-  assert.match(css, /\.lamp\s*\{[^}]*border:\s*1px solid currentColor/);
-  assert.match(css, /\.lampCore\s*\{[^}]*box-shadow:[\s\S]*?0 0 5px 1px/);
-  assert.match(css, /@keyframes lampHalo/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?animation: none !important;/);
+  const text = visibleText(html);
+  assert.match(text, /files/);
+  assert.match(text, /jira Did not connect/);
+  assert.match(text, /idle released/);
+  assert.match(text, /dialing Connecting/);
+  assert.match(text, /released-error error · released/);
+  assert.match(html, /class="tag"[^>]*data-tone="error"[^>]*><span class="lamp"/);
+  assert.match(text, /Host active: yes · run active: no/);
+  assert.match(text, /1 problems/);
+  assert.match(html, /aria-label="files \(global\) · Connected"/);
+  assert.match(html, /data-shape="dotted"/);
+  assert.match(html, /data-shape="dashed" data-pulse="on"/);
+  assert.match(css, /\.lamp\s*\{[^}]*border: 1px solid currentColor/);
+  assert.match(css, /\.lampCore\s*\{[^}]*0 0 5px 1px/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important/);
 });
 
-test("the MCP idle release keeps its countdown and bar in view, read on the server clock", () => {
-  const html = render();
-  assert.match(visibleText(html), /idle release in 1m 50s/);
-  const width = value => `width:${(barFraction(value, 5 * MINUTE) * 100)}%`;
-  assert.ok(html.includes(`class="meterFill" style="${width(2 * MINUTE - 10 * SECOND)}"`), html);
-  const later = render({ now: LOCAL + 30 * SECOND });
+test("MCP release and reap check each keep one real countdown and a moving bar", () => {
+  const detail = reply().session;
+  const first = render({ detail }), later = render({ detail, now: LOCAL + 30 * SECOND });
+  assert.match(visibleText(first), /idle release in 1m 50s/);
   assert.match(visibleText(later), /idle release in 1m 20s/);
-  assert.ok(later.includes(`class="meterFill" style="${width(2 * MINUTE - 40 * SECOND)}"`), later);
-  // Released and idle is not an error: the word says release, and the bar is not a countdown to a failure.
-  assert.doesNotMatch(visibleText(html), /idle release in .* (error|failed)/);
+  const width = (remaining, total) => `width:${barFraction(remaining, total) * 100}%`;
+  assert.ok(first.includes(width(110 * SECOND, 5 * MINUTE)));
+  assert.ok(later.includes(width(80 * SECOND, 5 * MINUTE)));
+  assert.ok(first.includes(width(500 * SECOND, 10 * MINUTE)));
+  assert.ok(later.includes(width(470 * SECOND, 10 * MINUTE)));
+  assert.equal(visibleText(first).split("in 8m 20s").length - 1, 1, "no duplicate reap countdown");
+  assert.doesNotMatch(visibleText(first), /Next idle check|Reset|timeout|threshold/i);
+  assert.doesNotMatch(first, /lastResetAt|idleTimeout|idleReset|idleHint/);
+  detail.wrapper.idle.nextCheckAt = null;
+  assert.match(visibleText(render({ detail })), /No check scheduled/);
+  detail.wrapper.idle.timeoutMs = 0;
+  detail.wrapper.idle.nextCheckAt = SERVER + MINUTE;
+  detail.wrapper.idle.forcedByStop = true;
+  assert.match(visibleText(render({ detail })), /Stopped: the session closes/);
+  assert.doesNotMatch(visibleText(render({ detail })), /disabled|timeout|threshold/i);
 });
 
-test("the session's idle time is a reap check, said in the reader's language and counted on the server's clock", () => {
-  const html = render();
-  const text = visibleText(html);
-  assert.match(text, /Next idle check in 8m 20s/);
-  assert.match(text, /Reap check · in 8m 20s/);
-  assert.match(text, /Next idle check, not a guaranteed shutdown/);
-  assert.match(render({ now: LOCAL + 10 * SECOND }), /Next idle check in 8m 10s/);
-  const chinese = visibleText(render({ locale: "zh-CN" }));
-  assert.match(chinese, /回收检查/);
-  assert.match(chinese, /下一次空闲检查/);
-  // No check scheduled is said, not left as a blank.
-  const noCheck = reply().session;
-  noCheck.wrapper.idle.nextCheckAt = null;
-  assert.match(visibleText(render({ detail: noCheck })), /No check scheduled/);
-  // The wording is the page's, so a rename in the shared dictionary fails here, not silently at runtime.
-  for (const locale of ["en", "zh-CN", "zh-TW"]) {
-    for (const key of ["dense.reap", "dense.reapHint", "dense.noCheck"]) {
-      assert.equal(typeof DEBUG_PAGE_MESSAGES[locale][key], "string", `${locale} ${key}`);
-    }
-  }
+test("SSE groups only non-null equal holders; every connection time and anomaly is visible", () => {
+  const detail = reply().session;
+  const stream = detail.eventStreams[0];
+  detail.eventStreams = [
+    stream,
+    { ...stream, connectedAt: SERVER - MINUTE, droppedEvents: 4, queuedBytes: 2048 },
+    { ...stream, connectedAt: null, client: "Firefox · Linux", address: "10.0.0.2" },
+    { ...stream, holder: null }, { ...stream, holder: null },
+    { ...stream, holder: "another-holder", client: "Safari · iOS" },
+  ];
+  const html = render({ detail }), text = visibleText(html);
+  assert.equal((html.match(/class="streamGroup"/g) ?? []).length, 4);
+  assert.equal((html.match(/class="streamRecord"/g) ?? []).length, 6);
+  assert.equal(text.split("SSE ×3").length - 1, 1);
+  assert.equal(text.split("SSE ×1").length - 1, 3, "null holders are not a fake shared page");
+  for (const fact of ["Chrome · macOS", "Firefox · Linux", "10.0.0.2", "127.0.0.1", "Safari · iOS", "open / connected 5m 10s ago", "connected 1m 10s ago", "write 13s ago", "starting the session", "4 dropped", "2.0 KB queued"]) assert.ok(text.includes(fact), fact);
+  assert.match(html, /class="streamGroup" data-holder="page-a-1111" data-tone="warning"/);
+  assert.equal((html.match(/class="streamRecord" data-tone="warning"/g) ?? []).length, 2, "healthy streams cannot hide anomalous peers");
+  // No duplicate normal capsule plus a second hidden record.
+  assert.doesNotMatch(html, /<details|<summary/);
 });
 
-test("the long connection and run records fold away natively and keep their fields", () => {
-  const html = render();
-  const text = visibleText(html);
-  for (const value of [
-    "Stream records", "Run records", "Idle window",
-    "Request opened 5m 10s ago", "last write 13s ago", "connected 5m 10s ago",
-    "Parent: Current chat", "4m 10s ago", "explore",
-  ]) assert.ok(text.includes(value), value);
-  assert.equal(html.split('<details class="records">').length - 1, 3);
-  assert.doesNotMatch(html, /<details[^>]*\sopen[\s>]/);
-  assert.match(html, /<summary class="recordsTitle">Stream records<\/summary>/);
+test("same-holder equal sources appear once, but each connection has its own times", () => {
+  const detail = reply().session;
+  const stream = detail.eventStreams[0];
+  detail.eventStreams = [stream, { ...stream, openedAt: SERVER - MINUTE, connectedAt: SERVER - MINUTE }];
+  const text = visibleText(render({ detail }));
+  assert.equal(text.split("Chrome · macOS").length - 1, 1);
+  assert.equal(text.split("127.0.0.1").length - 1, 1);
+  assert.match(text, /SSE ×2/);
+  assert.match(text, /#1 open \/ connected 5m 10s ago write 13s ago #2 open \/ connected 1m 10s ago write 13s ago/);
 });
 
-test("every diagnostic the detail carried before still renders", () => {
+test("subagents are aligned task rows with all run/notification facts, optionally family-owned", () => {
+  const detail = reply().session;
+  Object.assign(detail.subagents.runs[0], { resumed: true, abortRequested: true, mcpWaiting: true });
+  detail.subagents.runs.push({ ...detail.subagents.runs[0], sessionId: "notes-1", parentSessionId: "sub-xyz-789", status: "failed", profile: "auditor", background: false });
+  detail.subagents.notifications = [{ sessionId: "notes-1", parentSessionId: "sub-xyz-789", since: SERVER - MINUTE }];
+  const html = render({ detail }), text = visibleText(html);
+  for (const value of ["explore the repo", "Running", "explore", "background", "resumed", "4m 10s ago", "Parent: Current chat", "abort requested", "waiting for MCP", "Weekly plan", "auditor", "Parent: explore the repo", "notifying explore the repo", "1m 10s ago"]) assert.ok(text.includes(value), value);
+  assert.equal((html.match(/class="runRow"/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /class="tag"[^>]*aria-label="explore the repo/);
+  const familyOwned = render({ detail, showSubagents: false });
+  assert.doesNotMatch(familyOwned, /class="runRow"|notifying|abort requested|data-kind="subagents"/);
+  assert.match(familyOwned, /SSE ×1/);
+});
+
+test("all wrapper, process and provider facts still render, including empty/unknown cases", () => {
   const text = visibleText(render());
-  for (const value of [
-    "Started 6m 10s ago", "Last event agent_end", "Last command prompt",
-    "Event listeners: 1", "Wrapper created 6m 10s ago", "Last idle reset 1m 40s ago",
-    "Next idle check in 8m 20s", "timeout in 10m 00s",
-    "Extensions bound", "Process history", "started 2×", "first 30m 10s ago", "last 6m 10s ago", "closed 7m 10s ago",
-    "Event streams", "Liveness providers", "keepalive-ext", "active · by file",
-    "Subagents", "a run is unsettled", "Running", "background",
-    "MCP", "files", "jira", "Did not connect", "1 problems",
-  ]) assert.ok(text.includes(value), value);
+  for (const value of ["Started 6m 10s ago", "Last event agent_end", "Last command prompt", "Event listeners: 1", "Created 6m 10s ago", "Extensions bound", "Process history", "started 2×", "first 30m 10s ago", "last 6m 10s ago", "closed 7m 10s ago", "Event streams", "Liveness providers", "keepalive-ext", "active · by file", "Subagents", "a run is unsettled"]) assert.ok(text.includes(value), value);
+  const detail = reply().session;
+  detail.lifecycle = null; detail.providers = []; detail.eventStreams = []; detail.mcp.servers = [];
+  let empty = render({ detail });
+  assert.match(empty, /data-kind="providers"[^]*?class="empty">none/);
+  assert.match(empty, /data-kind="history"[^]*?class="empty">none/);
+  detail.providers = null;
+  empty = visibleText(render({ detail }));
+  assert.match(empty, /cannot be listed/);
+  detail.providers = [{ name: "bad-provider", active: "error", byFile: true }, { name: "off", active: false, byFile: false }];
+  detail.wrapper.state = "closing"; detail.wrapper.closingAt = SERVER; detail.wrapper.extensions = "failed";
+  const abnormal = visibleText(render({ detail }));
+  assert.match(abnormal, /bad-provider error · by file/);
+  assert.match(abnormal, /off inactive/);
+  assert.match(abnormal, /closing 10s ago/);
+  assert.match(abnormal, /Extensions failed/);
+  detail.wrapper.stale = true;
+  assert.doesNotMatch(render({ detail }), /data-kind="timing"/);
+  detail.wrapper = null; detail.starting = true;
+  assert.match(visibleText(render({ detail })), /starting/);
 });
 
-test("the detail's own words exist in all three locales and shadow no other dictionary", () => {
+test("execution and waiting fields are not lost in the compact metadata", () => {
+  const detail = reply().session;
+  Object.assign(detail.wrapper.run, { running: true, streaming: true, promptRunning: true, pendingPrompts: 2, bashRunning: true, compacting: true, retrying: true, queuedMessages: 3, waitingForMcp: true, runningTools: 4, mutatingCommands: 5, replacement: "fork" });
+  Object.assign(detail.wrapper, { awaitingInput: true, pendingUiRequests: 2, customUis: 3, chatOnly: true, subagent: true });
+  const text = visibleText(render({ detail }));
+  for (const key of ["debug.run.streaming", "debug.run.prompt", "debug.run.bash", "debug.run.compacting", "debug.run.retrying", "debug.run.waitingForMcp", "debug.overlay.awaiting", "debug.server.chatOnly", "debug.server.subagent"]) assert.ok(text.includes(translator("en")(key)), key);
+  for (const [key, params] of [["debug.run.pending", { count: 2 }], ["debug.run.queued", { count: 3 }], ["debug.run.tools", { count: 4 }], ["debug.run.mutating", { count: 5 }], ["debug.run.replacement", { kind: "fork" }], ["debug.server.uiRequests", { count: 2 }], ["debug.server.customUis", { count: 3 }]]) assert.ok(text.includes(translator("en")(key, params)), key);
+});
+
+test("local words exist in all locales and do not shadow page/global dictionaries", () => {
   const keys = Object.keys(DEBUG_DETAIL_MESSAGES.en).sort();
-  assert.ok(keys.length >= 3, keys.join(", "));
-  const globals = { en: enLocale, "zh-CN": zhCNLocale, "zh-TW": zhTWLocale };
   const names = message => [...message.matchAll(/\{([\w.-]+)\}/g)].map(match => match[1]).sort();
-  for (const locale of ["en", "zh-CN", "zh-TW"]) {
-    assert.deepEqual(Object.keys(DEBUG_DETAIL_MESSAGES[locale]).sort(), keys, locale);
+  for (const locale of Object.keys(locales)) {
+    assert.deepEqual(Object.keys(DEBUG_DETAIL_MESSAGES[locale]).sort(), keys);
     for (const key of keys) {
-      const message = DEBUG_DETAIL_MESSAGES[locale][key];
-      assert.equal(typeof message, "string", `${locale} ${key}`);
-      assert.ok(message.trim().length > 0, `${locale} ${key}`);
-      assert.deepEqual(names(message), names(DEBUG_DETAIL_MESSAGES.en[key]), `${locale} ${key}`);
-      assert.equal(globals[locale].messages[key], undefined, `${locale} ${key} shadows a global translation`);
+      const value = DEBUG_DETAIL_MESSAGES[locale][key];
+      assert.ok(value.trim());
+      assert.deepEqual(names(value), names(DEBUG_DETAIL_MESSAGES.en[key]));
+      assert.equal(locales[locale].messages[key], undefined);
+      assert.equal(DEBUG_PAGE_MESSAGES[locale][key], undefined);
     }
+    assert.doesNotMatch(visibleText(render({ locale })), /detail\.[\w]+/);
   }
-  assert.notEqual(DEBUG_DETAIL_MESSAGES["zh-CN"]["detail.streamRecords"], DEBUG_DETAIL_MESSAGES.en["detail.streamRecords"]);
 });
 
-test("the compact surface is owned by its own stylesheet and the props are unchanged", () => {
-  assert.match(source, /import d from "\.\/detail\.module\.css";/);
-  assert.doesNotMatch(source, /DebugPageView\.module\.css/);
-  // A capsule, not a bordered card; one compact reading grid; disclosures that carry the long tail.
-  assert.match(css, /\.tag\s*\{[^}]*border-radius: 999px/);
-  assert.match(css, /\.grid\s*\{[^}]*grid-template-columns: repeat\(auto-fit/);
-  assert.match(css, /\.recordsTitle::before/);
-  const props = source.slice(source.indexOf("export interface DebugSessionDetailViewProps"), source.indexOf("}", source.indexOf("export interface DebugSessionDetailViewProps")));
-  for (const field of ["detail", "clock", "titleOf", "t", "locale", "id", "name"]) assert.match(props, new RegExp(`\\b${field}:`), field);
-  assert.doesNotMatch(props, /className/);
-  // Still read-only: no request, no stream, no timer, no other page's state.
-  assert.doesNotMatch(source, /fetch\(|EventSource|XMLHttpRequest|setInterval|setTimeout|useState|useEffect/);
+test("public interface stays compatible and resources have no hidden/truncated fact surfaces", () => {
+  assert.match(source, /showSubagents\?: boolean/);
+  assert.match(source, /showSubagents = true/);
+  assert.match(source, /import d from "\.\/detail\.module\.css"/);
+  assert.doesNotMatch(source, /fetch\(|EventSource|XMLHttpRequest|setInterval|setTimeout|useState|useEffect|<details|<summary/);
+  assert.doesNotMatch(css.replace(/\.meter\s*\{[^}]*\}/g, ""), /text-overflow|max-height|overflow:\s*(hidden|clip)/);
+  assert.ok([...css.matchAll(/font-size:\s*([\d.]+)px/g)].every(match => Number(match[1]) >= 11));
+  assert.doesNotMatch(css, /\.grid\s*\{|repeat\(auto-fit/);
+  assert.ok(source.split("\n").length <= 500);
 });

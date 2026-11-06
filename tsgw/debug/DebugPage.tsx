@@ -8,18 +8,18 @@ import { readHttpProtocol, readPageVisibility, startPageVisibilityTracking } fro
 import type { ObserverTelemetry } from "./ObserverPanel";
 import type { SessionInfo } from "@/lib/types";
 import { debugPollSample, DEBUG_POLL_MS, DEBUG_TICK_MS, EMPTY_DEBUG_SERVER_READING, type DebugServerReading } from "@/components/debug-panel-state";
-import { createDebugPageObserver } from "./page-observer";
+import { createResourcePageObserver, type ResourceReadings } from "./resource-observer";
+import { createLiveModelObserver, type LiveModelReadings } from "./live-model-observer";
 import { DebugPageView } from "./DebugPageView";
 
 /** A separate observer, never a chat mount: it owns no event stream or session lease. */
 export function DebugPage() {
   const { t, locale } = useI18n();
   useTheme();
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const selectedRef = useRef<string | null>(null);
-  const observerRef = useRef<ReturnType<typeof createDebugPageObserver> | null>(null);
   const [server, setServer] = useState<DebugServerReading>(EMPTY_DEBUG_SERVER_READING);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [resources, setResources] = useState<ResourceReadings>({});
+  const [liveModels, setLiveModels] = useState<LiveModelReadings>({});
   const [catalogError, setCatalogError] = useState(false);
   const [catalogReceivedAt, setCatalogReceivedAt] = useState<number | null>(null);
   const [now, setNow] = useState(0);
@@ -32,11 +32,14 @@ export function DebugPage() {
   useEffect(() => {
     mountedRef.current = true;
     startPageVisibilityTracking();
-    let inspectedInitial = false;
     let nextPollAt = Date.now() + DEBUG_POLL_MS;
-    const observer = createDebugPageObserver({
+    const models = createLiveModelObserver({
       fetch: (url, init) => fetch(url, init),
-      sessionId: () => selectedRef.current,
+      isVisible: () => document.visibilityState === "visible",
+      onReading: setLiveModels,
+    });
+    const observer = createResourcePageObserver({
+      fetch: (url, init) => fetch(url, init),
       isVisible: () => document.visibilityState === "visible",
       onReading: (reading) => {
         setServer(reading);
@@ -50,19 +53,13 @@ export function DebugPage() {
             return sample === null ? previous.samples : [...previous.samples, { ...sample, at: reading.failure?.at ?? reading.receivedAt ?? Date.now() }].slice(-24);
           })(),
         }));
-        // A read-only detail query, not startRpcSession or a chat mount.
-        if (!inspectedInitial && reading.reply && reading.reply.sessions.length > 0) {
-          inspectedInitial = true;
-          const first = reading.reply.sessions.find(session => session.running && !session.awaitingInput)
-            ?? reading.reply.sessions.find(session => session.awaitingInput)
-            ?? reading.reply.sessions[0];
-          if (selectedRef.current === null && first) {
-            selectedRef.current = first.sessionId;
-            setSelectedSessionId(first.sessionId);
-            observer.sync();
-          }
+        if (reading.reply) {
+          const ids = reading.reply.sessions.map(session => session.sessionId);
+          models.retain(ids);
+          if (reading.sessionId) models.poll(reading.sessionId);
         }
       },
+      onResources: setResources,
       onCatalog: (catalog, failed) => {
         if (catalog) {
           setSessions(catalog);
@@ -71,7 +68,6 @@ export function DebugPage() {
         setCatalogError(failed);
       },
     });
-    observerRef.current = observer;
     const visibilityChanged = () => {
       const isHidden = document.visibilityState !== "visible";
       setHidden(isHidden);
@@ -96,7 +92,7 @@ export function DebugPage() {
     return () => {
       mountedRef.current = false;
       observer.dispose();
-      observerRef.current = null;
+      models.dispose();
       clearInterval(tick);
       clearInterval(poll);
       document.removeEventListener("visibilitychange", visibilityChanged);
@@ -104,18 +100,12 @@ export function DebugPage() {
     };
   }, []);
 
-  const toggleSession = (id: string) => {
-    const next = selectedRef.current === id ? null : id;
-    selectedRef.current = next;
-    setSelectedSessionId(next);
-    observerRef.current?.sync();
-  };
-
   const copySnapshot = () => {
     const reply = server.reply;
     const payload = {
       ...reply,
-      session: reply?.session?.sessionId === selectedSessionId ? reply?.session : null,
+      resources,
+      liveModels,
       observation: {
         ...telemetry, hidden, now, catalogError, catalogReceivedAt,
         receivedAt: server.receivedAt, roundTripMs: server.roundTripMs, failure: server.failure,
@@ -137,10 +127,8 @@ export function DebugPage() {
       now={now}
       hidden={hidden}
       sessions={sessions}
-      catalogError={catalogError}
-      catalogReceivedAt={catalogReceivedAt}
-      selectedSessionId={selectedSessionId}
-      onToggleSession={toggleSession}
+      resources={resources}
+      liveModels={liveModels}
       onCopy={copySnapshot}
       copied={copied}
       t={t}

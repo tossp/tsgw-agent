@@ -1,6 +1,7 @@
 import { translateMessage } from "@/lib/i18n/format";
 import { DASHBOARD_MESSAGES } from "./dashboard-messages";
 import { DENSITY_MESSAGES } from "./density-messages";
+import { RESOURCE_MESSAGES } from "./resource-messages";
 import type { Locale, TranslationParams } from "@/lib/i18n/types";
 
 /**
@@ -13,6 +14,7 @@ import type { Locale, TranslationParams } from "@/lib/i18n/types";
 const EN = {
   ...DASHBOARD_MESSAGES.en,
   ...DENSITY_MESSAGES.en,
+  ...RESOURCE_MESSAGES.en,
   "page.label": "Debug page: the server's state and the sessions it holds",
   "page.readOnly":
     "Read-only: this page asks GET /api/agent/debug and shows what the server reports. It starts, keeps alive or reconnects nothing, and it cannot see another window's own state.",
@@ -38,6 +40,7 @@ export const DEBUG_PAGE_MESSAGES: Record<Locale, Record<DebugPageKey, string>> =
   "zh-CN": {
     ...DASHBOARD_MESSAGES["zh-CN"],
     ...DENSITY_MESSAGES["zh-CN"],
+    ...RESOURCE_MESSAGES["zh-CN"],
     "page.label": "调试页：服务器状态与它持有的会话",
     "page.readOnly":
       "只读：本页请求 GET /api/agent/debug，展示服务器报告的内容。它不会启动、保活或重连任何会话，也看不到其他窗口自身的状态。",
@@ -57,6 +60,7 @@ export const DEBUG_PAGE_MESSAGES: Record<Locale, Record<DebugPageKey, string>> =
   "zh-TW": {
     ...DASHBOARD_MESSAGES["zh-TW"],
     ...DENSITY_MESSAGES["zh-TW"],
+    ...RESOURCE_MESSAGES["zh-TW"],
     "page.label": "除錯頁：伺服器狀態與它持有的工作階段",
     "page.readOnly":
       "唯讀：本頁請求 GET /api/agent/debug，顯示伺服器回報的內容。它不會啟動、保活或重新連線任何工作階段，也看不到其他視窗自身的狀態。",
