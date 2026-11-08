@@ -1,9 +1,9 @@
-import { findPackageJSON } from "node:module";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   AgentSession,
   createAgentSessionFromServices,
+  getPackageDir,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
@@ -15,9 +15,8 @@ const runtimeStreams = new WeakMap<StreamFn, RuntimeStream>();
 let markerPromise: Promise<Marker> | undefined;
 
 async function loadMarker(): Promise<Marker> {
-  const manifest = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
-  if (!manifest) throw new Error("Cannot locate the Pi SDK for Agent tracing auth preservation");
-  const url = pathToFileURL(join(dirname(manifest), "dist/core/agent-session.js")).href;
+  // Ask the external SDK: bundlers replace our import.meta.url with the build machine's path.
+  const url = pathToFileURL(join(getPackageDir(), "dist/core/agent-session.js")).href;
   // Keep the SDK's own module instance and private WeakMap, not a bundled second copy.
   const sdkModule = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ url);
   if (sdkModule.AgentSession !== AgentSession || typeof sdkModule.markRuntimeStreamFunction !== "function") {

@@ -13,7 +13,8 @@
 ## 主体文件
 
 - `tracer.ts`：run、模型请求、工具及嵌套工具 span 生命周期；局部错误关联；dispose 中断收尾。
-- `sdk-runtime.ts`：Pi 1.5.0 runtime stream 认证标记适配，仅在模块自身调用 `createAgentSessionFromServices()` 后、交还宿主前记录原始 stream 来源；tracer 只为这些已知 stream 的包装继承标记。私有 setter 由 SDK 安装包内部动态加载，并核对导出 `AgentSession` 与公开入口类身份一致；不复用 MCP internals loader，不修改 SDK。
+- `sdk-runtime.ts`：Pi 1.5.0 runtime stream 认证标记适配，仅在模块自身调用 `createAgentSessionFromServices()` 后、交还宿主前记录原始 stream 来源；tracer 只为这些已知 stream 的包装继承标记。私有 setter 由外置 SDK 的公开 `getPackageDir()` 定位并动态加载，核对导出 `AgentSession` 与公开入口类身份一致；不复用 MCP internals loader，不修改 SDK。不能用本模块的 `import.meta.url` 定位：生产 bundler 会将它固化成构建机源码路径。
+- `sdk-runtime.bundle.test.mjs`：用 Next 自带 webpack 打包真实实现（SDK 保持 external），迁移产物、删除构建源码，从无关 cwd 创建真实内存 SDK session 并运行本地 faux 请求；不访问网络。旧实现必须在此回归中复现构建路径解析失败。
 - `sdk-runtime.integration.test.mjs`：强制真实 Pi 1.5.0，使用内存 OAuth credentials、本地 faux provider、内存 Sentry transport；覆盖正常请求、手动及 threshold/overflow 自动压缩、分支摘要、自定义 stream（含真实 `session_start` 扩展替换）负例、dispose 和运行中 A→B 切模型。
 - `usage.ts`：Pi usage 到 Sentry token/估算费用字段的映射。
 - `policy.ts`：服务端手动 root 采样、重叠 AI/MCP 自动埋点排除及 HTTP 自动 spans 关闭；不设置 dataCollection、beforeSendSpan、beforeEnvelope 或 ignoreSpans。
@@ -38,6 +39,7 @@
 ## 依赖但未修改的宿主契约 / 升级核验
 
 - Pi 1.5.0 的 Coding Agent `ModelRuntime.streamSimple()` 未安装 `pi.ai.request` observer；本模块直接观察公开 stream，不声称已接通原生 Pi telemetry，不修改 provider、认证、路由或 node_modules。
+- `next.config.ts` 的 `serverExternalPackages` 必须继续外置 Coding Agent SDK；运行时路径来自该 SDK 的 `getPackageDir()`，不是工作目录或本模块经 bundler 改写的 URL。`PI_PACKAGE_DIR` 可能覆盖 SDK 路径，现有 `AgentSession` 身份核对仍必须阻止加载第二份 SDK。
 - Pi 1.5.0 的 `dist/core/agent-session.js` 用私有 `WeakMap<StreamFn, ModelRuntime>` 识别摘要的 runtime 认证；仅该内部模块导出 `markRuntimeStreamFunction(stream, runtime)`，包根无 setter，也无 getter/继承 API。不能查询并复制原标记或无条件登记自定义 stream。本模块仅登记自己调用 SDK 创建入口取得的原函数及其包装；替换为未知 stream 时保留 SDK 的预解析分支。SDK 内部入口/导出或模块身份变化必须报错并重新评估，不能静默略过、禁用摘要或 tracing。
 - 真实 faux OAuth 负例验证未适配包装会增加一次 auth 解析，并向 runtime 传入显式 key；不把这个可观察差异宣称为已复现真实供应商 OAuth 故障。Faux 原生费用为零，切模型用例只在本地 provider 边界用 Pi `calculateCost()` 生成可区分的模拟估算费用；没有供应商扣费验收。
 - `StreamFn` 可同步或异步返回同一个 `AssistantMessageEventStream`，`result()` 为共享 promise；只观察结果，不增加流迭代器或改变参数。
@@ -72,6 +74,7 @@ npm test
 
 ## 验证记录与容量边界
 
+- 2026-11-08 修复生产产物固化 CI 源码路径：迁移打包回归对旧实现复现 `ERR_MODULE_NOT_FOUND`、修复后通过；模块43项、CAT/RPC/SDK internals定向23项通过，全量3553项通过、1项原有跳过（沿既有方法撤去测试进程的DAC override/read-search capabilities）。TypeScript完整检查、全仓lint、diff检查通过；主动LSP无类型错误，仅原有SDK边界 `typeof` 检查提示。独立只读审阅无阻塞；隔离完整生产构建通过，搬迁 `.next` 并独立安装生产依赖后，从无关目录启动，创建真实wrapper返回HTTP 200；篡改内部模块路径的负对照返回500，确认实际经过修复入口。没有在开发工作树build、访问原有凭据或调用收费模型，验证实例的外部网络已屏蔽；未覆盖npm tarball、真实供应商或PTY。不涉及SDK、认证语义、遥测策略或上游接线变化。
 - 2026-11-06 在独立 `integrate/v0.15.0` 工作树、主代理完成最终固定锁文件 `npm ci` 后：真实 Pi 1.5.0 新增8项通过，tracing模块42项通过；wakeups及宿主/RPC/子代理/切模型定向143项通过，`tsc --noEmit --incremental false`、变更文件ESLint与`git diff --check`通过。LSP主动探测未报本次类型错误，但部分TypeScript push-only检查无法确认clean，以完整tsc结果补充；不声称所有LSP检查均已确认。主代理随后对8个相关TS文件主动LSP检查，均明确clean；完整Next开发路由创建wrapper的浏览器回归通过，开发环境模块身份已覆盖。未运行生产构建、未提交/推送、未向CAT发送遥测；真实供应商OAuth与生产Next产物同模块身份仍不属于本轮实测范围。整体验收与已知上游开发缓存/HMR限制见[上游同步记录](../../docs/upstream-v0.15.0.md)。
 
 - 六项整改后模块34项、全量3386项及CAT/RPC定向14项通过，全量1项原有跳过；TypeScript、lint、diff及变更核心主动LSP通过。独立只读复审未发现阻塞或重要问题，独立模块34项通过。
