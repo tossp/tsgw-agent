@@ -8,6 +8,7 @@ void fetch("/api/cat-config", { cache: "no-store" })
     if (!config.dsn) return;
     Sentry.init({
       ...config,
+      tunnel: "https://cat.tossp.com/e",
       tracePropagationTargets: [],
       enhanceFetchErrorMessages: "report-only",
       beforeSendLog: () => null,

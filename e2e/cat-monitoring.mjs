@@ -83,7 +83,7 @@ try {
   await page.route("https://cat.tossp.com/**", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
-      assert.ok(request.url().startsWith("https://cat.tossp.com/api/10/envelope/"));
+      assert.equal(request.url(), "https://cat.tossp.com/e");
       parseEnvelope(request.postDataBuffer());
       if (live) {
         const response = await route.fetch();
