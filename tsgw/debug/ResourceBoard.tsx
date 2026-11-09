@@ -110,6 +110,7 @@ function ResourceRow({ row, familyRoot, residentIds, resources, liveModels, now,
   const role = dashboardRole(row.summary ?? detail?.wrapper, row.info);
   const run = resident && role === "subagent" ? runs.get(row.id) : undefined;
   const child = role === "subagent";
+  const state = resident && row.summary ? debugStatusState(row.summary) : null;
   const model = resident ? liveModels[row.id] : undefined;
   return <article className={`${styles.session}${row.depth === 1 ? ` ${styles.subsession}` : ""}${resident ? "" : ` ${styles.context}`}`} id={`resource-${row.id}`} data-session-id={row.id}>
     <header className={styles.sessionHead}>
@@ -120,7 +121,13 @@ function ResourceRow({ row, familyRoot, residentIds, resources, liveModels, now,
       <div className={styles.sessionMeta}>
         <span className={child ? styles.child : styles.role}>{text(DASHBOARD_ROLE_KEYS[role])}</span>
         {(relation?.kind === "subagent" || run) && <span className={styles.profile}>{relation?.kind === "subagent" ? relation.profile : run?.run.profile}</span>}
-        <span className={styles.status}>{resident && row.summary ? t(DEBUG_STATUS_KEYS[debugStatusState(row.summary)]) : text("dense.context")}</span>
+        <span className={styles.status} data-state={state}>
+          {state === "running" && <svg className={styles.runningRing} viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+            <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="2" opacity=".22" />
+            <path d="M17.5 10A7.5 7.5 0 1 1 10 2.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>}
+          {state ? t(DEBUG_STATUS_KEYS[state]) : text("dense.context")}
+        </span>
         {relation?.kind === "fork" && <span className={styles.role}>{text("dense.fork")}</span>}
         {row.summary && row.summary.starts > 1 && <span className={styles.summaryFact}>↻{row.summary.starts}</span>}
         {row.summary && row.summary.eventStreams > 0 && <span className={styles.summaryFact}>SSE {row.summary.eventStreams}</span>}

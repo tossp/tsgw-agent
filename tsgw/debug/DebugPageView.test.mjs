@@ -41,6 +41,31 @@ function reading(id, age = 10 * SECOND) {
   return server({ sessionId: id, reply: answer, receivedAt: LOCAL - age });
 }
 
+test("running ordinary and subagent sessions retain text beside a decorative activity ring", () => {
+  const answer = reply();
+  answer.sessions = [summary("s1", { running: true }), summary("sub-xyz-789", { subagent: true, running: true })];
+  const html = render({ server: server({ reply: answer }) });
+  for (const id of ["s1", "sub-xyz-789"]) {
+    const row = resource(html, id);
+    assert.match(row, /<span class="status" data-state="running"><svg[^>]*aria-hidden="true"[^>]*focusable="false"/);
+    assert.match(row, /class="runningRing"/);
+    assert.match(visibleText(row), /running/i);
+  }
+});
+
+test("awaiting, idle, closing and nonresident context never show an activity ring", () => {
+  const answer = reply();
+  answer.sessions = [
+    summary("sub-xyz-789", { subagent: true, running: true }),
+    summary("notes-1", { running: true, awaitingInput: true }),
+    summary("idle-id"), summary("closing-id", { state: "closing" }),
+  ];
+  const html = render({ server: server({ reply: answer }) });
+  for (const id of ["s1", "notes-1", "idle-id", "closing-id"]) assert.doesNotMatch(resource(html, id), /class="runningRing"/);
+  for (const [id, state] of [["notes-1", "awaiting"], ["idle-id", "alive"], ["closing-id", "closing"]]) assert.match(resource(html, id), new RegExp(`data-state="${state}"`));
+  assert.match(visibleText(resource(html, "s1")), /Parent context · not resident/);
+});
+
 test("runtime resources replace the task landscape; observation panels precede the wide resource area", () => {
   const html = render(), text = visibleText(html);
   assert.match(html, /<h1 class="heading">Task control<\/h1>/);
