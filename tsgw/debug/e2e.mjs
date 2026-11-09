@@ -253,7 +253,19 @@ try {
   await test("runtime-only-executing-awaiting-idle-closing", async () => {
     await load({ closing: ["omega"], forcedStop: ["gamma"] }); await residentIds(state.runtime);
     for (const [id, status] of [["alpha", "running"], ["beta", "awaiting input"], ["gamma", "alive"], ["omega", "closing"]]) await visible(resourceRow(id).locator("header").getByText(status, { exact: true }));
+    for (const id of ["alpha", "child"]) assert.equal(await resourceRow(id).locator('[data-state="running"] svg[aria-hidden="true"]').count(), 1);
+    for (const id of ["beta", "gamma", "omega", "grandchild"]) assert.equal(await resourceRow(id).locator('[data-state] svg').count(), 0);
+    const ring = resourceRow("alpha").locator('[data-state="running"] svg');
+    const transform = await ring.evaluate(element => getComputedStyle(element).transform);
+    await until(async () => assert.notEqual(await ring.evaluate(element => getComputedStyle(element).transform), transform), "activity ring rotates");
     await sampled("gamma"); await visible(detail("gamma").getByText(/Stop/)); await shot("runtime-states");
+    state.closing.push("alpha", "child");
+    await until(async () => {
+      for (const id of ["alpha", "child"]) {
+        await visible(resourceRow(id).locator('[data-state="closing"]'));
+        assert.equal(await resourceRow(id).locator('[data-state] svg').count(), 0, "activity ring disappears when execution stops");
+      }
+    }, "running state becomes closing");
   });
   await test("two-hundred-history-never-resources-or-requests", async () => {
     const seed = fixtures(); seed.catalog = seed.catalog.filter(s => seed.runtime.includes(s.id)); seed.catalog.push(...Array.from({ length: 200 }, (_, i) => info("history-" + i, "History " + i, "archive")));
@@ -386,6 +398,8 @@ try {
   await test("locales-and-reduced-motion", async () => {
     for (const [locale, name] of [["zh-CN", "CN"], ["zh-TW", "TW"], ["en", "EN"]]) { await load({}, locale); await stableResources(); await shot(name); assert.equal(await page.locator("html").getAttribute("lang"), locale); }
     await sampled("alpha"); await page.emulateMedia({ reducedMotion: "reduce" }); assert.equal(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches), true);
+    const ring = resourceRow("alpha").locator('[data-state="running"] svg');
+    await visible(ring); assert.equal(await ring.evaluate(element => getComputedStyle(element).animationName), "none", "reduced motion retains the ring without rotation");
     const moving = await page.locator("section[aria-label]").first().evaluate(element => [...element.querySelectorAll("*")].filter(node => { const css = getComputedStyle(node); return css.animationName !== "none" && css.animationDuration.split(",").some(t => parseFloat(t) > 0); }).map(node => node.tagName));
     assert.deepEqual(moving, [], "reduced motion disables status lamps, running and decorative animations"); await shot("reduced-motion");
   });

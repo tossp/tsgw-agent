@@ -23,6 +23,11 @@
 .role, .child, .profile { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; border: 1px solid var(--dbg-line); border-radius: 3px; padding: 0 4px; color: var(--dbg-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .child, .profile { color: var(--dbg-violet); }
 .status, .summaryFact, .recordedStatus { font-size: 11px; color: var(--dbg-muted); }
+.status { display: inline-flex; align-items: center; gap: 5px; }
+.status[data-state="running"] { padding: 0 5px; border: 1px solid color-mix(in srgb, var(--dbg-accent) 40%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--dbg-accent) 10%, transparent); color: var(--dbg-accent); font-weight: 600; }
+.runningRing { width: 14px; height: 14px; flex-shrink: 0; transform-origin: center; animation: runningTurn 900ms linear infinite; }
+@keyframes runningTurn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .runningRing { animation: none; } }
 .summaryFact { font-family: var(--dbg-mono); font-variant-numeric: tabular-nums; }
 .recordedStatus { color: var(--dbg-dim); overflow-wrap: anywhere; }
 .age { margin-left: auto; color: var(--dbg-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
