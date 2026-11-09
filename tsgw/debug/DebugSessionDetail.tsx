@@ -34,6 +34,10 @@ const DETAIL_EN = {
   "detail.opened": "open {time}",
   "detail.openConnected": "open / connected {time}",
   "detail.write": "write {time}",
+  "detail.mcpHost": "Host",
+  "detail.mcpExecution": "Execution",
+  "detail.mcpHostState": "MCP host active: {state}. Independent of agent execution.",
+  "detail.mcpExecutionState": "Agent run active: {state}. This does not indicate an MCP tool call.",
 };
 export type DebugDetailKey = keyof typeof DETAIL_EN;
 export const DEBUG_DETAIL_MESSAGES: Record<Locale, Record<DebugDetailKey, string>> = {
@@ -43,12 +47,20 @@ export const DEBUG_DETAIL_MESSAGES: Record<Locale, Record<DebugDetailKey, string
     "detail.opened": "打开 {time}",
     "detail.openConnected": "打开 / 连接 {time}",
     "detail.write": "写出 {time}",
+    "detail.mcpHost": "宿主",
+    "detail.mcpExecution": "执行",
+    "detail.mcpHostState": "MCP 宿主活跃：{state}。与 Agent 是否正在执行相互独立。",
+    "detail.mcpExecutionState": "Agent 执行活跃：{state}。不代表正在调用 MCP 工具。",
   },
   "zh-TW": {
     "detail.created": "建立 {time}",
     "detail.opened": "開啟 {time}",
     "detail.openConnected": "開啟 / 連線 {time}",
     "detail.write": "寫出 {time}",
+    "detail.mcpHost": "宿主",
+    "detail.mcpExecution": "執行",
+    "detail.mcpHostState": "MCP 宿主活躍：{state}。與 Agent 是否正在執行相互獨立。",
+    "detail.mcpExecutionState": "Agent 執行活躍：{state}。不代表正在呼叫 MCP 工具。",
   },
 };
 
@@ -181,7 +193,10 @@ export function DebugSessionDetailView({ detail, clock, titleOf, t, locale, id, 
       })}</span>
       {mcp.servers.length === 0 && <span className={d.empty}>{t("debug.none")}</span>}
       <span className={d.host}>
-        <span className={d.fact}>{text("board.mcpState", { active: text(mcp.active ? "board.yes" : "board.no"), running: text(mcp.runActive ? "board.yes" : "board.no") })}</span>
+        <Tag name={local("detail.mcpHost")} tone={mcp.active ? "ok" : "dim"} shape={mcp.active ? "solid" : "dotted"}
+          label={local("detail.mcpHostState", { state: text(mcp.active ? "board.yes" : "board.no") })} />
+        <Tag name={local("detail.mcpExecution")} tone={mcp.runActive ? "ok" : "dim"} shape={mcp.runActive ? "solid" : "dotted"}
+          label={local("detail.mcpExecutionState", { state: text(mcp.runActive ? "board.yes" : "board.no") })} />
         {mcpRelease !== null && <Meter remaining={mcpRelease} total={mcp.idleMs}>{t("debug.server.mcpRelease", { time: formatCountdown(mcpRelease, t) })}</Meter>}
         {mcp.problems > 0 && <Chip tone="warning">{t("debug.server.mcpProblems", { count: mcp.problems })}</Chip>}
         {mcp.disposed && <Chip tone="dim">{t("debug.server.mcpDisposed")}</Chip>}
