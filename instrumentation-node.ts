@@ -1,8 +1,10 @@
 import { configureHttpDispatcher, readHttpIdleTimeoutMs } from "@/lib/http-dispatcher";
 import { closeAllAgentEventStreams } from "@/lib/agent-event-stream";
 import { applyCodemodeWorkerDefault } from "@/lib/codemode-workers";
+import { mergeCorsAllowedHosts } from "@/tsgw/cors";
 
 export function registerNodeInstrumentation(): void {
+  mergeCorsAllowedHosts();
   // Before any session can run a codemode script (lib/codemode-workers.ts).
   applyCodemodeWorkerDefault();
 
