@@ -26,6 +26,7 @@
 | [notice-dismiss](notice-dismiss/AGENTS.md) | `index.ts`：关闭按钮与 hook | 模块规则 |
 | [session-title](session-title/AGENTS.md) | `index.ts`：`TITLE_PROMPT` | 模块规则 |
 | [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [信息覆盖、设计与验收](debug/DESIGN.md) |
+| [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
 | [wakeups](wakeups/AGENTS.md) | `index.ts`：`createSessionOwnerAccess`、`createWakeupExtension`、`getWakeupRuntime` | [行为、技能与验证](wakeups/README.md) |
 

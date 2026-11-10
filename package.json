@@ -42,6 +42,7 @@
     "tsgw/login2/README.md",
     "tsgw/release/README.md",
     "tsgw/cat-monitoring/BUILD.md",
+    "tsgw/cors/README.md",
     "next.config.ts",
     "package.json"
   ],
