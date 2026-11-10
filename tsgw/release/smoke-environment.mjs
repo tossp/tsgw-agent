@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 // Deliberate allowlist: an empty npmrc alone cannot override inherited npm_*.
 export function createSmokeEnvironment(root, source = process.env) {
@@ -33,4 +33,12 @@ export function createSmokeEnvironment(root, source = process.env) {
     }
   }
   return env;
+}
+
+export function allowSmokeInstallScripts(env, npmVersion, tarball, ptyVersion) {
+  if (Number(npmVersion.split(".")[0]) < 12) return;
+  // npm 12 matches a local tgz by its resolved file source, not package.json
+  // name/version. This path already passed smoke's artifact/checksum checks.
+  writeFileSync(env.npm_config_userconfig,
+    `allow-scripts[]=file:${resolve(tarball)}\nallow-scripts[]=node-pty@${ptyVersion}\n`);
 }

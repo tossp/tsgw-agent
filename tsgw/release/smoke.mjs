@@ -10,8 +10,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 import { createTerminalOutput } from "./terminal-output.mjs";
 import { startPiAccess } from "../login2/login2-start.mjs";
-import { createSmokeEnvironment } from "./smoke-environment.mjs";
+import { allowSmokeInstallScripts, createSmokeEnvironment } from "./smoke-environment.mjs";
 import { startCatCapture } from "./smoke-cat.mjs";
+import { assertSmokePidStopped, assertSmokeSucceeded, trackSmokeServer, verifySmokeCleanup } from "./smoke-lifecycle.mjs";
 
 const artifacts = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "Usage: node tsgw/release/smoke.mjs <artifact-directory>");
@@ -32,14 +33,6 @@ const reports = mkdtempSync(join(tmpdir(), "tsgw-agent-smoke-reports-"));
 mkdirSync(reports, { recursive: true });
 mkdirSync(join(agent, "sessions", "smoke"), { recursive: true });
 mkdirSync(workspace);
-// Only exact native/install hooks are approved for npm 12; never inherit the
-// operator's policy or disable script protection globally.
-const npmVersion = execFileSync("npm", ["--version"], { env, encoding: "utf8" }).trim();
-if (Number(npmVersion.split(".")[0]) >= 12) {
-  const source = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
-  writeFileSync(env.npm_config_userconfig,
-    `allow-scripts[]=tsgw-agent@${metadata.version}\nallow-scripts[]=node-pty@${source.dependencies["node-pty"]}\n`);
-}
 const sessionId = randomUUID();
 const timestamp = new Date().toISOString();
 writeFileSync(join(agent, "sessions", "smoke", `${sessionId}.jsonl`), `${JSON.stringify({
@@ -51,22 +44,18 @@ const serverEnv = { ...env, ...cat.env, PI_WEB_PASSWORD: password,
 let server;
 let browser;
 let context;
-let serverExit;
+let lifecycle;
 let port;
 let log = "";
 const secrets = [password, Buffer.from(`pi:${password}`).toString("base64")];
 const failures = [];
+const terminalPids = new Set();
 const redact = (text) => secrets.reduce((value, secret) => value.replaceAll(secret, "[test credential]"), text);
-const alive = (pid) => {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { if (error.code === "ESRCH") return false; throw error; }
-};
-async function assertStopped(pid) {
-  const deadline = Date.now() + 5000;
-  while (alive(pid) && Date.now() < deadline) await delay(50);
-  assert.equal(alive(pid), false, `Acceptance PID ${pid} survived cleanup`);
-}
 try {
+  // Only exact file/native hooks; never inherit the operator's npm policy.
+  const npmVersion = execFileSync("npm", ["--version"], { env, encoding: "utf8" }).trim();
+  const source = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  allowSmokeInstallScripts(env, npmVersion, tarball, source.dependencies["node-pty"]);
   // This is a real global-style installation, but only under our disposable
   // prefix. Do not alter the operator's global command or reuse source deps.
   execFileSync("npm", ["install", "--global", "--prefix", prefix, tarball,
@@ -94,7 +83,7 @@ try {
   });
   server.stdout.on("data", (chunk) => { log += chunk; });
   server.stderr.on("data", (chunk) => { log += chunk; });
-  serverExit = once(server, "exit");
+  lifecycle = trackSmokeServer(server, failures);
   const deadline = Date.now() + 60000;
   while (true) {
     assert.equal(server.exitCode, null, `Installed server exited; see ${join(reports, "server.log")}`);
@@ -166,13 +155,14 @@ try {
       output = readOutput(decoder.decode(chunk.value, { stream: true }));
     }
     terminalPid = Number(output.match(/TSGW_PTY_PID=(\d+)/)[1]);
+    terminalPids.add(terminalPid);
   } finally {
     clearTimeout(timer);
     await reader?.cancel().catch(() => {});
     controller.abort();
     assert.equal((await context.request.delete(`${base}/api/terminal/${id}`)).status(), 200);
     assert.equal((await context.request.get(`${base}/api/terminal/${id}`)).status(), 404);
-    if (terminalPid) await assertStopped(terminalPid);
+    if (terminalPid) await assertSmokePidStopped(terminalPid);
   }
   assert.deepEqual(errors, []);
   console.log("✓ Installed native terminal, authenticated API and SSE command output");
@@ -184,27 +174,15 @@ try {
   } catch (error) { failures.push(error); }
   try { await browser?.close(); }
   catch (error) { failures.push(error); }
-  if (server && server.exitCode === null && server.signalCode === null) {
-    server.kill("SIGTERM");
-    if (!(await Promise.race([serverExit.then(() => true), delay(10000).then(() => false)]))) {
-      if (process.platform === "win32") server.kill("SIGKILL");
-      else process.kill(-server.pid, "SIGKILL");
-      await serverExit;
-    }
-  }
+  try { await lifecycle?.stop(); }
+  catch (error) { failures.push(error); }
   writeFileSync(join(reports, "server.log"), redact(log), { mode: 0o600 });
+  try { cat.assertClean(); }
+  catch (error) { failures.push(error); }
+  await verifySmokeCleanup([server?.pid, ...cat.pids(), ...terminalPids].filter((pid) => pid !== undefined), port, failures);
   try {
-    cat.assertClean();
-    for (const pid of cat.pids()) {
-      await assertStopped(pid);
-    }
-    if (port) {
-      const probe = createServer();
-      probe.listen(port, "127.0.0.1");
-      await once(probe, "listening");
-      await new Promise((done) => probe.close(done));
-    }
     writeFileSync(join(reports, "cat.json"), JSON.stringify(cat.summary(), null, 2));
+    writeFileSync(join(reports, "server-exit.json"), JSON.stringify(lifecycle?.result ?? null));
   } catch (error) {
     failures.push(error);
   } finally {
@@ -214,4 +192,4 @@ try {
     console.log(`Smoke reports: ${reports}`);
   }
 }
-if (failures.length) throw new Error(redact(failures.map((error) => error.stack || String(error)).join("\n")));
+assertSmokeSucceeded(failures, redact);
