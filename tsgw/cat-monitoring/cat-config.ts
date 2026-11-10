@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import packageJson from "../package.json";
+import packageJson from "../../package.json";
 
 export function getCatConfig(env: NodeJS.ProcessEnv = process.env) {
   return {

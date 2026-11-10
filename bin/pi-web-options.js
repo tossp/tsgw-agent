@@ -3,7 +3,7 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { parseArgs } = require("util");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { COMMAND_NAME } = require("./tsgw-release");
+const { COMMAND_NAME } = require("../tsgw/release");
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 

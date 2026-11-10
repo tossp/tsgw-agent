@@ -3,8 +3,8 @@
 > **TSGW fork** — independently maintained as `tsgw-agent`.
 > Install stable: `npm install -g tsgw-agent@latest`, then run `tsgw-agent`.
 > Preview channel: `npx tsgw-agent@next`. Previews do not replace `latest`.
-> Login variant: `/login2`; the original login and default redirect are unchanged.
-> See [TSGW releases](./docs/tsgw-release.md) for branch/tag publishing and upstream synchronization.
+> Default login: [/login2](./tsgw/login2/README.md); `/login` remains available as the classic fallback.
+> See [TSGW releases](./tsgw/release/README.md) for branch/tag publishing and [fork modules](./tsgw/AGENTS.md) for implementation and upgrade checks.
 > The upstream documentation below retains its original package and command names;
 > for this fork use `tsgw-agent` as both the package and command name.
 
@@ -209,7 +209,8 @@ hooks/           Client state and interaction hooks
 lib/             Session, agent, model, file, Git, and security logic
 public/          Static assets and PWA files
 bin/             npm CLI entrypoint and launch option parsing
-docs/            Focused user and contributor guides
+docs/            Upstream guides and historical integration records
+tsgw/            Fork modules, tests, public index entries and module documentation
 demo/            Static browser demo published to GitHub Pages (see demo/README.md)
 ```
 

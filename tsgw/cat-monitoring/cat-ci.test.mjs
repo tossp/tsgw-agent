@@ -5,10 +5,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { load } from "js-yaml";
 
-const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
-const { version: sourceVersion } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const configHref = new URL("../next.config.ts", import.meta.url).href;
-const workflowText = readFileSync(new URL("../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
+const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
+const { version: sourceVersion } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+const configHref = new URL("../../next.config.ts", import.meta.url).href;
+const workflowText = readFileSync(new URL("../../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
 const workflow = load(workflowText);
 const tsgwOnly = "github.ref == 'refs/heads/tsgw'";
 const build = workflow.jobs.build.steps.find((step) => step.name === "Build");
@@ -79,6 +79,7 @@ test("only tsgw generates deferred maps; the build never receives a CAT token or
   const upload = cat.steps.find((step) => step.name === "Upload the original artifacts to CAT");
   assert.equal(upload.env.SENTRY_AUTH_TOKEN, "${{ secrets.SENTRY_AUTH_TOKEN }}");
   assert.equal(upload.env.NODE_ENV, "production");
+  assert.ok(upload.run.includes("node tsgw/cat-monitoring/cat-upload.mjs"));
   assert.equal(workflowText.match(/SENTRY_AUTH_TOKEN/g).length, 2);
   assert.doesNotMatch(cat.steps.map((step) => step.run ?? "").join("\n"), /npm run build|release\/version\.mjs|npm publish/);
 });
@@ -92,6 +93,7 @@ test("the original maps are archived to S3 before packing; CI never uses rclone"
   assert.equal(remove.if, tsgwOnly);
   assert.match(remove.run, /find \.next -type f -name '\*\.map' -delete/);
   assert.equal(archive.if, tsgwOnly);
+  assert.ok(archive.run.includes("node tsgw/cat-monitoring/cat-artifacts.mjs"));
   assert.equal(store.if, tsgwOnly);
   assert.ok(steps.indexOf(build) < steps.indexOf(archive));
   assert.ok(steps.indexOf(archive) < steps.indexOf(store));

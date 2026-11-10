@@ -1,4 +1,4 @@
-import { getCatConfig } from "@/lib/cat-config";
+import { getCatConfig } from "@/tsgw/cat-monitoring/server";
 
 export const dynamic = "force-dynamic";
 

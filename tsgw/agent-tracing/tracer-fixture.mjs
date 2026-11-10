@@ -6,7 +6,7 @@ import { createJiti } from "jiti";
 import * as Sentry from "@sentry/node";
 
 const jiti = createJiti(import.meta.url);
-export const { AgentTracer } = await jiti.import("./tracer.ts");
+export const { AgentTracer } = await jiti.import("./index.ts");
 const { getAgentTracingOptions } = await jiti.import("./policy.ts");
 
 const envelopes = [];

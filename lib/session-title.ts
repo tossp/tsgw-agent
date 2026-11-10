@@ -10,7 +10,7 @@ import {
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { TITLE_PROMPT } from "../tsgw/session-title/prompt";
+import { TITLE_PROMPT } from "../tsgw/session-title";
 
 const TITLE_TIMEOUT_MS = 90_000;
 const TITLE_MAX_TOKENS = 256;

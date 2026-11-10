@@ -4,12 +4,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { load } from "js-yaml";
 
-const workflow = load(readFileSync(new URL("../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8"));
+const workflow = load(readFileSync(new URL("../../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8"));
 const step = workflow.jobs.publish.steps.find((item) => item.name === "Confirm the registry allows this publish");
 const code = step.run.match(/<<'NODE'\n([\s\S]*?)\nNODE/)[1];
 
 test("the upstream publisher never runs in the fork", () => {
-  const upstream = load(readFileSync(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8"));
+  const upstream = load(readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8"));
   assert.equal(upstream.jobs.npm.if, "github.repository == 'agegr/pi-web'");
   assert.equal(upstream.jobs.npm.needs, "check-tag");
   assert.equal(upstream.jobs.container.needs, "check-tag");

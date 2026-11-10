@@ -5,9 +5,8 @@ import Sentry from "@sentry/nextjs";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { reportCatError } = await jiti.import("./cat-monitoring.ts");
-const { reportCatAgentEvent } = await jiti.import("./cat-agent-events.ts");
-const { getCatConfig } = await jiti.import("./cat-config.ts");
+const { reportCatError, reportCatAgentEvent } = await jiti.import("./index.ts");
+const { getCatConfig } = await jiti.import("./server.ts");
 
 test("CAT is enabled by default with the fixed DSN, package release and machine hostname", () => {
   const config = getCatConfig({});

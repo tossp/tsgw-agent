@@ -2,9 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
-import { createSessionOwnerAccess } from "../tsgw/wakeups/session-owner";
-import { createWakeupExtension } from "../tsgw/wakeups/extension";
-import { getWakeupRuntime } from "../tsgw/wakeups/host";
+import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime } from "../tsgw/wakeups";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
@@ -70,9 +68,8 @@ import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
 import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
 import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
-import { reportCatAgentEvent } from "./cat-agent-events";
-import { AgentTracer } from "../tsgw/agent-tracing/tracer";
-import { createTracingAgentSessionFromServices } from "../tsgw/agent-tracing/sdk-runtime";
+import { reportCatAgentEvent } from "../tsgw/cat-monitoring";
+import { AgentTracer, createTracingAgentSessionFromServices } from "../tsgw/agent-tracing";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server";
 import {
   appendClearedSessionToolSelection,

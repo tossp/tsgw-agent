@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { AppUpdateResponse } from "@/lib/api-types";
-import { getNpmLatestUrl, getReleaseUrl, readReleaseVersion, isNewerReleaseVersion } from "@/bin/tsgw-release.js";
+import { getNpmLatestUrl, getReleaseUrl, readReleaseVersion, isNewerReleaseVersion } from "@/tsgw/release";
 
 export const dynamic = "force-dynamic";
 

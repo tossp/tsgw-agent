@@ -12,7 +12,7 @@ import { createJiti } from "jiti";
 // opens a released one again while the page is still hidden. The page's return
 // reopens it and shows what the server has under way.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true, alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath } });
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { peekPageId, useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { HIDDEN_PAGE_GRACE_MS } = await jiti.import("./usePageHidden.ts");
@@ -419,7 +419,7 @@ test("the debug reader asks nothing and opens nothing, however often it reads", 
     assert.ok(state.requests.includes("/api/agent/s1/lease"), "the lease request carries no page id");
     assert.ok(!state.requests.some((url) => url.startsWith("/api/agent/s1/lease?")));
     // A Fast Refresh evaluates the module again; the page, and its open stream, keep their id.
-    const reloaded = await createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath }, moduleCache: false })
+    const reloaded = await createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true, alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath }, moduleCache: false })
       .import("./useAgentSession.ts");
     assert.equal(reloaded.peekPageId(), pageId);
     assert.equal(snapshot.lease.requests, 1);

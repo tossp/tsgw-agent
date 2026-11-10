@@ -4,7 +4,7 @@
 // persisted in package.json; only the version changes for a CI preview build.
 /* eslint-disable @typescript-eslint/no-require-imports */
 const semver = require("semver");
-const manifest = require("../package.json");
+const manifest = require("../../package.json");
 
 const PACKAGE_NAME = manifest.name;
 const COMMAND_NAME = Object.keys(manifest.bin)[0];

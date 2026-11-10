@@ -35,6 +35,6 @@ export async function uploadCatArtifacts(directory, env = process.env) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  assert.ok(process.argv[2], "Usage: node release/cat-upload.mjs <extracted-artifact-directory>");
+  assert.ok(process.argv[2], "Usage: node tsgw/cat-monitoring/cat-upload.mjs <extracted-artifact-directory>");
   await uploadCatArtifacts(process.argv[2]);
 }

@@ -1,5 +1,9 @@
 # Agent Tracing 模块
 
+## 公共入口
+
+`index.ts` 统一导出 tracer 与 `createTracingAgentSessionFromServices`；宿主使用 `@/tsgw/agent-tracing`。`policy.ts` 保持独立服务端初始化入口，不经 tracer 聚合入口加载初始化策略。
+
 ## 范围与接口
 
 - 仅在 TSGW fork 中维护；复用现有 `av8d/tsgw-agent` CAT 项目、DSN、Release 与源码映射链路。
@@ -31,8 +35,8 @@
 | `AgentSessionWrapper.emit()` | 现有错误捕获的局部 scope：关联原有错误到相应 span，不重复 capture，也不改变错误内容/过滤。 |
 | `AgentSessionWrapper.destroy()` | 必要释放：中断未结束 spans，恢复原 streamFunction，避免迟到 result 重复上报。 |
 | `startRpcSession()` wrapper 创建及 `SUBAGENT_CONTROLLER.registerSession()` | 必要父子标识：普通/重开与新建子代理两条入口均使用已有 `sessionEntries`/内存 manager 的 `readSubagentRun` 元数据，不新增会话文件读取/写入。 |
-| `sentry.server.config.ts` 初始化 | 服务端配置：在现有 CAT 配置后合入本模块选项；浏览器/Edge/共享 CAT 配置、发布与 source maps 不变。 |
-| `docs/agents/sessions.md` CAT 小节 | 更新 Agent tracing 入口和事件边界说明，保留既有错误采集约束。 |
+| `tsgw/cat-monitoring/server-init.ts` 初始化（根 `sentry.server.config.ts` 的 Node 专用接线） | 服务端配置：在现有 CAT 配置后合入本模块独立 `policy.ts` 选项；浏览器/Edge/共享 CAT 配置、发布与 source maps 不变。 |
+| 根 `AGENTS.md`、`tsgw/AGENTS.md`、`docs/agents/sessions.md` CAT 小节 | 固定主题薄索引指向本模块；错误采集边界见 `../cat-monitoring/AGENTS.md`，构建补传见 `../cat-monitoring/BUILD.md`。 |
 
 宿主 `lib/rpc-manager.ts` 已超过 500 行，本次仅保留必要接入，不借此拆分上游管理流程；新增逻辑及测试均在模块内。
 
@@ -60,7 +64,7 @@
 
 ```bash
 node --test tsgw/agent-tracing/*.test.mjs
-node --experimental-strip-types --test lib/cat-monitoring.test.mjs lib/rpc-manager.test.mjs
+node --experimental-strip-types --test tsgw/cat-monitoring/cat-monitoring.test.mjs lib/rpc-manager.test.mjs
 node_modules/.bin/tsc --noEmit
 npm run lint
 npm test
@@ -82,4 +86,4 @@ npm test
 - 验证使用内存transport与本机临时HTTP端点，没有调用收费模型或向CAT发送AI测试遥测。代码与本地测试完成不等于实际摄入、Conversations、费用展示通过；部署后仍需按授权回读核对。
 - 容量按100%采集规划，span数约为run＋模型请求＋工具执行，含重试、嵌套与子代理。单条未压缩1–4 KB仅为预算假设，不是实际落盘倍率；首次实际摄入后再量测。
 - 2026-10-31 已核验现网Sentry/Snuba保留配置90天；spans由ClickHouse按各记录retention_days异步TTL清理，首次AI摄入仍须确认该字段。每天UTC00:00的sentry cleanup不能代替spans TTL，也不能保证全部文件保留90天。本次不降采样、不改清理或存储配置。
-- 主线已移除冗余的docs/cat-monitoring.md；本模块行为与证据收敛于此，错误采集约束见docs/agents/sessions.md，发布与补传按docs/tsgw-release.md §10，不恢复已删除文档。
+- 主线已移除冗余的 `docs/cat-monitoring.md`；本模块行为与证据集中于此，错误采集约束见 [CAT 模块规则](../cat-monitoring/AGENTS.md)，发布见 [发布说明](../release/README.md)，归档与补传见 [CAT 构建说明](../cat-monitoring/BUILD.md)，不恢复已删除文档。

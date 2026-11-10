@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
-const { piMetadataIcons, piManifestIcons, PI_ICON_URL } = await jiti.import("./icons.ts");
+const { piMetadataIcons, piManifestIcons, PI_ICON_URL } = await jiti.import("./index.ts");
 const { GET } = await jiti.import("../../app/manifest.webmanifest/route.ts");
 const { FAVICON_BASE_ICON_URL } = await jiti.import("../../lib/favicon-badge.ts");
 const readAsset = (name) => readFileSync(new URL(`../../public/icons/${name}`, import.meta.url));

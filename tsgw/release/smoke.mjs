@@ -9,10 +9,10 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 import { createTerminalOutput } from "./terminal-output.mjs";
-import { startPiAccess } from "../e2e/login2-start.mjs";
+import { startPiAccess } from "../login2/login2-start.mjs";
 
 const artifacts = resolve(process.argv[2] ?? "");
-assert.ok(process.argv[2], "Usage: node release/smoke.mjs <artifact-directory>");
+assert.ok(process.argv[2], "Usage: node tsgw/release/smoke.mjs <artifact-directory>");
 const tarballs = readdirSync(artifacts).filter((file) => file.endsWith(".tgz"));
 assert.equal(tarballs.length, 1, "Expected exactly one package");
 const tarball = resolve(artifacts, tarballs[0]);

@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import Sentry from "@sentry/nextjs";
 
-const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const shimPath = fileURLToPath(new URL("../../hooks/__fixtures__/react-hook-shim.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true, alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath } });
 const { renderHook } = await import(shimPath);
-const { useAgentSession } = await jiti.import("./useAgentSession.ts");
+const { useAgentSession } = await jiti.import("../../hooks/useAgentSession.ts");
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });
 globalThis.window ??= new EventTarget();
 const events = [];

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reportCatError } from "@/lib/cat-monitoring";
+import { reportCatError } from "@/tsgw/cat-monitoring";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";

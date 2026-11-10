@@ -7,7 +7,7 @@
 // Call sites previously repeated the same 5-line fetch block 13× in
 // hooks/useAgentSession.ts. This helper collapses that down to one line.
 
-import { reportCatError } from "./cat-monitoring";
+import { reportCatError } from "../tsgw/cat-monitoring";
 import { missingCwdFromBody } from "./missing-cwd";
 
 export class AgentCommandError extends Error {

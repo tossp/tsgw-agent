@@ -88,7 +88,7 @@ export function verifyCatArtifacts(directory) {
 }
 
 export function packCatArtifacts(destination, root = process.cwd()) {
-  assert.ok(destination, "Usage: node release/cat-artifacts.mjs <destination>");
+  assert.ok(destination, "Usage: node tsgw/cat-monitoring/cat-artifacts.mjs <destination>");
   const out = resolve(destination);
   mkdirSync(out, { recursive: true });
   assert.deepEqual(readdirSync(out), [], "Use an empty artifact directory; never mix releases");

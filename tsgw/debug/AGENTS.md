@@ -1,5 +1,9 @@
 # Debug 任务大盘模块
 
+## 公共入口
+
+`index.ts` 统一导出 `DebugPage`，`app/debug/page.tsx` 通过 `@/tsgw/debug` 接入。信息覆盖、设计与既有验收见 [DESIGN.md](DESIGN.md)。
+
 ## 范围与硬边界
 
 - `/debug` 是当前实例的全局任务观察大盘，诊断是其中一层；信息能力以上游 Debug 为基线，不以独立页面为由删减。
@@ -23,8 +27,8 @@
 | --- | --- |
 | `app/debug/page.tsx`：`Debug` 与 metadata | 路由入口、导入本模块与页面标题；必要接入 |
 | `AGENTS.md`：Topic Notes | 新模块规则与行为入口索引；文档 |
-| `docs/agents/sessions.md`：独立 Debug 页章节 | 维护正式主题索引、范围和验收命令；文档 |
-| `docs/agents/debug-dashboard.md` | 信息覆盖、数据边界、页面方案及验收记录；文档 |
+| `docs/agents/sessions.md`：独立 Debug 页章节 | 保留固定主题薄索引；范围和验收入口集中在本模块；文档 |
+| `tsgw/debug/DESIGN.md` | 信息覆盖、数据边界、页面方案及验收记录；文档 |
 | 原 `components/tsgw-debug/*` | 模块主体及测试归位后移除，接口不变 |
 | 原 `e2e/tsgw-debug.mjs` | 浏览器验收归入本模块，不丢失验证入口 |
 
@@ -36,7 +40,7 @@
 - `lib/types.ts` 的 `SessionInfo` / 关系信息、`components/SessionTree.tsx` 的标题规则、`SidebarIcons` 和 MCP 状态翻译；目录信息与实时快照分开标注。
 - `lib/agent-client.ts` 的 `agentStatusUrl()`、`app/api/agent/[id]/route.ts` GET 与 `lib/rpc-manager.ts` 的 `send(get_state)`：复核运行态模型／思考字段、`systemPrompt=0`、冷会话不启动及状态读取不重置 idle 的契约；不修改这些宿主文件。
 - `useI18n`、`useTheme`、clipboard；本模块自有文案不扩散到上游全局字典。
-- `app/login2/` 仅是视觉参考；可复用公开品牌图片，不依赖其认证状态机或播报。
+- `tsgw/login2/` 仅是视觉参考；可复用公开品牌图片，不依赖其认证状态机或播报。
 - 升级后检查会话分组、Debug GET 的只读性与时钟、轮询取消、鉴权回跳、每种故障和旧数据提示。
 - 数据限制：目录未返回／缺少对应记录时，现有 Debug 标志无法区分侧聊与真实子代理。此时保留既有仅标志回退及目录读取失败提示；不能宣称已识别侧聊，也不能凭名称或工具推断。目录到达后依关系自动纠正；若要求目录缺失期间也精确识别，须先批准最小后端角色契约，不扩充请求。
 

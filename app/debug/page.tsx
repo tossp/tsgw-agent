@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { I18nProvider } from "@/hooks/useI18n";
-import { DebugPage } from "@/tsgw/debug/DebugPage";
+import { DebugPage } from "@/tsgw/debug";
 
 export const metadata: Metadata = { title: "TSGW · Task Control" };
 

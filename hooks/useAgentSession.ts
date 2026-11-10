@@ -18,8 +18,8 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, agentStatusUrl, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import { createSideChat, SIDE_REFUSAL_MESSAGES } from "@/lib/side-chat-client";
 import { missingCwdFromBody } from "@/lib/missing-cwd";
-import { reportCatError } from "@/lib/cat-monitoring";
-import { useNoticeDismiss } from "@/tsgw/notice-dismiss/useNoticeDismiss";
+import { reportCatError } from "@/tsgw/cat-monitoring";
+import { useNoticeDismiss } from "@/tsgw/notice-dismiss";
 import {
   deleteSessionViewSnapshot,
   getSessionViewSnapshot,

@@ -1,5 +1,5 @@
 import type { AgentEventLike } from "./agent-event-wire";
-import { reportCatError } from "./cat-monitoring";
+import { reportCatError } from "../tsgw/cat-monitoring";
 import type { DebugEventConnectionSnapshot, DebugStreamCloseReason } from "./debug-types";
 
 export interface AgentEventSourceLike {

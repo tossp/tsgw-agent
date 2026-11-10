@@ -6,12 +6,12 @@ import { once } from "node:events";
 import { createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const root = process.env.CAT_E2E_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
+const root = process.env.CAT_E2E_ROOT || fileURLToPath(new URL("../..", import.meta.url));
 const mode = process.env.E2E_SERVER_MODE || "dev";
 assert.ok(["dev", "start"].includes(mode));
 assert.ok(mode !== "dev" || !existsSync(join(root, ".next/dev/lock")), "Use a checkout without an active dev server");

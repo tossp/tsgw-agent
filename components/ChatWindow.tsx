@@ -13,14 +13,14 @@ import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBl
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
-import { summarizeTurnUsage, type MessageUsageSummary } from "@/tsgw/message-usage/message-usage";
+import { summarizeTurnUsage, type MessageUsageSummary } from "@/tsgw/message-usage";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
-import { RunningSubagentsStatus } from "@/tsgw/subagent-status/RunningSubagentsStatus";
-import { NoticeDismissButton } from "@/tsgw/notice-dismiss/NoticeDismissButton";
+import { RunningSubagentsStatus } from "@/tsgw/subagent-status";
+import { NoticeDismissButton } from "@/tsgw/notice-dismiss";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";

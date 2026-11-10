@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { load } from "js-yaml";
 
-const text = readFileSync(new URL("../.github/workflows/tsgw-npm-bootstrap.yml", import.meta.url), "utf8");
+const text = readFileSync(new URL("../../.github/workflows/tsgw-npm-bootstrap.yml", import.meta.url), "utf8");
 const workflow = load(text);
 const steps = workflow.jobs.stage.steps;
 const configuration = steps.find((step) => step.id === "configuration");
@@ -177,6 +177,6 @@ test("only stage publish is allowed; npmrc contains a placeholder, is private, a
     assert.equal(existsSync(config), false);
     assert.ok(!result.stdout.includes("offline-secret"));
   }
-  const normal = readFileSync(new URL("../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
+  const normal = readFileSync(new URL("../../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
   assert.doesNotMatch(normal, /NPM_STAGE_TOKEN|NODE_AUTH_TOKEN|NPM_TOKEN|npm stage/);
 });

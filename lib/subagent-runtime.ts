@@ -8,7 +8,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike } from "./pi-types";
-import { createTracingAgentSessionFromServices } from "../tsgw/agent-tracing/sdk-runtime";
+import { createTracingAgentSessionFromServices } from "../tsgw/agent-tracing";
 import {
   subagentNotificationText,
   subagentToolDetails,

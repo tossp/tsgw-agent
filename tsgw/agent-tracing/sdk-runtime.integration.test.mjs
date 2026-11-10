@@ -18,7 +18,7 @@ import { Sentry, AgentTracer, markEnvelopes, settleSpans, spansSince, agentSpans
 const { version } = JSON.parse(await readFile(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url), "utf8"));
 assert.equal(version, "1.5.0", "this auth contract regression must run against the target SDK, not the old installation");
 const jiti = createJiti(import.meta.url, { interopDefault: true });
-const { createTracingAgentSessionFromServices } = await jiti.import("./sdk-runtime.ts");
+const { createTracingAgentSessionFromServices } = await jiti.import("./index.ts");
 const fetch = globalThis.fetch;
 globalThis.fetch = () => { throw new Error("Network is forbidden in the tracing SDK regression"); };
 test.after(async () => { await Sentry.close(2000); globalThis.fetch = fetch; });

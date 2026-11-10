@@ -26,13 +26,13 @@ if: >-
 
 所以默认分支和其它分支既不构建也不发布。仅保留分支推送和标签推送两种入口，不添加依赖默认分支注册的手动触发入口。
 
-稳定 tag 有三道校验，任一不满足即失败（前两道在 `release/version.mjs` 内，第三道是工作流的一步）：
+稳定 tag 有三道校验，任一不满足即失败（前两道在 `tsgw/release/version.mjs` 内，第三道是工作流的一步）：
 
 1. tag 名严格是 `v<semver>`，且与源 `package.json.version` 一致（正常流程是先 bump 提交，再打 tag）；
 2. tag 提交必须在 `origin/tsgw` 的历史里（`git merge-base --is-ancestor HEAD refs/remotes/origin/tsgw`），所以误推上游旧 `v0.9.x` 标签不会发布；
 3. 工作流把当前 `package.json` / `package-lock.json` 与 `git show HEAD:` 的基线做字段级比较（去掉 `version` 与 `packages[""].version` 后必须完全相等）。CI 只能给本次产物赋版本号，不能借机改写包名、`bin`、`repository`、`files`、许可证或依赖。
 
-`release/version.mjs` 自己还会断言 `GITHUB_REPOSITORY == 'tossp/tsgw-agent'`、`HEAD == GITHUB_SHA`、包名与 lock 元信息一致，避免在上游仓库或错误 checkout 上发布。
+`tsgw/release/version.mjs` 自己还会断言 `GITHUB_REPOSITORY == 'tossp/tsgw-agent'`、`HEAD == GITHUB_SHA`、包名与 lock 元信息一致，避免在上游仓库或错误 checkout 上发布。
 
 ## 2. 工作流结构
 
@@ -41,14 +41,14 @@ if: >-
 1. `actions/checkout@v7`，`fetch-depth: 0`、`fetch-tags: true`、`persist-credentials: false`
 2. 显式 `git fetch origin +refs/heads/tsgw:refs/remotes/origin/tsgw`，供 tag 祖先核验
 3. `actions/setup-node@v7`，Node 24，`cache: npm`
-4. `npm ci` → `npm run lint` → `npx tsc --noEmit` → `npm test` → `node --test release/*.test.mjs`（`release/` 里没有测试文件时直接失败，不放行）
-5. `node release/version.mjs`（写 `GITHUB_OUTPUT`：`version`、`tag`）
+4. `npm ci` → `npm run lint` → `npx tsc --noEmit` → `npm test` → `node --test tsgw/release/*.test.mjs tsgw/cat-monitoring/*.test.mjs`（两个模块分别检查测试文件非空，不放行空目录）
+5. `node tsgw/release/version.mjs`（写 `GITHUB_OUTPUT`：`version`、`tag`）
 6. 字段级校验只有版本号被改写
 7. `npm run build`（仅 `tsgw` 分支注入 `SENTRY_RELEASE` / `CAT_DEFER_UPLOAD=1`，离线生成带 Debug ID 的 JS/map，不读取 CAT 凭据或访问 CAT），并拒绝 `.next/dev`、`.next/server/route-cache`
-8. 仅 `tsgw` 用 `release/cat-artifacts.mjs` 归档同次构建的 JS/map 和版本清单，标准 S3 CLI 上传到七牛，见 §10；归档失败不能丢失 map 后继续发布
-9. 仅 `tsgw` 在 S3 归档成功后删除临时构建目录内的 `.map`，再运行 `node release/pack.mjs "$RUNNER_TEMP/tsgw-package"`；npm files 排除规则不作为唯一保障
+8. 仅 `tsgw` 用 `tsgw/cat-monitoring/cat-artifacts.mjs` 归档同次构建的 JS/map 和版本清单，标准 S3 CLI 上传到七牛，见 [CAT 构建归档与补传](../cat-monitoring/BUILD.md)；归档失败不能丢失 map 后继续发布
+9. 仅 `tsgw` 在 S3 归档成功后删除临时构建目录内的 `.map`，再运行 `node tsgw/release/pack.mjs "$RUNNER_TEMP/tsgw-package"`；npm files 排除规则不作为唯一保障
 10. `npx playwright install --with-deps chromium`（smoke 用 Playwright 真的开登录页和终端）
-11. `node release/smoke.mjs "$RUNNER_TEMP/tsgw-package"`
+11. `node tsgw/release/smoke.mjs "$RUNNER_TEMP/tsgw-package"`
 12. 写 step summary（包名、通道版本、dist-tag、ref、commit、事件），上传整个 pack 目录为 artifact `tsgw-npm-<version>`，保留 7 天
 
 源测试先于版本赋值运行，是为了让 metadata 测试看到源版本，而不是 CI 派生版本。
@@ -162,7 +162,7 @@ gh run list --workflow tsgw-npm.yml --limit 5
 - **预览版被跳过**：日志里出现 “origin/tsgw moved to …”，说明该次运行的提交已不是分支 head，更新的运行会发布 `next`。
 - **源测试本来就失败**：工作流不跳过、不放行，保持失败。先在本机 `npm test` 复现并修好，再推分支。
 - **`.next/server/route-cache` 报错**：本地用 `npm run test:e2e`（`start` 模式）跑过后 `.next` 被污染，换干净 checkout 或让 CI 构建。
-- **CAT 补传失败**：独立 `cat-upload` job 保留失败状态，`publish` 仅依赖已完成 S3 归档的 `build`，不等待 CAT。先分别核对 npm 发布结果和补传结果；超时失败按 §10 在其他已授权任务完成后主动手动补传，作为本轮收尾，不等待用户提醒。不要重跑构建、重发已存在的 npm 版本；只使用 S3 保存的同次构建原始 JS/map。
+- **CAT 补传失败**：独立 `cat-upload` job 保留失败状态，`publish` 仅依赖已完成 S3 归档的 `build`，不等待 CAT。先分别核对 npm 发布结果和补传结果；超时失败按 [CAT 构建归档与补传](../cat-monitoring/BUILD.md) 在其他已授权任务完成后主动手动补传，作为本轮收尾，不等待用户提醒。不要重跑构建、重发已存在的 npm 版本；只使用 S3 保存的同次构建原始 JS/map。
 
 ## 6. 本地构建与打包
 
@@ -172,12 +172,12 @@ gh run list --workflow tsgw-npm.yml --limit 5
 git worktree add --detach ../tsgw-build HEAD   # 分支已在别处 checkout，必须 --detach
 cd ../tsgw-build
 npm ci && npm run build
-node release/pack.mjs /tmp/tsgw-local && node release/smoke.mjs /tmp/tsgw-local
+node tsgw/release/pack.mjs /tmp/tsgw-local && node tsgw/release/smoke.mjs /tmp/tsgw-local
 ```
 
 `--detach` 构建的是**当前已提交的代码**；未提交的改动不在里面。要在本地验收未提交改动，先把改动提交（或复制一份快照目录并在其中初始化 git），再按上面的方式构建，否则 smoke 与 pack 验收的不是将要发布的内容。用完 `git worktree remove ../tsgw-build`。
 
-`release/pack.mjs` 要求目标目录为空、`.next/BUILD_ID` 存在、没有运行中的 dev 锁；`release/smoke.mjs` 需要本机已有 Playwright Chromium（`npx playwright install --with-deps chromium`）。
+`tsgw/release/pack.mjs` 要求目标目录为空、`.next/BUILD_ID` 存在、没有运行中的 dev 锁；`tsgw/release/smoke.mjs` 需要本机已有 Playwright Chromium（`npx playwright install --with-deps chromium`）。
 
 本地已验证 Linux 的正式版和预览版安装、生产启动、登录和原生终端；macOS、Windows 尚未验收。npm 12 的安装脚本策略可能阻止本包的 `prepare-terminal.js` 和 `node-pty` 安装脚本；若遇原生终端或 macOS helper 权限问题，先核对安装日志，再只对确认需要的包放行脚本，不全局关闭脚本保护。
 
@@ -207,15 +207,15 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 
 四个浮动主标签 `v7` / `v7` / `v7` / `v8` 都存在于各自仓库（`git/matching-refs/tags/v` 可查），因此引用按主版本浮动，补丁升级自动生效；全部使用 node24 运行时，需要 GitHub 托管的 `ubuntu-latest`。`setup-node@v7` 移除了无效的 `NODE_AUTH_TOKEN` 占位（设置了 `registry-url` 却没有 token 时 legacy Yarn 1.x 与旧 npm 可能出错，pnpm 会告警，npm 可信发布不受影响）。本工作流不给 `registry-url`，不会生成带 token 的 `.npmrc`；publish job 另设 `package-manager-cache: false`。
 
-## 8. 脚本契约（`release/` 与工作流之间）
+## 8. 脚本契约（`tsgw/release/` 与工作流之间）
 
 工作流只依赖这三个命令，文件属于项目源码，不是 CI 生成物：
 
 | 命令 | 输入 | 约定输出 |
 | --- | --- | --- |
-| `node release/version.mjs` | `GITHUB_REPOSITORY`、`GITHUB_REF`、`GITHUB_SHA`、`GITHUB_RUN_NUMBER`、`GITHUB_RUN_ATTEMPT`、`GITHUB_OUTPUT`、本地 git（`refs/remotes/origin/tsgw`） | stdout 打印 JSON `{ "version": "…", "tag": "next"|"latest" }`；设置了 `GITHUB_OUTPUT` 时写入 `version` 与 `tag`；只改写本次 checkout 的 `package.json` / `package-lock.json` 的版本字段；断言仓库、`HEAD`、包名与 lock 元信息 |
-| `node release/pack.mjs <outDir>` | 已构建的工作目录 | 在空目录里产出恰好一个 `tsgw-agent-<version>.tgz`、`sha256sum -c` 兼容的 `SHA256SUMS`，以及含 `version`/`tag`/`filename`/`files` 的 `release.json`；拒绝 dev 锁与污染的 `.next` |
-| `node release/smoke.mjs <outDir>` | 同上 | 从 tgz 装到临时 prefix，用 Playwright Chromium 验收登录页与终端；需要 CI 预装 Chromium |
+| `node tsgw/release/version.mjs` | `GITHUB_REPOSITORY`、`GITHUB_REF`、`GITHUB_SHA`、`GITHUB_RUN_NUMBER`、`GITHUB_RUN_ATTEMPT`、`GITHUB_OUTPUT`、本地 git（`refs/remotes/origin/tsgw`） | stdout 打印 JSON `{ "version": "…", "tag": "next"|"latest" }`；设置了 `GITHUB_OUTPUT` 时写入 `version` 与 `tag`；只改写本次 checkout 的 `package.json` / `package-lock.json` 的版本字段；断言仓库、`HEAD`、包名与 lock 元信息 |
+| `node tsgw/release/pack.mjs <outDir>` | 已构建的工作目录 | 在空目录里产出恰好一个 `tsgw-agent-<version>.tgz`、`sha256sum -c` 兼容的 `SHA256SUMS`，以及含 `version`/`tag`/`filename`/`files` 的 `release.json`；拒绝 dev 锁与污染的 `.next` |
+| `node tsgw/release/smoke.mjs <outDir>` | 同上 | 从 tgz 装到临时 prefix，用 Playwright Chromium 验收登录页与终端；需要 CI 预装 Chromium |
 
 发布 job 不重新构建，只发布 artifact 里的 tgz；冒烟也从同一 tgz 全新安装，所以最终发布的字节就是验收过的字节。
 
@@ -229,20 +229,3 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 - GitHub 的 `npm` 环境仅允许 `tsgw` 分支和 `v*` 标签；开发设备不登录 npm、不手动首发，不为正常发布添加 Token 回退。
 
 新包初始化依据：npm 官方 `npm trust` 的 Prerequisites，以及 `staged-publishing` 的新包占位版本说明。
-
-## 10. CAT 归档与独立补传（仅 tsgw 分支）
-
-自建 CAT（`cat.tossp.com`，org `av8d`、project `tsgw-agent`）属于 fork。为避免 CAT 网络问题阻塞发布，`tsgw` 把同次构建的 JS/map 先归档到七牛，再由独立 job 创建 Release 和上传；不改上游 CI、`scripts.release` 或 `v*` 标签发布流程。
-
-- **离线构建**：`Build` 只在 `tsgw` 注入 `SENTRY_RELEASE=tsgw-agent@<通道版本>`、`CAT_DEFER_UPLOAD=1`，不拿到 `SENTRY_AUTH_TOKEN`，不执行 CAT 健康检查。SDK 的 `sourcemaps.disable="disable-upload"` 保留 Debug ID 注入；Webpack 显式生成 server `source-map` / client `hidden-source-map`，保留 map，并禁用构建时 Release 创建、结束和提交关联。
-- **同次产物归档**：`node release/cat-artifacts.mjs <outDir>` 保存 `.next/server`、`.next/static` 下的 JS 及实际生成的对应 map；有 map 时严格校验 Debug ID，一些无 map 的 Next/vendor 小 chunk 也按原字节保留，但不承诺源码还原。产出 `artifacts.tar.gz`、`manifest.json`、`SHA256SUMS`；清单记录版本、Release、commit、BUILD_ID 和每文件 SHA-256。前后端各至少一对有效映射，清单内任一文件丢失或变化则失败；不能仅凭产后目录区分未生成 map 与归档前已丢 map，也不能靠重新构建来补传旧版本。
-- **S3 位置**：`s3://tsoht/tsgw-agent/cat/<通道版本>/`，标准端点 `https://s3.us-north-1.qiniucs.com`、区域 `us-north-1`。CI 使用 runner 已有的 AWS CLI；只在 S3 步骤注入仓库级 `CAT_S3_ACCESS_KEY_ID` / `CAT_S3_SECRET_ACCESS_KEY`，不使用 rclone 或复制本机配置。未配置清理或生命周期策略，归档按版本保留。
-- **发布边界**：S3 归档成功后从临时构建目录移除 `.map`（不改 JS），再打包、冒烟和发布 npm；不能只依赖 npm files 排除规则。`publish` 与 `cat-upload` 均只 `needs: build`，互不依赖，因此 CAT 不可达或补传失败不会阻断已验收产物发布。S3 归档失败仍阻断，避免 map 丢失。
-- **独立补传**：`cat-upload` 下载原版本归档并校验外层 SHA-256，`release/cat-upload.mjs` 再校验每文件 hash、版本及 Debug ID，使用 SDK 已依赖的官方插件公开 API 创建 Release、直接上传已带 Debug ID 的归档目录，绕过可能静默跳过文件的准备步骤。原 JS/map 不修改，不再注入 ID，也不重新构建。该 job 独占仓库级 `SENTRY_AUTH_TOKEN`；错误仍抛出，job 保持失败而非静默成功。
-- **网络入口**：只有补传 runner 将 `cat.tossp.com` 临时解析到 `mctx 1.13.102.6` 并校验 TLS 和健康接口；API 和同域分片地址都走该通道。未改公共 DNS、scnet、DSN、分片大小、并发或 30 秒请求时限。
-- **重试与收尾**：CAT job 超时失败时，在本轮发布、部署及其他已授权任务完成后主动追加手动补传，不等待用户提醒。先确认版本、job 和服务端现状，成功或结果未知时不盲目重复上传；仅下载对应版本同次构建的上述三份归档，校验外层摘要、解压后，以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node release/cat-upload.mjs <解压目录>`。随后回读 Release、artifact bundle 与版本关联；索引暂不完整时只做有界只读复核，不立即重传。不改 hosts、中转、分片或超时参数，不重新构建、不运行 `release/version.mjs`、不重发 npm。如使用 CI 重试，只重跑该运行的失败 CAT job，仍使用已归档原件。
-- **状态与排队**：CAT job 失败可令整条 workflow 显示红色，但 npm 可能已发布成功，应分别读取两个 job 的结果。沿用原 workflow 级同 ref 并发锁，慢补传仍可能延迟下一次同分支运行；本轮不重构并发策略。
-- **运行时不变**：DSN 默认启用，Release 仍由产物版本确定，机器名仍取 `os.hostname()`；不依赖 CAT 已存在 Release。补传前不保证源码还原，不能承诺旧事件补传后自动重新处理。
-- **本地与标签**：不设置 `CAT_DEFER_UPLOAD` 时保留原行为：没有 token 不生成/上传 map；显式提供 token 的本地构建仍同步上传且失败抛错。`v*` 标签没有上述两个构建值，跳过 S3 归档和 CAT job，原正式版流程不变。
-
-测试入口：`node --test release/cat-ci.test.mjs release/cat-artifacts.test.mjs release/cat-upload.test.mjs`。覆盖真实 SDK 包装、工作流依赖、S3 参数、真实 tar、逐文件完整性及真实 SDK 的本地 HTTP 拒绝路径；不向真实 CAT 发单元测试事件。分别核验 CI、npm 发布、S3 原件完整性及 CAT 版本／映射关联，不可将其中一个结果当作全部完成；映射上传成功也不等于已验证事件堆栈还原。

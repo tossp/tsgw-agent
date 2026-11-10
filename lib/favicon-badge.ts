@@ -3,7 +3,7 @@
 // background tab shows it needs attention without being opened. Colors match
 // the sidebar's status dots (app/sidebar.css: awaiting amber, unread blue).
 
-import { PI_ICON_URL } from "../tsgw/branding/icons";
+import { PI_ICON_URL } from "../tsgw/branding";
 
 export interface FaviconBadgeCounts {
   awaiting: number;

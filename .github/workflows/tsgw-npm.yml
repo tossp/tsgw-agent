@@ -3,7 +3,7 @@ name: TSGW npm
 # 只服务 tsgw 开发发布分支，不读写默认分支，也不依赖 main。
 #   push tsgw     -> 预览版 <source.version>-dev.<run_number>.<run_attempt>.g<sha 前 12 位>，dist-tag next
 #   push vX.Y.Z   -> 稳定版 X.Y.Z，dist-tag latest（tag 必须是 origin/tsgw 的祖先，且等于源 package.json.version）
-# 详细说明与一次性配置见 docs/tsgw-release.md。
+# 详细说明与一次性配置见 tsgw/release/README.md。
 
 on:
   push:
@@ -65,16 +65,20 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          tests=(release/*.test.mjs)
-          if [ "${#tests[@]}" -eq 0 ]; then
-            echo "::error::release/*.test.mjs is missing; the release helper contract needs its tests."
-            exit 1
-          fi
+          tests=()
+          for module in tsgw/release tsgw/cat-monitoring; do
+            module_tests=("$module"/*.test.mjs)
+            if [ "${#module_tests[@]}" -eq 0 ]; then
+              echo "::error::$module/*.test.mjs is missing; the release helper contract needs both modules."
+              exit 1
+            fi
+            tests+=("${module_tests[@]}")
+          done
           node --test "${tests[@]}"
 
       - name: Resolve the version for this channel
         id: version
-        run: node release/version.mjs
+        run: node tsgw/release/version.mjs
 
       # 包身份、bin、repository、files、许可证都必须持久化在源文件里；
       # CI 只允许给本次 checkout 的 package.json / package-lock.json 赋值版本号。
@@ -126,7 +130,7 @@ jobs:
 
       - name: Archive CAT build artifacts
         if: github.ref == 'refs/heads/tsgw'
-        run: node release/cat-artifacts.mjs "$RUNNER_TEMP/tsgw-cat"
+        run: node tsgw/cat-monitoring/cat-artifacts.mjs "$RUNNER_TEMP/tsgw-cat"
 
       # 先保存同次构建的 JS/map，之后补传不需要重建；凭据只交给标准 S3 CLI。
       - name: Store CAT build artifacts on S3
@@ -148,14 +152,14 @@ jobs:
         run: find .next -type f -name '*.map' -delete
 
       - name: Pack
-        run: node release/pack.mjs "$RUNNER_TEMP/tsgw-package"
+        run: node tsgw/release/pack.mjs "$RUNNER_TEMP/tsgw-package"
 
       # smoke.mjs 用 Playwright Chromium 真的打开登录页和终端，runner 上先装浏览器。
       - name: Install Chromium for the smoke test
         run: npx playwright install --with-deps chromium
 
       - name: Smoke test the packed artifact
-        run: node release/smoke.mjs "$RUNNER_TEMP/tsgw-package"
+        run: node tsgw/release/smoke.mjs "$RUNNER_TEMP/tsgw-package"
 
       - name: Summarize the channel
         run: |
@@ -470,7 +474,7 @@ jobs:
           NODE_ENV: production
           SENTRY_CONFIG_DIR: ${{ runner.temp }}/cat-cli
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-        run: node release/cat-upload.mjs "$RUNNER_TEMP/tsgw-cat-restored"
+        run: node tsgw/cat-monitoring/cat-upload.mjs "$RUNNER_TEMP/tsgw-cat-restored"
 
       - name: Summarize CAT backfill
         if: always()

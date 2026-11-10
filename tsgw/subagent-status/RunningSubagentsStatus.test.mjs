@@ -6,9 +6,8 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { RunningSubagentsStatus } = await jiti.import("./RunningSubagentsStatus.tsx");
+const { RunningSubagentsStatus, getRunningSubagents } = await jiti.import("./index.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
-const { getRunningSubagents } = await jiti.import("./running-subagents.ts");
 const { getLocalePlugin } = await jiti.import("@/lib/i18n/registry");
 const { translateMessage } = await jiti.import("@/lib/i18n/format");
 

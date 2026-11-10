@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PACKAGE_NAME, COMMAND_NAME, getReleaseChannel, getNpmLatestUrl, readReleaseVersion, isNewerReleaseVersion } = require("./tsgw-release");
+const { PACKAGE_NAME, COMMAND_NAME, getReleaseChannel, getNpmLatestUrl, readReleaseVersion, isNewerReleaseVersion } = require("../tsgw/release");
 
 const FETCH_TIMEOUT_MS = 10_000;
 

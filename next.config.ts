@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs/config";
+import { applyCatWebpack, withCatMonitoring } from "./tsgw/cat-monitoring/next-config.mjs";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -11,13 +11,6 @@ try {
   const piPkgPath = join(configDir, "node_modules/@earendil-works/pi-coding-agent/package.json");
   piVersion = (JSON.parse(readFileSync(piPkgPath, "utf8")) as { version: string }).version;
 } catch { /* package not found, use default */ }
-
-// CI passes the channel version only to the tsgw branch build, so the CAT release
-// matches the npm artifact; local and v* tag builds fall back to the source version.
-const sentryRelease = process.env.SENTRY_RELEASE || `tsgw-agent@${version}`;
-// Preview CI preserves this build's maps and debug IDs; CAT uploads happen in a separate job.
-const catDeferredUpload = process.env.CAT_DEFER_UPLOAD === "1";
-const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN?.trim() || undefined;
 
 // mdast-util-gfm-autolink-literal (remark-gfm) ships a RegExp lookbehind that
 // Safari parses only from 16.4, which blanked `/` on iOS 16.2 (#753). The loader
@@ -43,10 +36,7 @@ const nextConfig: NextConfig = {
     },
   },
   webpack(config, { dev, isServer }) {
-    // Sentry's disable-upload mode injects IDs but leaves map generation to Next's config.
-    if (catDeferredUpload && !dev) {
-      config.devtool = isServer ? "source-map" : "hidden-source-map";
-    }
+    applyCatWebpack(config, { dev, isServer });
     config.module.rules.push({
       test: /[\\/]mdast-util-gfm-autolink-literal[\\/]lib[\\/]index\.js$/,
       loader: gfmAutolinkEmailLoader,
@@ -119,26 +109,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
-  sentryUrl: process.env.SENTRY_URL ?? "https://cat.tossp.com",
-  org: process.env.SENTRY_ORG ?? "av8d",
-  project: process.env.SENTRY_PROJECT ?? "tsgw-agent",
-  authToken: sentryAuthToken,
-  telemetry: false,
-  silent: !sentryAuthToken,
-  // The SDK treats some upload failures as recoverable; fail this build instead.
-  errorHandler: (error) => {
-    throw error;
-  },
-  sourcemaps: {
-    disable: catDeferredUpload ? "disable-upload" : !sentryAuthToken,
-    deleteSourcemapsAfterUpload: catDeferredUpload ? false : undefined,
-  },
-  release: {
-    name: sentryRelease,
-    create: catDeferredUpload ? false : undefined,
-    finalize: catDeferredUpload ? false : undefined,
-    setCommits: catDeferredUpload ? false : undefined,
-  },
-  buildTimeInstrumentation: false,
-});
+export default withCatMonitoring(nextConfig, version);

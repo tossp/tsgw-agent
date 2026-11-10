@@ -10,11 +10,11 @@ import { readPackResult, verifyPack } from "./pack.mjs";
 import { createTerminalOutput } from "./terminal-output.mjs";
 
 const require = createRequire(import.meta.url);
-const manifest = require("../package.json");
-const lock = require("../package-lock.json");
-const release = require("../bin/tsgw-release.js");
-const { getInstallKind, runUpdate } = require("../bin/pi-web-update.js");
-const records = require("../bin/run-records.js");
+const manifest = require("../../package.json");
+const lock = require("../../package-lock.json");
+const release = require("./index.js");
+const { getInstallKind, runUpdate } = require("../../bin/pi-web-update.js");
+const records = require("../../bin/run-records.js");
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const input = { base: "0.1.0", ref: "refs/heads/tsgw", sha, run: "42", attempt: "1" };
 
@@ -26,8 +26,8 @@ function fixture(t) {
 
 const files = [
   "package.json", "LICENSE", "README.md", "next.config.ts", "bin/pi-web.js",
-  "bin/tsgw-release.js", "bin/prepare-terminal.js", ".next/BUILD_ID", ".next/server/app/login2/page.js",
-  "docs/login2.md", "docs/tsgw-release.md", "public/login2/assets/emblem.webp",
+  "tsgw/release/index.js", "tsgw/cat-monitoring/next-config.mjs", "bin/prepare-terminal.js", ".next/BUILD_ID", ".next/server/app/login2/page.js",
+  "tsgw/login2/README.md", "tsgw/release/README.md", "tsgw/cat-monitoring/BUILD.md", "public/login2/assets/emblem.webp",
   "public/login2/assets/pi-reference-license.txt",
   ...["permission", "password", "read", "verified", "welcome"].map((name) => `public/login2/assets/pi-${name}.mp3`),
 ];

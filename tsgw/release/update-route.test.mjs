@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const jiti = createJiti(import.meta.url, { alias: { "@": new URL("../", import.meta.url).pathname } });
+const jiti = createJiti(import.meta.url, { alias: { "@": new URL("../../", import.meta.url).pathname } });
 
 test("web updates reject mismatched registry metadata without caching it", async (t) => {
   const previous = { NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION, PI_WEB_SKIP_VERSION_CHECK: process.env.PI_WEB_SKIP_VERSION_CHECK };
@@ -14,7 +14,7 @@ test("web updates reject mismatched registry metadata without caching it", async
   });
   process.env.NEXT_PUBLIC_APP_VERSION = "0.1.0";
   process.env.PI_WEB_SKIP_VERSION_CHECK = "0";
-  const { GET } = await jiti.import("../app/api/app-update/route.ts");
+  const { GET } = await jiti.import("../../app/api/app-update/route.ts");
   globalThis.__piWebAppUpdateCache = undefined;
   t.after(() => { globalThis.__piWebAppUpdateCache = undefined; });
   let body = { name: "@agegr/pi-web", version: "99.0.0" };

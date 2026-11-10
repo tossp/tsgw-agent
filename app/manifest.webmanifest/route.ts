@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { piManifestIcons } from "../../tsgw/branding/icons";
+import { piManifestIcons } from "../../tsgw/branding";
 
 export const dynamic = "force-dynamic";
 

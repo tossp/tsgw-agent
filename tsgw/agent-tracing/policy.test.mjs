@@ -10,7 +10,7 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { getAgentTracingOptions } = await jiti.import("./policy.ts");
-const { getCatConfig } = await jiti.import("../../lib/cat-config.ts");
+const { getCatConfig } = await jiti.import("../cat-monitoring/server.ts");
 const { AgentTracer } = await jiti.import("./tracer.ts");
 
 const marker = { "tsgw.agent_tracing": true };

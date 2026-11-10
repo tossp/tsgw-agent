@@ -1,4 +1,4 @@
-import { reportCatError } from "./cat-monitoring";
+import { reportCatError } from "../tsgw/cat-monitoring";
 import {
   AGENT_EVENT_HEARTBEAT_MS,
   isEventIncludedInSnapshot,

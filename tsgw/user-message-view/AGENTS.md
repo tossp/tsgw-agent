@@ -1,21 +1,34 @@
 # 用户消息显示模块
 
+## 公共入口
+
+`index.ts` 统一导出 `UserMessageView`、`replaceUserMessageText`；宿主使用 `@/tsgw/user-message-view`。`messages.ts` 保持纯数据专用入口，语言包直接读取它，避免 locale → 组件 → `useI18n` 循环。
+
 ## 范围、入口与边界
 
 - `UserMessageView.tsx` 提供 `UserMessageView` 和 `replaceUserMessageText`。保留宿主已有复制、编辑、取消编辑、新会话、时间、附件、技能紧凑显示/展开、CRLF/lone CR 显示归一化；默认 Markdown 渲染，增加的 Source / Render 是每个已挂载消息的局部状态。
 - Source 是 React 文本节点，保持 HTML 标签、实体、模板和 Markdown 的字面值，不走 Markdown/HTML/math 管线；无文本消息不显示切换。复制/编辑技能仍使用命令；切换不发送请求、不改变原始消息或模型输入。
-- `messages.ts` 由主代理归集三语言 `chat.messageSource` / `chat.renderMessage`，宿主语言包薄 spread；组件继续通过既有 `useI18n` 读取。
-- 不接管会话、发送、分支或编辑机制，不另造状态存储或渲染器。旧专有文件已迁走、不留兼容壳；旧 docs 不搬，文档映射等待用户确认。
+- `messages.ts` 保存三语言 `chat.messageSource` / `chat.renderMessage`，宿主语言包薄 spread；组件继续通过既有 `useI18n` 读取。
+- 不接管会话、发送、分支或编辑机制，不另造状态存储或渲染器。旧专有文件已迁走、不留兼容壳；行为细则集中在本模块，`docs/agents/sessions.md` 仅保留固定主题索引。
+
+## Source / Render 细则
+
+- User messages still render Markdown by default. The fourth action names the target view: Source (code icon), then Render (eye icon) while showing source. Only messages with text offer it; the state belongs to that mounted message, not localStorage, settings or session entries.
+- Source is a React text child with `white-space: pre-wrap` and wrapping for long lines, never the Markdown/HTML/math pipeline or `dangerouslySetInnerHTML`. It shows HTML tags, `${…}`, entities and Markdown literally. It keeps the existing display normalization of CRLF/lone CR to LF. Skill source shows the full stored expansion; switching back restores the compact skill and its expansion state. Attachments stay available in both views.
+- Copy, edit-from-here and fork keep their existing inputs and behavior (a skill still copies/restores its command). Switching view sends no command and never alters model input or saved messages. Actions reveal on hover or keyboard focus; the footer wraps within narrow screens.
+- `SafeMarkdownBody.tsx` holds the existing 100,000-character Markdown guard shared by user and assistant views. Returning to Render does not bypass it; expanded skill content uses it too. User-message rendering moved out of the large `MessageView.tsx`; its existing `replaceUserMessageText` export remains available there.
+- Checks: `tsgw/user-message-view/UserMessageView.test.mjs` covers default actions, attachment/skill behavior, translations and the large-content guard. `node tsgw/user-message-view/user-message-render-toggle.mjs` uses temporary sessions and an isolated dev server for literal-source fidelity, per-message switching, keyboard controls, copying, and desktop/mobile layout; no model calls.
 
 ## 模块外接入清单
 
 | 文件 / 具体接入 | 原因与类别 |
 | --- | --- |
-| `components/MessageView.tsx`：`UserMessageView` 导入、`replaceUserMessageText` 原出口 | 本轮只更新路径；用户角色分派继续传入原 props。保留原公开 `replaceUserMessageText` 导出供 `ChatWindow` 和上游测试使用，不改宿主接口。必要调用/出口接线。 |
-| `lib/i18n/messages/{en,zh-CN,zh-TW}.ts`：`chat.messageSource` / `chat.renderMessage` | 主代理迁至本模块 `messages.ts`，原语言包薄 spread。仅文案接入，不改共享动作/guard 文案或 fallback。 |
+| `components/MessageView.tsx`：`UserMessageView` 导入、`replaceUserMessageText` 原出口 | 公共入口接线；用户角色分派继续传入原 props。保留原公开 `replaceUserMessageText` 导出供 `ChatWindow` 和上游测试使用，不改宿主接口。必要调用/出口接线。 |
+| `lib/i18n/messages/{en,zh-CN,zh-TW}.ts`：`chat.messageSource` / `chat.renderMessage` | 原语言包直接从本模块纯数据 `messages.ts` 薄 spread。仅文案接入，不改共享动作/guard 文案或 fallback。 |
+| `lib/sidebar-actions.test.mjs`：三语言夹具加载 | 沿用该测试已有的 Jiti 读取实际语言包，支持模块文案的无扩展名导入；不修改生产逻辑或测试断言。 |
 | 原 `components/{UserMessageView.tsx,UserMessageView.test.mjs}`、`e2e/{user-message-render-toggle.mjs,user-message-render-fixtures.mjs}` | 用 mv 迁入本模块；修复宿主导入及 E2E 项目根目录推导。 |
 
-`components/MessageView.test.mjs` 的宿主导入和公开出口保持有效，本轮无需改动。`components/ChatWindow.tsx` 仍从宿主 `MessageView` 使用既有出口，不要求改成依赖本模块内部；主代理统一处理共享文件。无新增生命周期或后端接入。
+`components/MessageView.test.mjs` 的宿主导入和公开出口保持有效，本轮无需改动。`components/ChatWindow.tsx` 仍从宿主 `MessageView` 使用既有出口，不要求改成依赖本模块内部；无新增生命周期或后端接入。根 `AGENTS.md`、`tsgw/AGENTS.md`、`docs/agents/sessions.md` 和 `e2e/README.md` 保留模块薄索引。
 
 ## 共享代码权衡
 
@@ -45,4 +58,4 @@ node tsgw/user-message-view/user-message-render-toggle.mjs
 
 - 独立浏览器脚本会起停当前 checkout 的回环 Next dev，应与其他 E2E 串行并使用隔离环境执行。产物仍在 `test-results/e2e/`；不构建、不使用真实用户会话或模型。
 - 验收：默认渲染及 HTML 字面显示、逐消息独立切换、Source fidelity、复制/编辑/新会话、图片、技能折叠/展开、大消息 guard、英简繁标签、键盘与桌面/手机布局均保持。
-- 两模块加 `MessageView.test.mjs` 合计 81/81 真实测试通过；TypeScript noEmit 与定向 ESLint 通过；首次主动 LSP 未报类型错误，复查的 push-only 静默结果不单独作为 clean 证据。E2E 已做语法检查，浏览器执行及全仓集成检查由主代理在共享接线稳定后统筹；本轮不运行构建。行为说明/既有验收入口仍见 `docs/agents/sessions.md` 的 User messages: Source / Render 章节，不另建重复台账。
+- 目录归集的既有验证记录：本模块与 message-usage 加 `MessageView.test.mjs` 合计 81/81 真实测试通过；TypeScript noEmit 与定向 ESLint 通过；首次主动 LSP 未报类型错误，复查的 push-only 静默结果不单独作为 clean 证据。E2E 当时仅做语法检查，不能视为浏览器或全仓集成通过。文档归集不新增代码验收结果，不另建重复台账。

@@ -3,6 +3,16 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Script, createContext } from "node:vm";
 import ts from "typescript";
+import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+
+const shimPath = fileURLToPath(new URL("../../hooks/__fixtures__/react-hook-shim.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, {
+  jsx: { runtime: "automatic" }, tsconfigPaths: true,
+  alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath },
+});
+const { renderHook } = await import(shimPath);
+const { useNoticeDismiss } = await jiti.import("./index.ts");
 
 const source = ts.createSourceFile("useAgentSession.ts", await readFile(new URL("../../hooks/useAgentSession.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 const dismissSource = ts.createSourceFile("useNoticeDismiss.ts", await readFile(new URL("./useNoticeDismiss.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
@@ -17,18 +27,17 @@ assert.match(source.text, /const dismissNotice = useNoticeDismiss\(dispatchNotic
 const script = new Script(ts.transpileModule(`
   const MAX_NOTICES = 5;
   ${declarations.join("\n")}
-  ${dismiss.getText(dismissSource).replace(/^export /, "")}
-  useNoticeDismiss(dispatchNotice, setPausedNoticeId);
 `, { compilerOptions: { target: ts.ScriptTarget.ESNext } }).outputText);
 const notice = (id, exiting = false) => ({ id, message: id, type: "info", exiting });
 function setup(visible, pending = [], paused = null) {
   const state = { value: { visible, pending }, paused };
   const context = createContext({
-    useCallback: (fn) => fn,
     dispatchNotice: (action) => { state.value = context.noticeReducer(state.value, action); },
     setPausedNoticeId: (update) => { state.paused = update(state.paused); },
   });
-  return { state, dismiss: script.runInContext(context) };
+  script.runInContext(context);
+  const hook = renderHook(() => useNoticeDismiss(context.dispatchNotice, context.setPausedNoticeId));
+  return { state, dismiss: hook.result };
 }
 const ids = (items) => Array.from(items, (item) => item.id);
 

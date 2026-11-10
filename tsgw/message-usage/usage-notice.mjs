@@ -236,7 +236,7 @@ Module._load = function(request, parent, isMain) {
       const request = route.request();
       const url = new URL(request.url());
       // Keep synthetic monitoring traffic local without creating a failed-resource console error.
-      if (url.origin === "https://cat.tossp.com" && url.pathname === "/api/10/envelope/") {
+      if (url.origin === "https://cat.tossp.com") {
         return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
       }
       if (url.origin !== base) return route.abort();

@@ -92,7 +92,7 @@ jobs:
           assert.equal(source.publishConfig.access, "public");
           assert.equal(source.publishConfig.registry, "https://registry.npmjs.org/");
           assert.match(source.version, /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/, "Source version must be stable SemVer");
-          // 与 release/version.mjs 的预览版本公式一致；不构建、不改写源版本。
+          // 与 tsgw/release/version.mjs 的预览版本公式一致；不构建、不改写源版本。
           const version = `${source.version}-dev.${run.run_number}.${run.run_attempt}.g${GITHUB_SHA.slice(0, 12)}`;
           appendFileSync(GITHUB_OUTPUT, `version=${version}\nartifact=tsgw-npm-${version}\n`);
           NODE

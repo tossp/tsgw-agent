@@ -3,6 +3,8 @@
 // renderHook(). One component; effects (layout ones too) run after each
 // render; a state change made inside a render or an effect renders again at
 // once, one made later (a timer, a resolved fetch) waits for flush().
+export { createContext, useContext } from "react";
+
 let current = null;
 const changed = (prev, next) => !prev || !next || prev.length !== next.length || prev.some((value, index) => !Object.is(value, next[index]));
 function slot(init) {

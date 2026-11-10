@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { getReleaseChannel, isReleaseVersion } from "../bin/tsgw-release.js";
+import { getReleaseChannel, isReleaseVersion } from "./index.js";
 
 export function verifyPack(manifest, files) {
   assert.equal(manifest.name, "tsgw-agent");
@@ -16,8 +16,8 @@ export function verifyPack(manifest, files) {
   const paths = new Set(files.map((file) => typeof file === "string" ? file : file.path));
   for (const path of [
     "package.json", "LICENSE", "README.md", "next.config.ts",
-    "bin/pi-web.js", "bin/tsgw-release.js", "bin/prepare-terminal.js", ".next/BUILD_ID",
-    ".next/server/app/login2/page.js", "docs/login2.md", "docs/tsgw-release.md",
+    "bin/pi-web.js", "tsgw/release/index.js", "tsgw/cat-monitoring/next-config.mjs", "bin/prepare-terminal.js", ".next/BUILD_ID",
+    ".next/server/app/login2/page.js", "tsgw/login2/README.md", "tsgw/release/README.md", "tsgw/cat-monitoring/BUILD.md",
     "public/login2/assets/emblem.webp", "public/login2/assets/pi-reference-license.txt",
     ...["permission", "password", "read", "verified", "welcome"].map((name) => `public/login2/assets/pi-${name}.mp3`),
   ]) assert.ok(paths.has(path), `Missing published file: ${path}`);
@@ -40,7 +40,7 @@ export function readPackResult(result) {
 }
 
 export function packRelease(destination, root = process.cwd()) {
-  assert.ok(destination, "Usage: node release/pack.mjs <artifact-directory>");
+  assert.ok(destination, "Usage: node tsgw/release/pack.mjs <artifact-directory>");
   const out = resolve(destination);
   mkdirSync(out, { recursive: true });
   assert.deepEqual(readdirSync(out), [], "Use an empty artifact directory; never mix releases");

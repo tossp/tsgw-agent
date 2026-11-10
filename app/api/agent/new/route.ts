@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reportCatError } from "@/lib/cat-monitoring";
+import { reportCatError } from "@/tsgw/cat-monitoring";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { existsSync } from "fs";
 import { randomUUID } from "crypto";

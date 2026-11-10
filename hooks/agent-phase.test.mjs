@@ -10,7 +10,7 @@ import { createJiti } from "jiti";
 // `connected` is another matter: the server replays every call still running
 // right after it, so it starts from none and the replay is the whole list.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true, alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath } });
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 

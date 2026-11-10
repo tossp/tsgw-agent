@@ -1,5 +1,9 @@
 # Wakeups：一次性会话唤醒模块
 
+## 公共入口
+
+`index.ts` 统一导出宿主接入所需的 `createSessionOwnerAccess()`、`createWakeupExtension()` 和 `getWakeupRuntime()`，宿主通过 `@/tsgw/wakeups` 导入；模块内部可直接引用实现文件。`createWakeupHost()` 是宿主适配层内部及集成测试接口，不纳入公共聚合入口。内置技能保留 `skills/tsgw-session-wakeup/SKILL.md` 专用资源路径，不经 TypeScript 入口加载。完整行为、历史格式与既有验证记录见 [README.md](README.md)。
+
 ## 范围、入口与文件
 
 只实现进程内存中的一次性定时唤醒：支持自身及跨普通会话交接，拒绝子代理；只传递交接消息，不共享来源上下文或增加授权。重启丢失、不恢复、不补发、不重试；不做周期任务、数据库、独立后台服务或新增界面。子代理只能由被唤醒的主代理通过已有机制恢复。
@@ -15,7 +19,7 @@
 - `session-owner.ts`：通过宿主注入的现有 wrapper、启动／关闭 Promise 协调写入；不持有另一个会话注册表或锁。
 - `*.test.mjs`：单元测试及真实 SDK、SessionManager、AgentSessionWrapper 配合本地 faux provider 的集成测试。`side-session.integration.test.mjs` 使用真实 `createSideSession()`、`startRpcSession()`、宿主注册表和 `createWakeupHost()` 验证侧聊目标、严格重开、工具限制及静默完成；不修改上游运行时。
 
-详细行为、历史格式及验证记录以 [../../docs/agents/wakeups.md](../../docs/agents/wakeups.md) 为准。本文件是模块接入清单，不重复维护完整设计。
+详细行为、历史格式及验证记录以 [README.md](README.md) 为准。本文件是模块接入清单，不重复维护完整设计。
 
 ## 修改的模块外文件与接入点
 
@@ -23,7 +27,7 @@
 
 | 文件 | 函数、类型或位置 | 改动与必要性 |
 | --- | --- | --- |
-| `lib/rpc-manager.ts` | 模块 imports | 导入本模块工具、runtime 与写入协调适配；不在上游文件放调度主体。 |
+| `lib/rpc-manager.ts` | 模块 imports | 经 `@/tsgw/wakeups` 公共入口导入工具、runtime 与写入协调适配；不在上游文件放调度主体。 |
 | `lib/rpc-manager.ts` | `RpcSessionStartOptions.requireExistingSession`、`startRpcSession()` 的实际 open 前检查 | 为定时恢复增加仅本调用启用的严格模式；等待已有启动／关闭过程后同步核对文件头 ID，禁止 SDK 在目标被删后创建替代会话。其他调用默认行为不变。 |
 | `lib/rpc-manager.ts` | `AgentSessionWrapper.acquirePromptAdmission()` | 从 private 改为可供宿主适配调用；复用普通 prompt 的现有 admission，不新增锁、不改变方法实现。准备 MCP 的唯一 Stop 句柄不能被并发发送覆盖。 |
 | `lib/rpc-manager.ts` | `startRpcSession()` 的普通会话 `extensionFactories` | 注册工具并注入 `getRpcSession`、严格 `startRpcSession` 及现有 `getLocks`／`closingRpcSessionWait` 等待入口。子代理及 Chat-only 分支不注册。 |
@@ -32,7 +36,7 @@
 | `AGENTS.md` | TSGW 模块规则入口、wakeups 主题索引 | 链接统一规则、本模块规则及行为说明，指向新的代码目录。 |
 | `tsgw/AGENTS.md` | 新增的 fork 模块统一规则 | 规定模块隔离、外部接入清单、变更同步与测试发现要求；本模块遵守该父级规则。 |
 | `docs/agents/tools.md` | 文件开头的 TSGW 唤醒说明 | 为模型工具增加文档入口，不改动上游其他工具规则。 |
-| `docs/agents/wakeups.md` | 唤醒功能说明及验证入口 | 维护实际目录、会话写入方式、行为约定及验证证据。 |
+| `tsgw/wakeups/README.md` | 唤醒功能说明及验证入口 | 维护实际目录、会话写入方式、行为约定及验证证据；固定主题索引指向本模块，不保留旧路径正文壳。 |
 
 ### 共享代码调整的处理
 

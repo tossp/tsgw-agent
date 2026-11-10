@@ -57,7 +57,7 @@ Coverage:
   session, directory, draft, files and group expansion; + still opens in the
   same tab, and no session is created, copied, prompted or stopped. An
   unavailable directory shows the validation error instead of another session.
-- Running subagents appear at the chat tail without opening Agents, even with an idle parent. Synthetic running-id polls check nested descendants, matching counts and descriptions, removal through zero, long-description wrapping at desktop/phone widths, and both Chinese locales without dispatching a model.
+- The [subagent-status module](../tsgw/subagent-status/AGENTS.md) browser check (`tsgw/subagent-status/subagent-status.mjs`, invoked by `e2e/run.mjs`) verifies running subagents at the chat tail without opening Agents, even with an idle parent. Synthetic running-id polls check nested descendants, matching counts and descriptions, removal through zero, long-description wrapping at desktop/phone widths, and both Chinese locales without dispatching a model.
 - The model picker, with a synthetic catalog: on a phone, a simulated keyboard
   (visual viewport shrink, pan, a late height with no event) keeps the same
   filter focused and the list in the visible viewport. Native phone keyboards
@@ -72,13 +72,21 @@ Coverage:
   collapse/expand draft preservation, countdown display, and server-side expiry.
 - The production assistant header keeps its height and numeric columns when streaming metrics appear, update and disappear. Static component renders cover digit boundaries with proportional and monospace fonts, without a live model. Run this check alone with `node e2e/streaming-metrics.mjs` (1280, 390 and 320px).
 
-The TSGW-only CAT regression is standalone: `node e2e/cat-monitoring.mjs`, or
-`E2E_SERVER_MODE=start node e2e/cat-monitoring.mjs` in a clean production-build
+The TSGW-only CAT regression is standalone: `node tsgw/cat-monitoring/e2e.mjs`, or
+`E2E_SERVER_MODE=start node tsgw/cat-monitoring/e2e.mjs` in a clean production-build
 checkout. It checks the fixed project DSN, the server hostname, the package release
 and the auth boundary. Browser SDK envelopes are intercepted locally by default;
 server errors are not deliberately triggered. `CAT_E2E_LIVE=1` enables live uploads
 and one server error; verify receipt and source frames through `ts_tool → cat`.
 Do not run it while CAT is upgrading. No model calls are made.
+
+Fork standalone browser entries (run from the project root, without another dev process in the same checkout):
+
+- [login2](../tsgw/login2/README.md): `node tsgw/login2/login2.mjs`.
+- [Usage and notice dismissal](../tsgw/message-usage/AGENTS.md): `node tsgw/message-usage/usage-notice.mjs`.
+- [User-message Source / Render](../tsgw/user-message-view/AGENTS.md): `node tsgw/user-message-view/user-message-render-toggle.mjs`.
+- [Debug dashboard](../tsgw/debug/DESIGN.md): `E2E_BASE_URL=<existing-dev-server> node tsgw/debug/e2e.mjs`; this one reuses an existing server and never starts a second one.
+- [CAT runtime and live-upload boundaries](../tsgw/cat-monitoring/AGENTS.md); [release installation smoke](../tsgw/release/README.md) is a separate clean-build workflow.
 
 Model prompts, live model streaming, and agent execution are outside this suite.
 Failures save a screenshot, Playwright trace, and server log under

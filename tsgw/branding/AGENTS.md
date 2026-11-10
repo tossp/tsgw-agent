@@ -1,5 +1,9 @@
 # Pi branding
 
+## 公共入口
+
+`index.ts` 统一导出图标 URL、Next metadata 和 manifest 图标常量；宿主使用 `@/tsgw/branding`，实现留在 `icons.ts`。
+
 ## Scope and implementation
 Three-colour Pi favicon, transparent Apple Touch PNG, manifest icons and the favicon badge's base image. The upstream manifest, badge counters and service worker remain upstream-owned.
 

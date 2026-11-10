@@ -1,5 +1,9 @@
 # Session title prompt
 
+## 公共入口
+
+`index.ts` 统一导出 `TITLE_PROMPT`；`lib/session-title.ts` 使用 `@/tsgw/session-title`，生成请求与会话生命周期仍归宿主。
+
 ## Scope and implementation
 Only the fork's title instruction lives here: retain transcript-supported task dates, periods and deadlines, express dates briefly, follow explicit corrections and never infer calendar dates without a reliable reference.
 

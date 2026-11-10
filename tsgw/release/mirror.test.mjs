@@ -7,7 +7,7 @@ import test from "node:test";
 
 // Run the actual workflow's inline script with fetch mocked: tests must never
 // enqueue real mirror tasks or publish npm packages.
-const workflow = readFileSync(new URL("../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
+const workflow = readFileSync(new URL("../../.github/workflows/tsgw-npm.yml", import.meta.url), "utf8");
 const step = workflow.split("      - name: Request npmmirror sync\n")[1]?.split("      - name: Summarize the publish")[0];
 const body = step?.match(/<<'NODE'\n([\s\S]*?)          NODE/)?.[1];
 const code = body?.split("\n").map((line) => line.slice(10)).join("\n");
