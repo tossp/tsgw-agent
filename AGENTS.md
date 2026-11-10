@@ -30,7 +30,7 @@ pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them 
 
 Fork-owned implementation and tests live under `tsgw/<module>/`. Read [tsgw/AGENTS.md](tsgw/AGENTS.md) and the module's `AGENTS.md` before editing its code or upstream integration points. Each module records every modified external file/function, why the change is needed, its upstream-upgrade checks and verification commands. Keep that inventory synchronized; do not migrate unrelated fork features as part of one module's work. Public TypeScript imports use each module's `index.ts` through `@/tsgw/<module>`; keep Node-only, initialization, pure-message-data and command entries separate as specified in the [module index](tsgw/AGENTS.md#公共入口与文档索引). Release uses native CommonJS `index.js` / `index.d.ts` (no forwarding shell).
 
-Fork operating guides: [login2](tsgw/login2/README.md), [npm release](tsgw/release/README.md), [CAT build/archive/backfill](tsgw/cat-monitoring/BUILD.md). The [module index](tsgw/AGENTS.md) lists all twelve modules and their upgrade/verification rules. `npm test` retains `tsgw/**/*.test.mjs` for every module, including release; CI also explicitly targets release and CAT.
+Fork operating guides: [login2](tsgw/login2/README.md), [npm release](tsgw/release/README.md), [CAT build/archive/backfill](tsgw/cat-monitoring/BUILD.md). The [module index](tsgw/AGENTS.md) lists all fork modules and their upgrade/verification rules. `npm test` retains `tsgw/**/*.test.mjs` for every module, including release; CI also explicitly targets release and CAT.
 
 ---
 

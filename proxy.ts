@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { withCors } from "@/tsgw/cors";
 import {
   getAuthRetryAfterMs,
   recordAuthFailure,
@@ -26,6 +27,10 @@ function tooManyAttempts(retryAfterMs: number): NextResponse {
 }
 
 export function proxy(request: NextRequest) {
+  return withCors(request, () => handleRequest(request), isApiRequestAllowed);
+}
+
+function handleRequest(request: NextRequest) {
   const isApiRequest = request.nextUrl.pathname === "/api"
     || request.nextUrl.pathname.startsWith("/api/");
   const isTrustedRequest = isApiRequest

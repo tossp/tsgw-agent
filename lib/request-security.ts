@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { getAllowedCorsOrigin } from "@/tsgw/cors";
 
 function normalizeHostname(value: string): string {
   const unbracketed = value.startsWith("[") && value.endsWith("]")
@@ -151,6 +152,8 @@ function isProxyRewrittenSameOrigin(request: Request, origin: string): boolean {
 
 /** Reject browser cross-site API requests while preserving non-browser clients. */
 export function isApiRequestOriginAllowed(request: Request): boolean {
+  if (getAllowedCorsOrigin(request)) return true;
+
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite === "cross-site") return false;
