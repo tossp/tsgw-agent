@@ -136,7 +136,7 @@ test("model, provider, exact thinking level and age belong to each resident, nev
 
 test("detail facts remain visible without the three redundant idle messages or boundary prose", () => {
   const html = render(), text = visibleText(html);
-  for (const value of ["Started 6m 10s ago", "Last event agent_end", "Process history", "Event streams", "Liveness providers", "MCP", "started 2×", "first 30m 10s ago", "last 6m 10s ago", "closed 7m 10s ago", "connected 5m 10s ago", "keepalive-ext", "active · by file", "a run is unsettled", "explore", "background", "files", "jira", "Did not connect", "1 problems", "idle release in 1m 50s", "Extensions bound", "Event listeners: 1", "Host active: yes · run active: no"]) assert.ok(text.includes(value), value);
+  for (const value of ["Started 6m 10s ago", "Last event agent_end", "Process history", "Event streams", "Liveness providers", "MCP", "started 2×", "first 30m 10s ago", "last 6m 10s ago", "closed 7m 10s ago", "connected 5m 10s ago", "keepalive-ext", "active · by file", "a run is unsettled", "explore", "background", "files", "jira", "Did not connect", "1 problems", "idle release in 1m 50s", "Extensions bound", "Event listeners: 1", "Host Execution"]) assert.ok(text.includes(value), value);
   assert.doesNotMatch(text, /Last idle reset|Next idle check in|Idle timeout|Observability limits|existing APIs do not expose the global active wakeup/);
   assert.match(text, /Reap check/);
   assert.doesNotMatch(html, /data-kind="subagents"/);

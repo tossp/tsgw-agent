@@ -237,11 +237,11 @@ try {
     await residentIds(state.runtime);
     for (const [width, height] of [[1366, 768], [1440, 900]]) {
       const geometry = await desktopGeometry(width, height); results.push({ name: "geometry-" + width + "x" + height, passed: true, geometry });
-      const mcp = detail("alpha").locator('[data-kind="mcp"]'); assert.equal(await mcp.getByRole("img").count(), 6);
+      const mcp = detail("alpha").locator('[data-kind="mcp"]'); assert.equal(await mcp.getByRole("img").count(), 8, "six servers plus host and execution tags");
       const boxes = await mcp.getByRole("img").evaluateAll(nodes => nodes.map(e => ({ height: e.getBoundingClientRect().height })));
       assert.ok(boxes.every(b => b.height <= 48), "compact MCP capsules");
       const box = await mcp.boundingBox(); assert.ok(box.y >= 0 && box.y + box.height <= height, "default MCP visible without scroll");
-      assert.equal(await mcp.locator('[data-shape="dashed"][data-pulse="on"]').count(), 1); assert.equal(await mcp.locator('[data-shape="dotted"]').count(), 1); await shot("desktop-" + width + "x" + height);
+      assert.equal(await mcp.locator('[data-shape="dashed"][data-pulse="on"]').count(), 1); assert.equal(await mcp.locator('[data-shape="dotted"]').count(), 2); await shot("desktop-" + width + "x" + height);
     }
   });
   await test("copy-keyboard-reload", async () => {

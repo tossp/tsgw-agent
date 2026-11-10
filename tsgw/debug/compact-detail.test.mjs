@@ -51,7 +51,8 @@ test("MCP lamps form a compact row; errors and release states remain visible", (
   assert.match(text, /dialing Connecting/);
   assert.match(text, /released-error error · released/);
   assert.match(html, /class="tag"[^>]*data-tone="error"[^>]*><span class="lamp"/);
-  assert.match(text, /Host active: yes · run active: no/);
+  assert.match(text, /Host Execution/);
+  assert.doesNotMatch(text, /Host active:|run active:/);
   assert.match(text, /1 problems/);
   assert.match(html, /aria-label="files \(global\) · Connected"/);
   assert.match(html, /data-shape="dotted"/);
@@ -59,6 +60,32 @@ test("MCP lamps form a compact row; errors and release states remain visible", (
   assert.match(css, /\.lamp\s*\{[^}]*border: 1px solid currentColor/);
   assert.match(css, /\.lampCore\s*\{[^}]*0 0 5px 1px/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none !important/);
+});
+
+test("MCP host and execution use independent lamp tags with localized tooltips", () => {
+  for (const [locale, hostName, executionName, hostPrefix, executionPrefix, yes, no] of [
+    ["en", "Host", "Execution", "MCP host active: ", "Agent run active: ", "yes", "no"],
+    ["zh-CN", "宿主", "执行", "MCP 宿主活跃：", "Agent 执行活跃：", "是", "否"],
+    ["zh-TW", "宿主", "執行", "MCP 宿主活躍：", "Agent 執行活躍：", "是", "否"],
+  ]) for (const active of [false, true]) for (const runActive of [false, true]) {
+    const detail = reply().session;
+    Object.assign(detail.mcp, { active, runActive });
+    const html = render({ detail, locale });
+    const tags = [...html.matchAll(/<span class="tag" role="img" aria-label="([^"]+)" title="([^"]+)" data-tone="([^"]+)"><span class="lamp" data-tone="([^"]+)" data-shape="([^"]+)"/g)];
+    for (const [prefix, enabled] of [[hostPrefix, active], [executionPrefix, runActive]]) {
+      const matches = tags.filter(tag => tag[1].startsWith(prefix));
+      assert.equal(matches.length, 1, prefix);
+      const [, label, tip, tone, lampTone, shape] = matches[0];
+      assert.ok(label.startsWith(prefix + (enabled ? yes : no)));
+      assert.equal(tip, label, "accessible label and tooltip describe the same state");
+      assert.equal(tone, enabled ? "ok" : "dim");
+      assert.equal(lampTone, tone);
+      assert.equal(shape, enabled ? "solid" : "dotted", "state is not conveyed by color alone");
+    }
+    assert.ok(visibleText(html).includes(hostName + " " + executionName));
+    assert.ok(!visibleText(html).includes(hostPrefix));
+    assert.ok(!visibleText(html).includes(executionPrefix));
+  }
 });
 
 test("MCP release and reap check each keep one real countdown and a moving bar", () => {

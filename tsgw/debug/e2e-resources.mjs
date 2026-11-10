@@ -12,6 +12,26 @@ export async function resourceChecks(h) {
       }
     }, "all residents auto-sampled without selection", ids.length * 2200 + 6000);
   }
+  await test("mcp-host-execution-lamp-tags", async () => {
+    for (const [locale, host, execution, hostState, executionState] of [
+      ["en", "Host", "Execution", "MCP host active: yes.", "Agent run active: no."],
+      ["zh-CN", "宿主", "执行", "MCP 宿主活跃：是。", "Agent 执行活跃：否。"],
+      ["zh-TW", "宿主", "執行", "MCP 宿主活躍：是。", "Agent 執行活躍：否。"],
+    ]) {
+      await load(undefined, locale, false); await sampled(["alpha"]);
+      const mcp = detail("alpha").locator('[data-kind="mcp"]');
+      for (const [name, prefix, tone, shape] of [[host, hostState, "ok", "solid"], [execution, executionState, "dim", "dotted"]]) {
+        const tag = mcp.getByRole("img", { name: new RegExp("^" + prefix.replaceAll(".", "\\.")) });
+        await visible(tag); assert.equal(await tag.innerText(), name);
+        assert.ok((await tag.getAttribute("title")).startsWith(prefix));
+        assert.equal(await tag.getAttribute("data-tone"), tone);
+        assert.equal(await tag.locator('[aria-hidden="true"]').getAttribute("data-shape"), shape);
+        await tag.hover();
+      }
+      assert.ok(!(await mcp.innerText()).includes(hostState), "state sentences live in tips, not the resource row");
+      await shot("mcp-lamp-tags-" + locale);
+    }
+  });
   for (const [width, height] of [[1366, 768], [1440, 900]]) await test(`three-main-resources-simultaneous-scan-${width}`, async () => {
     const seed = densitySeed(); await load(seed, "en", false); await sampled(seed.runtime);
     assert.equal(await page.locator('button[aria-controls^="resource-"]').count(), 0, "no task-selection controls");
