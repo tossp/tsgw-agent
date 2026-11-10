@@ -8,7 +8,7 @@ import test from "node:test";
 import { Type } from "typebox";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import {
-  createAgentSessionFromServices, createAgentSessionServices, ModelRuntime, SessionManager, SettingsManager,
+  createAgentSessionFromServices, createAgentSessionServices, createCodemodeExtension, ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
@@ -20,6 +20,8 @@ const { createSessionOwnerAccess } = await jiti.import("./session-owner.ts");
 const { AgentSessionWrapper, startRpcSession, getRpcSession, getRpcStartingSessionIds } = await jiti.import("../../lib/rpc-manager.ts");
 const answer = (text = "done") => fauxAssistantMessage([fauxText(text)]);
 const call = (name, args) => fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
+const callWakeup = (name, args) => name === "list_session_wakeups" ? call(name, args)
+  : call("codemode", { code: `return await tools.${name}(${JSON.stringify(args)});` });
 const textOf = (message) => message.content.map((block) => block.text ?? "").join("");
 const notifications = (manager) => manager.getEntries().filter((entry) =>
   entry.type === "custom_message" && entry.customType === WAKEUP_NOTIFICATION_TYPE);
@@ -67,10 +69,10 @@ async function withFixture(check) {
     const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
     modelRuntime.registerNativeProvider(target.faux.provider);
     const services = await createAgentSessionServices({
-      cwd: dir, agentDir: dir, modelRuntime, settingsManager: SettingsManager.inMemory(),
+      cwd: dir, agentDir: dir, modelRuntime, settingsManager: SettingsManager.inMemory({ defaultTools: ["+codemode"] }),
       resourceLoaderOptions: {
         noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-        extensionFactories: [createWakeupExtension(runtime), ...extensionFactories],
+        extensionFactories: [{ name: "codemode", factory: createCodemodeExtension({ models: false }) }, createWakeupExtension(runtime), ...extensionFactories],
       },
     });
     const { session: inner } = await createAgentSessionFromServices({ services, sessionManager: manager, model: target.faux.getModel("faux-model") });
@@ -117,17 +119,19 @@ async function withFixture(check) {
 }
 
 async function invoke(target, name, args) {
-  target.faux.setResponses([call(name, args), answer()]);
+  target.faux.setResponses([callWakeup(name, args), answer()]);
   await target.wrapper.inner.prompt(`Call ${name}`);
-  const result = target.wrapper.inner.agent.state.messages.findLast((message) => message.role === "toolResult" && message.toolName === name);
+  const toolName = name === "list_session_wakeups" ? name : "codemode";
+  const result = target.wrapper.inner.agent.state.messages.findLast((message) => message.role === "toolResult" && message.toolName === toolName);
   assert.equal(result?.isError, false, result && textOf(result));
-  // AgentSession's persisted toolResult omits structuredContent. Check the model's
-  // text/details here; the nested SDK dispatcher below checks structuredContent itself.
+  if (toolName === "codemode") return JSON.parse(textOf(result).split("Output:\n")[1]);
+  // AgentSession's persisted toolResult omits structuredContent; the nested
+  // SDK dispatcher below checks structuredContent itself.
   assert.deepEqual(JSON.parse(textOf(result)), result.details);
   return result.details;
 }
 
-test("four wakeup tools work directly and via ctx.executeTool with structured results, without waiting", { timeout: 20_000 }, async () => {
+test("three wakeup tools default to codemode, refuse direct calls and retain structured nested results", { timeout: 20_000 }, async () => {
   const outcomes = [];
   const script = (pi) => pi.registerTool({
     name: "script", label: "script", description: "Exercise nested tool dispatch", parameters: Type.Object({}),
@@ -147,10 +151,23 @@ test("four wakeup tools work directly and via ctx.executeTool with structured re
   await withFixture(async (f) => {
     const source = await f.create({ extensions: [script] });
     const session = source.wrapper.inner;
+    const scriptOnly = ["schedule_wakeup", "list_wakeups", "cancel_wakeup"];
     for (const name of WAKEUP_TOOL_NAMES) {
-      assert.ok(session.getActiveToolNames().includes(name), name);
+      assert.equal(session.getActiveToolNames().includes(name), name === "list_session_wakeups", name);
       assert.ok(session.getCallableToolNames().includes(name), name);
+      assert.equal(session.getAllTools().find((tool) => tool.name === name).exposure,
+        name === "list_session_wakeups" ? "direct" : "codemode", name);
     }
+    source.faux.setResponses([
+      fauxAssistantMessage(scriptOnly.map((name, i) => fauxToolCall(name,
+        [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }][i])), { stopReason: "toolUse" }), answer(),
+    ]);
+    await session.prompt("Try unavailable direct calls");
+    const refused = session.agent.state.messages.filter((message) => message.role === "toolResult");
+    assert.deepEqual(refused.map((message) => message.toolName), scriptOnly);
+    for (const message of refused) assert.equal(message.isError, true, message.toolName);
+    assert.deepEqual(f.runtime.list(), []);
+    assert.equal(records(source.manager).length, 0);
     const timer = await invoke(source, "schedule_wakeup", { after_seconds: 60, message: "self reminder" });
     assert.match(timer.wakeupId, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(timer.sourceSessionId, source.id);
@@ -162,11 +179,16 @@ test("four wakeup tools work directly and via ctx.executeTool with structured re
     assert.deepEqual(await invoke(source, "cancel_wakeup", { wakeup_id: timer.wakeupId }), timer);
     let declared;
     source.faux.setResponses([(context) => {
-      declared = getCurrentTools(context.messages).map((tool) => tool.name);
+      declared = getCurrentTools(context.messages);
       return call("script", {});
     }, answer()]);
     await session.prompt("Exercise all nested calls");
-    for (const name of WAKEUP_TOOL_NAMES) assert.ok(declared.includes(name), name);
+    const declaredNames = declared.map((tool) => tool.name);
+    for (const name of scriptOnly) assert.equal(declaredNames.includes(name), false, name);
+    assert.ok(declaredNames.includes("list_session_wakeups"));
+    const codemode = declared.find((tool) => tool.name === "codemode");
+    for (const name of scriptOnly) assert.ok(codemode.description.includes(name), name);
+    assert.ok(codemode.description.includes("do not sleep or poll"), "schedule guidance must reach codemode");
     assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "list_wakeups", "list_session_wakeups", "cancel_wakeup"]);
     for (const item of outcomes) {
       assert.equal(item.isError, false, item.name);
@@ -183,7 +205,7 @@ test("model-scheduled self wakeup follows the current turn and keeps metadata on
     const source = await f.create();
     const first = f.hold(), second = f.hold();
     source.faux.setResponses([
-      call("schedule_wakeup", { after_seconds: 0.05, message: "continue my own task later" }),
+      callWakeup("schedule_wakeup", { after_seconds: 0.05, message: "continue my own task later" }),
       first.response, second.response,
     ]);
     const running = source.wrapper.inner.prompt("Schedule a self wakeup, then finish this turn");

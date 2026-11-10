@@ -5,7 +5,7 @@
 只实现进程内存中的一次性定时唤醒：支持自身及跨普通会话交接，拒绝子代理；只传递交接消息，不共享来源上下文或增加授权。重启丢失、不恢复、不补发、不重试；不做周期任务、数据库、独立后台服务或新增界面。子代理只能由被唤醒的主代理通过已有机制恢复。
 
 - Pi 1.5.0 不再从 `pi-ai` 导出 `Type`；`extension.ts` 与 `wakeup.integration.test.mjs` 直接从 `typebox` 导入，沿用上游 schema 包，不改变工具定义、owner 或 lifecycle。
-- `extension.ts`：`createWakeupExtension()` 注册 `schedule_wakeup`、`list_wakeups`、`cancel_wakeup`、`list_session_wakeups`；普通非 Chat-only 会话可用。上游侧聊的工具 allow-list 会排除这四工具，保持未注册、不可调用；这不构成侧聊作为投递目标的禁令。
+- `extension.ts`：`createWakeupExtension()` 注册四个工具；`schedule_wakeup`、`list_wakeups`、`cancel_wakeup` 使用 SDK 的 `exposure: "codemode"`，默认不激活、不向模型直接声明，通过 Code mode 调用。`list_session_wakeups` 保持直接暴露。仅调整本模块注册，不改全局 Code mode 设置或强制激活它；沿用 SDK 显式激活工具及恢复会话工具集的语义。普通非 Chat-only 会话可用。上游侧聊的工具 allow-list 会排除这四工具，保持未注册、不可调用；这不构成侧聊作为投递目标的禁令。
 - `scheduler.ts`：`WakeupScheduler` 保存进程内待触发项、单次触发及取消，长等待分段处理。
 - `runtime.ts`：`WakeupRuntime` 校验入口参数、生成 SDK UUIDv7、协调历史与调度；`submitted` 只表示 SDK 接受或排队，不是模型任务完成。
 - `history.ts`：`pi-web:wakeup` custom meta 的只读聚合；`pi-web:wakeup-notification` 是另行进入模型上下文的通知。查询全部分支，不迁移文件、不启动会话。
@@ -52,7 +52,8 @@
 3. wrapper 对 manager 的独占关系、文件删除语义及缓存失效方式；不新增多进程同文件写入支持。
 4. SDK 空闲发送的 Promise 等整轮、忙碌发送只等排队的语义，以及通知事件匹配方式；审计写入失败不能改称投递失败或自动重投。
 5. custom meta 不进入模型上下文、通知进入上下文，以及通知在聊天中的分组规则。
-6. Node 测试发现范围仍包含本模块，TypeScript／lint 仍覆盖根 `tsgw/`；不得在目录迁移时漏掉原有测试。
+6. SDK 的 `codemode` exposure 仍默认不声明、注册后可被嵌套调用；Code mode 能列出三个工具及调度指导，历史工具仍直接暴露。不得通过修改全局 `codemode.mode` 或改变其他工具注册来实现本模块的暴露策略。
+7. Node 测试发现范围仍包含本模块，TypeScript／lint 仍覆盖根 `tsgw/`；不得在目录迁移时漏掉原有测试。
 
 ## 验证命令与标准
 
@@ -66,6 +67,6 @@ npm test
 git diff --check
 ```
 
-验收包括：四工具直接及嵌套调用；创建后立即返回；UUIDv7；自唤醒与跨普通会话投递；忙时不打断；空闲回收后恢复；子代理拒绝且普通 fork 不误判；历史 bytes／mtime 不变；取消及 runtime 重建不恢复；删除目标不重建；MCP 共享发送协调；审计失败不重投；原有重命名与通知分组回归。
+验收包括：三个调度工具默认只通过 Code mode 声明与调用、伪造直接调用被拒绝；历史工具仍直接调用、四工具嵌套调用及结构化结果；创建后立即返回；UUIDv7；自唤醒与跨普通会话投递；忙时不打断；空闲回收后恢复；子代理拒绝且普通 fork 不误判；历史 bytes／mtime 不变；取消及 runtime 重建不恢复；删除目标不重建；MCP 共享发送协调；审计失败不重投；原有重命名与通知分组回归。
 
 禁止真实模型请求、用户会话或配置修改。已知全量验证限制及本次结果见行为说明的验证记录，不在本文件复制动态测试计数。

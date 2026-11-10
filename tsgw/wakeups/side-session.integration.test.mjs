@@ -95,6 +95,7 @@ async function withFixture(t, check) {
     manager.appendMessage(answer("parent reply"));
     paths.set(manager.getSessionId(), manager.getSessionFile());
     const source = await open(manager.getSessionId(), manager.getSessionFile());
+    source.inner.setActiveToolsByName([...source.inner.getActiveToolNames(), "codemode"]);
     const side = async () => {
       const copy = createSideSession(source.sessionFile);
       paths.set(copy.sessionId, copy.path);
@@ -147,14 +148,16 @@ async function rejectWakeupCalls(f, wrapper) {
 }
 
 async function scheduleFromModel(f, targetId, message) {
-  f.faux.setResponses([call("schedule_wakeup", { session_id: targetId, after_seconds: 0.15, message }), answer("scheduled"), answer("side received handoff")]);
+  const args = { session_id: targetId, after_seconds: 0.15, message };
+  f.faux.setResponses([call("codemode", { code: `return await tools.schedule_wakeup(${JSON.stringify(args)});` }), answer("scheduled"), answer("side received handoff")]);
   const before = f.source.inner.agent.state.messages.length;
   await f.source.inner.prompt("Schedule the handoff to the existing side chat");
-  const result = f.source.inner.agent.state.messages.slice(before).find((item) => item.role === "toolResult" && item.toolName === "schedule_wakeup");
+  const result = f.source.inner.agent.state.messages.slice(before).find((item) => item.role === "toolResult" && item.toolName === "codemode");
   assert.equal(result?.isError, false, JSON.stringify(result));
-  assert.equal(result.details.targetSessionId, targetId);
-  assert.equal(result.details.sourceSessionId, f.source.sessionId);
-  return result.details;
+  const timer = JSON.parse(result.content.map((block) => block.text ?? "").join("").split("Output:\n")[1]);
+  assert.equal(timer.targetSessionId, targetId);
+  assert.equal(timer.sourceSessionId, f.source.sessionId);
+  return timer;
 }
 
 async function delivered(f, target, timer, message) {

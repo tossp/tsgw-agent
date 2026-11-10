@@ -4,7 +4,9 @@
 
 ## 范围与工具
 
-普通、非 Chat-only 会话可使用 `createWakeupExtension()` 的工具；不依赖内置子代理开关。子代理不加载这些工具。侧聊沿用上游严格工具 allow-list，四个 wakeup 工具不进入其注册表、模型声明或可调用集合，不能自行调用。工具可用的普通会话既可由模型直接调用，也可通过 `ctx.executeTool()`（包括 Code mode）调用，返回文本、`details` 和符合 `outputSchema` 的 `structuredContent`。
+普通、非 Chat-only 会话可使用 `createWakeupExtension()` 的工具；不依赖内置子代理开关。子代理不加载这些工具。侧聊沿用上游严格工具 allow-list，四个 wakeup 工具不进入其注册表、模型声明或可调用集合，不能自行调用。工具返回文本、`details` 和符合 `outputSchema` 的 `structuredContent`。
+
+`schedule_wakeup`、`list_wakeups`、`cancel_wakeup` 使用 SDK 的 `exposure: "codemode"`：注册时不激活、不向模型直接声明，由 Code mode 列出并通过 `tools.<name>()` 调用，也保留 `ctx.executeTool()` 的嵌套调用能力。未启用 Code mode 时需先启用，不自动更改全局设置或其他工具。`list_session_wakeups` 保持直接暴露。此处采用 SDK 原生暴露语义，不是禁止显式激活的权限控制；显式选中或从既有会话工具集恢复为 active 时，SDK 仍可直接声明这些工具。
 
 - `schedule_wakeup({ session_id?, after_seconds?, at?, message })`：默认当前会话；相对秒数与带时区的 ISO 时间二选一。时间必须在未来，消息不可为空。返回 SDK `uuidv7()` 生成的 `wakeupId` 及确定的 UTC 时间，不等待到点。
 - `list_wakeups({})`：查询本服务进程内全部尚未触发的定时器，不是历史。
@@ -58,7 +60,15 @@ npm run lint
 npm test
 ```
 
-集成测试使用真实 pi SDK、SessionManager、AgentSessionWrapper 和本地 faux provider，验证四工具直接/嵌套调用、自唤醒与 live leaf 连通、跨会话 meta 隔离、空闲/忙碌/已关闭目标、普通 fork 与子代理区分、取消、重建 runtime 不恢复、查询字节/mtime 不变、共享发送准备协调、已删除目标不重建及错误目标 ID 拒绝。无真实模型请求或用户会话改动。开发期间不运行 `next build`。
+集成测试使用真实 pi SDK、SessionManager、AgentSessionWrapper、Code mode 沙箱和本地 faux provider，验证三个调度工具默认不直接声明且拒绝伪造直接调用、Code mode 工具列表及调度指导、真实脚本调用与结构化结果、历史工具直接调用、四工具嵌套调用、自唤醒与 live leaf 连通、跨会话 meta 隔离、空闲/忙碌/已关闭目标、普通 fork 与子代理区分、取消、重建 runtime 不恢复、查询字节/mtime 不变、共享发送准备协调、已删除目标不重建及错误目标 ID 拒绝。无真实模型请求或用户会话改动。开发期间不运行 `next build`。
+
+### Code mode 注册回归（2026-11-10）
+
+- 仅将 `schedule_wakeup`、`list_wakeups`、`cancel_wakeup` 注册为 `exposure: "codemode"`，保留历史工具的直接暴露；不改全局设置、宿主接线或调度与投递逻辑。
+- 真实 SDK 与 Code mode 沙箱验证默认不激活、不直接声明，伪造直接调用被拒绝且不写定时器历史；三个工具仍出现在 Code mode 工具列表中，调度指导仍可见，脚本能创建、列出及取消定时器。自唤醒、跨会话及侧聊投递改由真实脚本触发，保留原有运行时回归。
+- 定向验证 80/80 通过；`node --check`、`tsc --noEmit --incremental false`、`npm run lint`、`git diff --check` 通过。主动 LSP 检查未确认两个静默文件；扩展文件附带的无后缀导入 warning 和长参数列表 hint 均在未修改行，类型验证以 tsc 为准。
+- 全量 `npm test`：3556 项，3554 通过、1 失败、1 跳过。唯一失败仍为已记录的 `lib/rotate-preview-secrets.test.mjs` root 只读目录断言，单独重跑同样失败；未修改或跳过该用例。
+- 未使用真实模型或用户会话，未修改用户配置，未提交、发布或部署；当前运行服务不会因源码修改自动切换注册方式。
 
 ### 上游 v0.14.1 侧聊集成回归（2026-11-02）
 

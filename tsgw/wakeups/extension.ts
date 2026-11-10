@@ -25,7 +25,7 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
     name: "pi-web-wakeup", hidden: true,
     factory: (pi) => {
       pi.registerTool(defineTool({
-        name: "schedule_wakeup", label: "Schedule wakeup",
+        name: "schedule_wakeup", label: "Schedule wakeup", exposure: "codemode",
         description: "Schedule a one-time wakeup of an existing ordinary session (default: this session). Specify after_seconds OR at with an explicit timezone, and a self-reminder or handoff message. Returns immediately. Timers live only in this server process: restart loses them, with no recovery or catch-up. Subagent targets are forbidden; wake their parent instead. This transfers only the message, not source context or permissions.",
         promptSnippet: "Schedule a one-time session wakeup or handoff",
         promptGuidelines: ["Use schedule_wakeup for deferred work; do not sleep or poll until the due time. A server restart discards pending wakeups."],
@@ -44,14 +44,14 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
         },
       }));
       pi.registerTool(defineTool({
-        name: "list_wakeups", label: "List pending wakeups",
+        name: "list_wakeups", label: "List pending wakeups", exposure: "codemode",
         description: "List pending wakeups in this server process across ordinary sessions. Not history. Empty after server restart; does not restore timers or start a model.",
         annotations: { readOnlyHint: true, openWorldHint: false },
         parameters: Type.Object({}), outputSchema: Type.Array(wakeupSchema),
         async execute() { return result(runtime.list()); },
       }));
       pi.registerTool(defineTool({
-        name: "cancel_wakeup", label: "Cancel wakeup",
+        name: "cancel_wakeup", label: "Cancel wakeup", exposure: "codemode",
         description: "Cancel a pending wakeup by its UUIDv7 ID. Does not stop a session or retract an already submitted message. Refuses an ID no longer pending in this server process.",
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
         executionMode: "sequential",
