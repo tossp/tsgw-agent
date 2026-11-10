@@ -19,6 +19,18 @@
 
 侧聊自身不能调用 wakeup 工具，但其他普通会话可以将已有侧聊作为 `schedule_wakeup` 的目标；`pi-web:side` 不等于 `pi-web:subagent`，不新增侧聊目标禁令。侧聊空闲回收后，投递仍通过真实 `startRpcSession(..., { requireExistingSession: true })` 严格重开，保留上游工具限制与完成通知静默。目标被删除时不重建，包括宿主读取有效快照后、严格重开前删除的竞态。此处只是 fork 增项与上游行为的集成，不改变上游侧聊、会话 API 或运行时。
 
+## 内置技能
+
+`tsgw/wakeups/skills/tsgw-session-wakeup/SKILL.md` 随 npm 包提供。现有 `createWakeupExtension()` 通过 SDK `resources_discover` 返回该文件的绝对路径，启动绑定和重载时发现；初始提示词仅广告名称、描述和路径，正文由模型按需读取，或通过 `/skill:tsgw-session-wakeup` 显式展开。不新增全局设置、不复制到用户技能目录、不修改工具注册、调度或权限。
+
+路径以启动器 `bin/pi-web.js` 为 Next 设置的安装包根 cwd 为基准，不使用会话项目目录，也不使用会被 Next 固化为构建机路径的 `import.meta.url`。`package.json.files` 包含 `tsgw/wakeups/skills`；模块测试在临时目录用真实 npm 打包、解压到另一目录后，再用真实 SDK 验证加载。
+
+技能与工具是配套能力，技能正文先通过 Code mode 的 `ALL_TOOLS` 核对四个工具；缺少任何工具时直接报“宿主能力不一致：缺少工具 …”并停止。Code mode 不可用或无法读取工具声明时同样报告具体错误，不直接调用兜底、不擅自安装或启用。这里是技能的使用契约和可执行检查，不是新增宿主启动失败钩子，也不增加执行授权。查询示例先过滤本次任务，再输出必要字段，不输出其他会话的交接正文。
+
+沿用现有扩展接入范围，不新增会话类型过滤。侧聊仍会发现技能，但四个 wakeup 工具依旧被上游 allow-list 排除；遇到该能力不一致时按技能要求报错，不放宽侧聊权限。子代理和 Chat-only 不因本次改动加载 wakeup 扩展。
+
+Settings › Skills 和 slash palette 使用的独立列表不会运行扩展资源发现，因此不列出该技能；本次不改变此上游行为。会话内技能广告及手动 `/skill:tsgw-session-wakeup` 使用已绑定会话的资源加载器，不受该列表限制。
+
 ## 内存与生命周期
 
 `tsgw/wakeups/scheduler.ts` 使用 Map 和 `setTimeout().unref()`。`tsgw/wakeups/host.ts` 的 `Symbol.for("pi-web.wakeupRuntime")` 保存进程级 runtime，跨 Next 热更新保持同一实例。会话空闲回收、浏览器关闭、会话扩展重载都不取消定时器；进程重启全部丢失，不扫描历史恢复、不补发、不重试，无周期调度、数据库、后台服务或新增界面。
@@ -60,7 +72,15 @@ npm run lint
 npm test
 ```
 
-集成测试使用真实 pi SDK、SessionManager、AgentSessionWrapper、Code mode 沙箱和本地 faux provider，验证三个调度工具默认不直接声明且拒绝伪造直接调用、Code mode 工具列表及调度指导、真实脚本调用与结构化结果、历史工具直接调用、四工具嵌套调用、自唤醒与 live leaf 连通、跨会话 meta 隔离、空闲/忙碌/已关闭目标、普通 fork 与子代理区分、取消、重建 runtime 不恢复、查询字节/mtime 不变、共享发送准备协调、已删除目标不重建及错误目标 ID 拒绝。无真实模型请求或用户会话改动。开发期间不运行 `next build`。
+集成测试使用真实 pi SDK、SessionManager、AgentSessionWrapper、Code mode 沙箱和本地 faux provider，验证内置技能发现／按需展开／重载、缺工具直接报错、npm 技能资源迁移、侧聊发现技能但保持原工具限制、三个调度工具默认不直接声明且拒绝伪造直接调用、Code mode 工具列表及调度指导、真实脚本调用与结构化结果、历史工具直接调用、四工具嵌套调用、自唤醒与 live leaf 连通、跨会话 meta 隔离、空闲/忙碌/已关闭目标、普通 fork 与子代理区分、取消、重建 runtime 不恢复、查询字节/mtime 不变、共享发送准备协调、已删除目标不重建及错误目标 ID 拒绝。无真实模型请求或用户会话改动。开发期间不运行 `next build`。
+
+### 内置技能接入回归
+
+- 新增 `skills/tsgw-session-wakeup/SKILL.md`、SDK `resources_discover` 接线及 npm `files` 条目；不修改工具暴露、会话 allow-list 或全局配置。四工具缺失直接报错，不增加侧聊技能过滤或工具权限。
+- 新增 3 个真实 SDK／Code mode 用例：启动广告与 `/skill:` 正文展开、重载后不重复、缺工具时在任何调用动作前报错、隔离 npm 打包解压后按新安装根定位技能；示例仅作语法检查和只读能力核验，不运行技能中的调度／取消示例。现有侧聊回归增加技能可发现且四工具仍不可调用的断言。
+- wakeups、侧聊、重命名、消息分组及 skills-service 定向测试 86/86 通过；`tsc --noEmit --incremental false`、`npm run lint` 和本轮文件的 `git diff --check` 通过。主动 LSP 有 1 个文件未确认；扩展文件的无后缀导入 warning 与长参数列表 hint 均位于原有代码，类型检查以 tsc 为准。
+- 全量 `npm test`：3647 项，3644 通过、2 失败、1 跳过。失败分别为既有 root 只读目录断言，以及 `lib/sidebar-actions.test.mjs` 加载 `lib/i18n/messages/en.ts` 时无法解析 `tsgw/subagent-status/messages`；两处单独重跑仍失败，本轮未修改这些文件或跳过测试。
+- 没有真实模型请求、用户定时器／配置修改或服务操作；未运行开发目录 `next build`。npm 验证为临时目录内的技能资源打包与 SDK 加载，不代表完整生产构建／安装冒烟。当前改动未提交、发布或部署。
 
 ### Code mode 注册回归（2026-11-10）
 

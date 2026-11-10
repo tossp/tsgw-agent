@@ -35,6 +35,7 @@
     "!.next/dev",
     "!.next/**/*.js.map",
     "public",
+    "tsgw/wakeups/skills",
     "docs/login2.md",
     "docs/tsgw-release.md",
     "next.config.ts",

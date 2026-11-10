@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Type } from "typebox";
 import { defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { WakeupRuntime } from "./runtime";
@@ -24,6 +25,10 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
   return {
     name: "pi-web-wakeup", hidden: true,
     factory: (pi) => {
+      // Next runs from the installed package root, not the agent session's cwd.
+      pi.on("resources_discover", () => ({
+        skillPaths: [join(process.cwd(), "tsgw/wakeups/skills/tsgw-session-wakeup/SKILL.md")],
+      }));
       pi.registerTool(defineTool({
         name: "schedule_wakeup", label: "Schedule wakeup", exposure: "codemode",
         description: "Schedule a one-time wakeup of an existing ordinary session (default: this session). Specify after_seconds OR at with an explicit timezone, and a self-reminder or handoff message. Returns immediately. Timers live only in this server process: restart loses them, with no recovery or catch-up. Subagent targets are forbidden; wake their parent instead. This transfers only the message, not source context or permissions.",

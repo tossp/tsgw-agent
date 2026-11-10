@@ -118,6 +118,7 @@ async function withFixture(t, check) {
 }
 
 function assertRestricted(wrapper) {
+  assert.ok(wrapper.inner.systemPrompt.includes("tsgw-session-wakeup"), "the skill must not add a new loading restriction or bypass the tool allow-list");
   assert.deepEqual(wrapper.inner.getAllTools().map((tool) => tool.name).sort(), ["bash", "read"]);
   for (const name of WAKEUP_TOOL_NAMES) {
     assert.equal(wrapper.inner.getActiveToolNames().includes(name), false, name);
