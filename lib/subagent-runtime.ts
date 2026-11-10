@@ -439,7 +439,7 @@ export function createSubagentController(
 
       const runInBackground = request.runInBackground ?? profile.runInBackground;
       const isolation = profile.isolation === "off" ? undefined : request.isolation ?? profile.isolation;
-      const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
+      const parentModelRuntime = parent.inner.modelRuntime;
       // Sized by the window of the model expected to read the copy, and refused before a worktree
       // or child session exists.
       const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? [], subagentInputLimits(
@@ -970,17 +970,15 @@ export function createSubagentController(
     if (stored) return stored.run;
     const wrapper = dependencies.getSession(sessionId);
     if (wrapper?.isAlive()) {
-      const run = readSubagentRun(
-        wrapper.inner.sessionManager.getEntries() as unknown as SessionEntry[],
-        sessionId,
-        wrapper.sessionFile,
-      );
+      // SAFETY: live manager's raw SDK entries; readSubagentRun validates custom metadata only, without mutation.
+      const run = readSubagentRun(wrapper.inner.sessionManager.getEntries() as unknown as SessionEntry[], sessionId, wrapper.sessionFile);
       if (run && wrapper.isRunning()) return { ...run, status: "running" };
       if (run) return settleOrphanedRun(run);
     }
     const sessionPath = await dependencies.resolveSessionPath(sessionId);
     if (!sessionPath) return null;
     const manager = SessionManager.open(sessionPath);
+    // SAFETY: opened manager's raw SDK entries; readSubagentRun validates custom metadata only, without mutation.
     const run = readSubagentRun(manager.getEntries() as unknown as SessionEntry[], sessionId, sessionPath);
     return run && settleOrphanedRun(run);
   }
@@ -1060,6 +1058,7 @@ export function createSubagentController(
     const wrapper = dependencies.getSession(sessionId);
     if (!wrapper?.isAlive()) return;
     const manager = wrapper.inner.sessionManager;
+    // SAFETY: live manager's raw SDK entries; readSubagentRun only reads custom metadata before recordResult appends.
     const run = readSubagentRun(manager.getEntries() as unknown as SessionEntry[], sessionId, wrapper.sessionFile);
     if (!run || (run.status !== "running" && run.status !== "queued")) return;
     const text = wrapper.inner.getLastAssistantText()?.trim();

@@ -1,6 +1,7 @@
 import type {
   AgentSessionEvent,
   BashOperations,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   SlashCommandInfo,
@@ -135,10 +136,7 @@ export interface AgentSessionLike {
   readonly autoCompactionEnabled: boolean;
   readonly autoRetryEnabled: boolean;
   readonly model: ModelLike | undefined;
-  readonly modelRuntime: {
-    getModel: (provider: string, modelId: string) => ModelLike | undefined;
-    refresh: (options?: { allowNetwork?: boolean; providers?: string[]; signal?: AbortSignal }) => Promise<unknown>;
-  };
+  readonly modelRuntime: ModelRuntime;
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
   /**

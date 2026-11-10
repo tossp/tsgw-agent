@@ -457,7 +457,7 @@ export class AgentSessionWrapper {
   isAwaitingInput(): boolean {
     if (!this.isRunning()) return false;
     for (const request of this.pendingUiRequests.values()) {
-      if (isBlockingExtensionUiRequest(request as unknown as ExtensionUiRequest)) return true;
+      if (isBlockingExtensionUiRequest(request as ExtensionUiRequest)) return true;
     }
     return false;
   }
@@ -605,12 +605,12 @@ export class AgentSessionWrapper {
     try {
       const manager = this.inner.sessionManager;
       if (!readShowCacheMissNotices(manager.getCwd())) return event;
+      // SAFETY: raw SDK entries retain the message/usage fields these read-only notice/pricing scans inspect.
       const entries = manager.getEntries() as unknown as SessionEntry[];
       const notices = collectLiveAssistantNotices(
         entries,
-        manager.getBranch() as unknown as SessionEntry[],
-        message,
-        withSessionPrices(entries, this.inner.modelRuntime),
+        /* SAFETY: same manager's raw branch; notices only read assistant diagnostics/identity. */ manager.getBranch() as unknown as SessionEntry[],
+        message, withSessionPrices(entries, this.inner.modelRuntime),
       );
       return notices.length > 0 ? { ...event, transcriptNotices: notices } : event;
     } catch (error) {
@@ -856,7 +856,7 @@ export class AgentSessionWrapper {
             method: "notify",
             notifyType: "warning",
             message: "Extension requested shutdown, but shutdown is not supported in Pi Web.",
-          } as ExtensionUiRequest as AgentEvent),
+          }),
           onError: (error) => this.emit({
             type: "extension_error",
             extensionPath: error.extensionPath,
@@ -938,7 +938,7 @@ export class AgentSessionWrapper {
     const activeBefore = this.inner.getActiveToolNames();
     const result = await this.inner.navigateTree(targetId, options);
     if (result.cancelled || this.chatOnly) return { cancelled: result.cancelled };
-
+    // SAFETY: raw SDK entries; resource/tool-selection readers inspect custom metadata only, without mutation.
     const entries = this.inner.sessionManager.getEntries() as unknown as SessionEntry[];
     if (!readSubagentSessionResources(entries)) {
       const activeAfter = this.inner.getActiveToolNames();
@@ -965,7 +965,7 @@ export class AgentSessionWrapper {
 
   /** A copy of a side chat would be read as one, or show its parent's history as a new session. */
   private refuseForkOfSideChat(): void {
-    if (hasSideMetadata(this.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
+    if (hasSideMetadata(/* SAFETY: raw SDK custom discriminants only, read-only. */ this.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
       throw new Error("A side chat cannot be forked");
     }
   }
@@ -1046,9 +1046,8 @@ export class AgentSessionWrapper {
       .join("\n") + "\n";
     writeFileSync(sessionFile, content, { encoding: "utf8", flag: "wx" });
 
-    // Pi delays the first flush until a user or assistant message exists.
-    // A leading shell command is neither, so mark this SDK manager as
-    // flushed after writing its own generated entries.
+    // SAFETY: this manager's header/entries are now on disk; SDK 1.5 _persist must append,
+    // not attempt its delayed first conversation flush with "wx". Do not reload/migrate the manager.
     (manager as unknown as { flushed: boolean }).flushed = true;
     cacheSessionPath(this.inner.sessionId, sessionFile);
   }
@@ -1594,8 +1593,8 @@ export class AgentSessionWrapper {
         // hooks rewrite the declared ones (codemode lists its nested tools and the MCP types).
         const declared = new Map((this.inner.agent.state?.tools ?? []).map((t) => [t.name, t.description]));
         // Active and callable, but requests leave the declaration out: codemode's "only" mode
-        // does this to active `direct` tools. The set is private to pi 0.99's AgentSession.
-        const hiddenDeclarations: unknown = Reflect.get(this.inner, "_hiddenDeclarations");
+        // does this to active `direct` tools. SDK 1.5 stores it in a normal (not #private) field.
+        const hiddenDeclarations = (this.inner as AgentSessionLike & { _hiddenDeclarations?: unknown })._hiddenDeclarations;
         const hidden = hiddenDeclarations instanceof Set ? hiddenDeclarations : new Set<unknown>();
         return all.map((t) => ({
           ...t,
@@ -1901,7 +1900,7 @@ export class AgentSessionWrapper {
       widgetKey: key,
       widgetLines: undefined,
       widgetPlacement: undefined,
-    } as ExtensionUiRequest as AgentEvent);
+    });
   }
 
   private clearExtensionWidget(key: string, emitClear = true): number {
@@ -2017,7 +2016,7 @@ export class AgentSessionWrapper {
       widgetKey: active.key,
       widgetLines,
       widgetPlacement: active.placement,
-    } as ExtensionUiRequest as AgentEvent);
+    });
   }
 
   private setExtensionWidgetFactory(
@@ -2094,7 +2093,7 @@ export class AgentSessionWrapper {
       id,
       method: "custom",
       lines,
-    } as ExtensionUiRequest as AgentEvent;
+    };
     this.pendingUiRequests.set(id, event);
     this.emit(event);
   }
@@ -2116,7 +2115,7 @@ export class AgentSessionWrapper {
       method: "custom",
       lines: [],
       closed: true,
-    } as ExtensionUiRequest as AgentEvent);
+    });
     custom.resolve(value);
   }
 
@@ -2300,7 +2299,7 @@ export class AgentSessionWrapper {
           method: "notify",
           message,
           notifyType: type,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       onTerminalInput: () => () => {},
       setStatus: (key, text) => {
@@ -2312,7 +2311,7 @@ export class AgentSessionWrapper {
           method: "setStatus",
           statusKey: key,
           statusText: text,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       setWorkingMessage: () => {},
       setWorkingVisible: () => {},
@@ -2321,11 +2320,9 @@ export class AgentSessionWrapper {
       setWidget: (key, content, options) => {
         if (!this._alive || this.extensionWidgetsResetting) return;
         if (typeof content === "function") {
-          this.setExtensionWidgetFactory(
-            key,
-            content as unknown as ExtensionWidgetFactory,
-            options,
-          );
+          // SAFETY: SDK factories take full TUI; this host supplies only terminal/requestRender.
+          // Unsupported calls follow setExtensionWidgetFactory's existing factory/render error path.
+          this.setExtensionWidgetFactory(key, content as unknown as ExtensionWidgetFactory, options);
           return;
         }
         if (content !== undefined && !Array.isArray(content)) return;
@@ -2349,7 +2346,7 @@ export class AgentSessionWrapper {
           widgetKey: key,
           widgetLines: content,
           widgetPlacement: options?.placement,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       setFooter: () => {},
       setHeader: () => {},
@@ -2359,7 +2356,7 @@ export class AgentSessionWrapper {
           id: randomUUID(),
           method: "setTitle",
           title,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       custom: <T = unknown>(factory: unknown, options?: unknown) => this.requestExtensionCustomUi<T>(factory, options),
       pasteToEditor: (text) => {
@@ -2368,7 +2365,7 @@ export class AgentSessionWrapper {
           id: randomUUID(),
           method: "set_editor_text",
           text,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       setEditorText: (text) => {
         this.emit({
@@ -2376,7 +2373,7 @@ export class AgentSessionWrapper {
           id: randomUUID(),
           method: "set_editor_text",
           text,
-        } as ExtensionUiRequest as AgentEvent);
+        });
       },
       getEditorText: () => "",
       addAutocompleteProvider: () => {},
@@ -2417,7 +2414,7 @@ export class AgentSessionWrapper {
             method: "notify",
             notifyType: "warning",
             message: busy,
-          } as ExtensionUiRequest as AgentEvent);
+          });
           return;
         }
         this.extensionStatuses.clear();
@@ -2724,10 +2721,10 @@ export async function setRpcSessionTools(
       return setRpcSessionTools(sessionId, sessionFile, requestedToolNames);
     }
     const manager = SessionManager.open(sessionFile, undefined);
-    if (readSubagentSessionResources(manager.getEntries() as unknown as SessionEntry[])) {
+    if (readSubagentSessionResources(/* SAFETY: raw SDK custom metadata only, validated read-only. */ manager.getEntries() as unknown as SessionEntry[])) {
       throw new Error("Subagent tool selection is fixed by its profile");
     }
-    if (hasSideMetadata(manager.getEntries() as unknown as SessionEntry[])) {
+    if (hasSideMetadata(/* SAFETY: raw SDK custom discriminants only, read-only. */ manager.getEntries() as unknown as SessionEntry[])) {
       throw new Error("Side chat tools are fixed when it is forked");
     }
     if (toolNames === undefined) appendClearedSessionToolSelection(manager);
@@ -2738,10 +2735,10 @@ export async function setRpcSessionTools(
   }
 
   if (existing.isRunning()) throw new Error("Cannot change tools while the session is running");
-  if (readSubagentSessionResources(existing.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
+  if (readSubagentSessionResources(/* SAFETY: raw SDK custom metadata only, validated read-only. */ existing.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
     throw new Error("Subagent tool selection is fixed by its profile");
   }
-  if (hasSideMetadata(existing.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
+  if (hasSideMetadata(/* SAFETY: raw SDK custom discriminants only, read-only. */ existing.inner.sessionManager.getEntries() as unknown as SessionEntry[])) {
     throw new Error("Side chat tools are fixed when it is forked");
   }
 
@@ -2833,15 +2830,14 @@ export function getRpcSessionInfos(options: { includeTransient?: boolean } = {})
     const manager = session.inner?.sessionManager;
     if (!manager) continue;
     const header = manager.getHeader();
-    const entries = manager.getEntries() as unknown as Array<
-      { type: string; timestamp: string } | SessionMessageEntry
-    >;
+    // SAFETY: raw SDK entries; catalogue reads message roles/text/times and custom metadata, never UI toolCall fields.
+    const entries = manager.getEntries() as unknown as SessionEntry[];
     const messages = entries.filter((entry): entry is SessionMessageEntry => entry.type === "message");
     const firstUserMessage = messages.find((entry) => entry.message.role === "user");
     const sessionFile = manager.getSessionFile() ?? session.sessionFile;
     const persisted = Boolean(sessionFile && existsSync(sessionFile));
-    const subagent = readSubagentRun(entries as unknown as SessionEntry[], header?.id ?? session.sessionId, sessionFile ?? "");
-    const side = subagent ? null : readSideRelation(entries as unknown as SessionEntry[]);
+    const subagent = readSubagentRun(entries, header?.id ?? session.sessionId, sessionFile ?? "");
+    const side = subagent ? null : readSideRelation(entries);
 
     // An ensure_session call creates an idle, empty runtime while the composer
     // loads commands. Do not leak it into history before a prompt is accepted.
@@ -3100,6 +3096,7 @@ export async function startRpcSession(
     sessionManager = SessionManager.create(cwd, undefined);
   }
   const sessionCwd = sessionManager.getCwd();
+  // SAFETY: raw SDK entries; startup readers only inspect custom resource/tool/side metadata, not UI-normalized messages.
   const sessionEntries = sessionManager.getEntries() as unknown as SessionEntry[];
   const hasPersistedSubagentSnapshot = sessionFile && hasSubagentResourceSnapshot(sessionEntries);
   const subagentResources = sessionFile
@@ -3282,7 +3279,7 @@ export async function startRpcSession(
     // System messages carry the prompt and tool loadout, not a conversation.
     const hasExistingMessages = branch.some((entry) => entry.type === "message" && entry.message.role !== "system");
     const savedModel = hasExistingMessages
-      ? getLatestModelChange(branch as unknown as SessionEntry[])
+      ? getLatestModelChange(/* SAFETY: raw SDK branch; reads model_change provider/modelId only. */ branch as unknown as SessionEntry[])
       : null;
     const restoredModel = savedModel
       ? services.modelRuntime.getModel(savedModel.provider, savedModel.modelId)
