@@ -171,7 +171,8 @@ gh run list --workflow tsgw-npm.yml --limit 5
 ```bash
 git worktree add --detach ../tsgw-build HEAD   # 分支已在别处 checkout，必须 --detach
 cd ../tsgw-build
-npm ci && npm run build
+# 下列命令由已清空宿主环境的隔离启动器执行，见下文。
+npm ci --include=dev && npm run build
 node tsgw/release/pack.mjs /tmp/tsgw-local && node tsgw/release/smoke.mjs /tmp/tsgw-local
 ```
 
@@ -180,6 +181,30 @@ node tsgw/release/pack.mjs /tmp/tsgw-local && node tsgw/release/smoke.mjs /tmp/t
 `tsgw/release/pack.mjs` 要求目标目录为空、`.next/BUILD_ID` 存在、没有运行中的 dev 锁；`tsgw/release/smoke.mjs` 需要本机已有 Playwright Chromium（`npx playwright install --with-deps chromium`）。
 
 本地已验证 Linux 的正式版和预览版安装、生产启动、登录和原生终端；macOS、Windows 尚未验收。npm 12 的安装脚本策略可能阻止本包的 `prepare-terminal.js` 和 `node-pty` 安装脚本；若遇原生终端或 macOS helper 权限问题，先核对安装日志，再只对确认需要的包放行脚本，不全局关闭脚本保护。
+
+### 本地生产验收的测试层隔离
+
+此隔离只作用于测试启动器、子进程与夹具，不修改源码配置、固定 DSN、默认采集行为或 tgz 字节。它不是操作系统级沙箱，也不限制安装所需的公开 npm registry 网络。
+
+1. 主代理确认最终整合提交后，核对独立工作树 `HEAD` 和依赖 manifest/lock，并以 `git status --porcelain --untracked-files=all` 拒绝未提交及未跟踪污染（包含源码、公开资源和 npmrc），发现后停止而非删除；Git 已忽略的依赖目录不计入。构建前无 `.next`、宿主 `.env*`、共享 `node_modules` 软链或活动 dev 锁。运行时修复与测试适配必须在该最终快照中，不能用旧快照结果替代。
+2. 用 `createSmokeEnvironment(<私有临时目录>)` 生成允许列表环境；启动器显式提供工具链 `PATH`、语言、已安装的 `PLAYWRIGHT_BROWSERS_PATH`。HOME、agent、XDG、临时目录、npm cache、user/global npmrc 全部独立，不继承宿主 `NODE_ENV`、`NEXT_RUNTIME`、`PI_WEB`、代理、模型/SSH/npm/CAT/S3 凭据或 `.env`。源依赖执行 `npm ci --include=dev`；只删除自己创建并核实指向的软链，再安装到自己的工作树。
+3. npm 12 若拒绝 lock 内其它 registry 的 tarball，使用临时命令 `--registry=https://registry.npmjs.org/ --replace-registry-host=always`，不放开任意远程 URL。若日志确认 node-pty 脚本被拦，只在临时 userconfig 加入 `allow-scripts[]=node-pty@<manifest 精确版本>` 后 `npm rebuild node-pty --foreground-scripts`，不改产品 manifest 或宿主 npm 配置。
+4. 启动构建前 `await startCatCapture(<私有临时目录>)`，异步启动 `npm run build`，环境取 `{...隔离环境, ...capture.env}`；父收集器必须保持事件循环，不能同步阻塞等待此构建子进程。无上传 token，不进行 CAT/S3 上传。完成后调用 `capture.assertClean()` 并关闭收集器；构建失败保持非零退出，不继续 pack/smoke。
+5. `pack.mjs <空产物目录>` 原样使用，仍要求真实生产 BUILD_ID，仍拒绝污染/敏感文件，仍执行 `npm pack --ignore-scripts`。然后仅一次 `smoke.mjs <同一产物目录>`，使用相同隔离基础环境；它自己创建私有 HOME/agent/npm prefix、随机密码及最小 session header。npm 12 仅在临时 userconfig 中允许已校验 tgz 的精确 `file:<绝对路径>` 来源和 node-pty 的精确版本。npm 的名称/版本规则不能匹配本地 file 来源，不以 Linux postinstall 无操作为由跳过 macOS helper 权限修复；npm 11 保持原生命周期行为。仍实际联网全新安装依赖，不从源依赖软链安装、不跳过 PTY。
+6. smoke 在启动 CLI/Next 前预加载 Node 原生 HTTP/fetch 捕获，在创建页面前安装浏览器 context 路由。CAT 请求收到正常的本地 200；漏网 DNS、本地收集异常、页面异常、安装/服务失败仍令验收失败。Node SDK 升级后必须重新核验实际传输，不能假定仅 patch fetch 足够。浏览器夹具阻止 Service Worker 绕过 context 拦截。
+7. smoke 全程记录服务退出结果和是否主动关闭，最后一个 API 成功之后的非预期退出也令最终判定失败，主动 TERM 不误报。POSIX 下只对本次 detached CLI 建立的独立组执行有界 TERM/KILL；Next 继承此组，CLI 已退出也仍清理剩余成员。随后逐项复核本次 PID/端口/真实 PTY shell 与 DELETE/404，一项失败不跳过其余检查。报告目录包含 `server.log`、`server-exit.json`、`installed.png` 和仅通道/条目类型的 `cat.json`，不把 envelope 正文写盘。日志移除本次已知随机密码/Basic/Cookie；失败夹具保持 0700 且可能包含临时凭据，不直接上传。成功移除安装/HOME 夹具，报告保留。
+
+独立隔离回归（不会执行完整生产 build/pack/install smoke，不向真实 CAT 发送事件）：
+
+```sh
+node --test tsgw/release/smoke-isolation.test.mjs tsgw/release/smoke-install-scripts.test.mjs tsgw/release/smoke-lifecycle.test.mjs
+# 先显式提供已经核实的 Chromium 缓存，不默认下载浏览器或系统依赖。
+PLAYWRIGHT_BROWSERS_PATH=<现有浏览器缓存> node --test tsgw/release/smoke-browser-regression.mjs
+```
+
+Node 回归加载真实 `server-init.ts` 与默认 SDK 原生 transport，验证回环收到 envelope、未捕获原错误仍以退出码 1 呈现、未知传输 DNS 尝试失败封闭。浏览器回归只在临时目录打包真实 `browser-init.ts` 与 Next SDK（不是 `next build`），使用真实 Chromium，在 CAT DNS 不可解析的条件下验证已 fulfillment 的响应无远端 IP、真实错误 envelope 到达测试层、`pageerror` 仍使原有断言失败。浏览器回归单独运行，避免普通源测试在 CI 的 Chromium 安装步骤之前隐式要求浏览器。
+
+生命周期回归复用 smoke 的最终成功判定，覆盖最后一次 API 成功后的退出码/信号、主动 TERM、leader 先退出而真实子进程持端口并忽略 TERM（验证 KILL 回收）、PID 检查失败后仍执行端口检查。npm 回归直接加载所选 npm 12 自身的来源 matcher，并在 npm 11/12 下离线安装无依赖合成包，确认必要 postinstall 确实执行；这些夹具不是完整生产安装冒烟。
 
 ## 7. 依赖与证据（2026-10-25）
 
@@ -215,7 +240,7 @@ GitHub Action 版本（`gh api repos/<action>/releases/latest` 与 `contents/act
 | --- | --- | --- |
 | `node tsgw/release/version.mjs` | `GITHUB_REPOSITORY`、`GITHUB_REF`、`GITHUB_SHA`、`GITHUB_RUN_NUMBER`、`GITHUB_RUN_ATTEMPT`、`GITHUB_OUTPUT`、本地 git（`refs/remotes/origin/tsgw`） | stdout 打印 JSON `{ "version": "…", "tag": "next"|"latest" }`；设置了 `GITHUB_OUTPUT` 时写入 `version` 与 `tag`；只改写本次 checkout 的 `package.json` / `package-lock.json` 的版本字段；断言仓库、`HEAD`、包名与 lock 元信息 |
 | `node tsgw/release/pack.mjs <outDir>` | 已构建的工作目录 | 在空目录里产出恰好一个 `tsgw-agent-<version>.tgz`、`sha256sum -c` 兼容的 `SHA256SUMS`，以及含 `version`/`tag`/`filename`/`files` 的 `release.json`；拒绝 dev 锁与污染的 `.next` |
-| `node tsgw/release/smoke.mjs <outDir>` | 同上 | 从 tgz 装到临时 prefix，用 Playwright Chromium 验收登录页与终端；需要 CI 预装 Chromium |
+| `node tsgw/release/smoke.mjs <outDir>` | 同上 | 从 tgz 装到临时 prefix，用 Playwright Chromium 验收登录页与终端；需要 CI 预装 Chromium。环境与双端 CAT 传输只在测试层隔离，临时报告路径写 stdout |
 
 发布 job 不重新构建，只发布 artifact 里的 tgz；冒烟也从同一 tgz 全新安装，所以最终发布的字节就是验收过的字节。
 

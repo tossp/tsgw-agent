@@ -7,6 +7,10 @@
 - `version.mjs`：`deriveRelease()`、`prepareVersion()`；默认以调用者工作目录为项目根，仅 CI 赋值版本字段。
 - `pack.mjs`：`verifyPack()`、`readPackResult()`、`packRelease()`；校验生产构建和包内容，生成原有归档与摘要。
 - `smoke.mjs`：安装已打包产物，在独立临时 prefix 中验证 CLI、生产启动、登录和原生终端；`terminal-output.mjs` 重组 SSE 输出。
+- `smoke-environment.mjs`：仅测试子进程的环境允许列表、私有 HOME/agent/npm cache/双 npmrc，以及基于已验 tgz 精确 file 来源的临时 npm 12 生命周期放行；不继承宿主运行时、代理或凭据。
+- `smoke-lifecycle.mjs`：记录服务退出码/信号和主动关闭状态，收尾本次独立 CLI/Next 组，逐项复核 PID/PTY/端口并统一执行 smoke 成功判定。非预期晚期退出不能变成成功；leader 已退出也仍清理其组。
+- `smoke-cat.mjs` / `smoke-cat-preload.cjs`：仅验收进程的回环收集器、Node 原生 HTTP/fetch 重定向、DNS 漏网失败记录和浏览器 context 路由；原始 envelope 只在内存中，不改产物/固定 DSN/默认监控。
+- `smoke-isolation.test.mjs`：真实 Node SDK 默认 transport、未捕获异常退出码、环境及漏网失败封闭回归；`smoke-install-scripts.test.mjs` 核验当前 npm 的真实 matcher，并离线安装无依赖合成 tgz 验证 postinstall；`smoke-lifecycle.test.mjs` 使用真实晚期退出、独立组与持端口子进程验证清理及最终成功判定。`smoke-browser-regression.mjs` 为真实 browser-init/Next SDK 的独立 Chromium 回归，不由需要先装浏览器的普通源测试入口隐式执行。
 - `index.js` / `index.d.ts`：原生 CommonJS 公共 API（外部使用模块根路径或显式 `index.js`，不保留旧文件转发壳）；包身份、SemVer、`next` / `latest` 通道、注册表元数据与源码链接。JS 保持原生 CommonJS，根 manifest 固定从 `../../package.json` 加载，不依赖 cwd、TypeScript 转译或 Next 编译。
 - `*.test.mjs`：真实实现、工作流内联脚本及临时 fixture 测试；不向 npm/CAT 发布或请求真实镜像同步。
 
@@ -36,6 +40,9 @@ CAT 归档和补传属于 `../cat-monitoring/`；登录与 Playwright 登录辅�
 - `files` 必须包含 `tsgw/release/index.js`、`tsgw/cat-monitoring/next-config.mjs`、`tsgw/login2/README.md`、`tsgw/release/README.md` 和 `tsgw/cat-monitoring/BUILD.md`。CAT 的原始配置由包内 `next.config.ts` 直接加载，CLI 直接 require release 的原生 CJS，不能只依赖 `.next` 编译结果。不要求打包整个模块、发布脚本、测试或 AGENTS；其他既有 files 条目按各自职责保留。
 - 包内继续要求生产 `.next/BUILD_ID`、登录路由、既有公开资产和文档。归档/冒烟依赖 npm、Git、tar、Playwright Chromium、原生 PTY；构建与打包必须使用干净 CI 或隔离目录，不能污染开发 `.next`。
 - CI 保持源测试先于版本派生、同一次产物打包/冒烟/发布、CAT 归档先于移除 map、CAT 补传与 npm 发布互不依赖；初始化仍仅消费已验收产物。
+- smoke 的全局式 npm 安装仍联网解析公开 registry 依赖并执行必要生命周期；npm 12 只在临时 userconfig 精确允许已校验 tgz 的 `file:<绝对路径>` 来源与源 manifest 指定的 node-pty 版本，不用 manifest 名称/版本代替 file 来源，不全局放开。npm 11 保留原生命周期行为；本包的 macOS helper 权限修复不得跳过。安装阶段不拿到测试密码或 Node preload。
+- 服务启动前传入测试 preload（经 NODE_OPTIONS 覆盖 CLI 的 Next 子进程），浏览器页面创建前安装 context route 并禁用夹具 Service Worker 绕过。当前 SDK `@sentry/node/build/cjs/transports/http.js` 使用原生 `https.request`；升级须重新核验，不能只拦 fetch。漏网 CAT DNS 或本地收集错误令验收失败，不吞原始 pageerror/退出码。
+- smoke 使用回环临时端口；POSIX `detached:true` 使本次 CLI PID 成为 PGID，`bin/pi-web.js` 的非 detached Next 子进程继承该组。清理只对这个已知组执行有界 TERM/KILL，不发现或终止实际服务。无论 leader 是否活着，均清理该组，再逐项复查本次 Node PID、端口复用、PTY DELETE/404 与真实 shell PID 退出；一项失败不能跳过其余核查。报告写独立临时目录（含 `server-exit.json` 的退出码/信号/主动关闭状态），成功删除 HOME/prefix；失败保留 0700 fixture，包含随机测试凭据的可能性不能据此上传。日志只移除本次已知密码/Basic/Cookie 值，不新增产品脱敏策略。
 
 ## 升级检查
 
@@ -52,6 +59,8 @@ CAT 归档和补传属于 `../cat-monitoring/`；登录与 Playwright 登录辅�
 
 ```sh
 node --test tsgw/release/*.test.mjs tsgw/cat-monitoring/*.test.mjs
+# 单独运行；要求预装匹配的 Chromium，PLAYWRIGHT_BROWSERS_PATH 显式指向现有缓存。
+node --test tsgw/release/smoke-browser-regression.mjs
 node --test lib/pi-web-cli-commands.test.mjs lib/pi-web-options.test.mjs
 node_modules/.bin/eslint tsgw/release bin/pi-web-options.js bin/pi-web-update.js app/api/app-update/route.ts lib/pi-web-cli-commands.test.mjs lib/pi-web-options.test.mjs
 node_modules/.bin/tsc --noEmit
