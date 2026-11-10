@@ -4,19 +4,21 @@ import test from "node:test";
 import { Script, createContext } from "node:vm";
 import ts from "typescript";
 
-const source = ts.createSourceFile("useAgentSession.ts", await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
+const source = ts.createSourceFile("useAgentSession.ts", await readFile(new URL("../../hooks/useAgentSession.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
+const dismissSource = ts.createSourceFile("useNoticeDismiss.ts", await readFile(new URL("./useNoticeDismiss.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 const nodes = [];
 function visit(node) { nodes.push(node); ts.forEachChild(node, visit); }
 visit(source);
 const reducerNames = ["markOldestNoticeExiting", "fillPendingNotices", "noticeReducer"];
 const declarations = reducerNames.map((name) => nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(source));
-const dismiss = nodes.find((node) => ts.isVariableDeclaration(node) && node.name.getText(source) === "dismissNotice");
-assert.ok(dismiss, "hook exposes a targeted dismiss callback");
+const dismiss = dismissSource.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "useNoticeDismiss");
+assert.ok(dismiss, "module exposes the targeted dismiss hook");
+assert.match(source.text, /const dismissNotice = useNoticeDismiss\(dispatchNotice, setPausedNoticeId\)/);
 const script = new Script(ts.transpileModule(`
   const MAX_NOTICES = 5;
   ${declarations.join("\n")}
-  ${dismiss.getText(source).replace(/^dismissNotice =/, "const dismissNotice =")};
-  dismissNotice;
+  ${dismiss.getText(dismissSource).replace(/^export /, "")}
+  useNoticeDismiss(dispatchNotice, setPausedNoticeId);
 `, { compilerOptions: { target: ts.ScriptTarget.ESNext } }).outputText);
 const notice = (id, exiting = false) => ({ id, message: id, type: "info", exiting });
 function setup(visible, pending = [], paused = null) {

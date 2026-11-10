@@ -2,6 +2,7 @@
 // the stored prompt stays readable verbatim, and reading it never touches the
 // session. Standalone: seeds a throwaway PI_CODING_AGENT_DIR, starts and stops
 // its own dev server on a free loopback port, and never talks to a model.
+// Run: node tsgw/user-message-view/user-message-render-toggle.mjs
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -17,7 +18,7 @@ import {
   MEDIA_TEXT, SKILL_TEXT, SKILL_COMMAND, LONG_TEXT, seedUserMessageRenderFixtures,
 } from "./user-message-render-fixtures.mjs";
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 assert.ok(!existsSync(join(root, ".next/dev/lock")), "Use a checkout without an active dev server");
 const artifacts = join(root, "test-results/e2e");
 mkdirSync(artifacts, { recursive: true });

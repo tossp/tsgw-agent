@@ -18,7 +18,7 @@ import { checkModelDiscovery } from "./model-discovery.mjs";
 import { checkModelOrder } from "./model-order.mjs";
 import { checkModelContext } from "./model-context.mjs";
 import { checkModelSelector } from "./model-selector.mjs";
-import { checkSubagentStatus } from "./subagent-status.mjs";
+import { checkSubagentStatus } from "../tsgw/subagent-status/subagent-status.mjs";
 import { checkSideSession } from "./side-session.mjs";
 import { checkFilesPlacement, showSidebarSessions } from "./sidebar.mjs";
 import { checkSessionNavigation } from "./session-navigation.mjs";

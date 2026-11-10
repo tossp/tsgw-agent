@@ -13,13 +13,14 @@ import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBl
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
-import { summarizeTurnUsage, type MessageUsageSummary } from "@/lib/message-usage";
+import { summarizeTurnUsage, type MessageUsageSummary } from "@/tsgw/message-usage/message-usage";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
-import { RunningSubagentsStatus } from "./RunningSubagentsStatus";
+import { RunningSubagentsStatus } from "@/tsgw/subagent-status/RunningSubagentsStatus";
+import { NoticeDismissButton } from "@/tsgw/notice-dismiss/NoticeDismissButton";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
@@ -1575,7 +1576,6 @@ const NOTICE_MAX_HEIGHT_PX = 500;
 const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;
 
 function NoticeShelf({ notices, floating = false, onPauseChange, onDismiss }: { notices: NoticeItem[]; floating?: boolean; onPauseChange?: (id: string | null) => void; onDismiss: (id: string) => void }) {
-  const { t } = useI18n();
   if (notices.length === 0) return null;
   return (
     <div
@@ -1683,16 +1683,7 @@ function NoticeShelf({ notices, floating = false, onPauseChange, onDismiss }: { 
                 </span>
               ) : part.text)}
             </span>
-            <button
-              type="button"
-              className="notice-shelf-dismiss"
-              aria-label={t("chat.close")}
-              title={t("chat.close")}
-              onClick={() => onDismiss(notice.id)}
-              style={{ flexShrink: 0, width: 44, height: 44, margin: "7px -8px 0 -6px", display: "grid", placeItems: "center", border: "none", borderRadius: 8, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
-            </button>
+            <NoticeDismissButton noticeId={notice.id} onDismiss={onDismiss} />
           </div>
         );
       })}

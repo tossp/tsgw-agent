@@ -4,8 +4,8 @@ import { memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "
 import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { SafeMarkdownBody } from "./SafeMarkdownBody";
-import { UserMessageView } from "./UserMessageView";
-export { replaceUserMessageText } from "./UserMessageView";
+import { UserMessageView } from "@/tsgw/user-message-view/UserMessageView";
+export { replaceUserMessageText } from "@/tsgw/user-message-view/UserMessageView";
 import { ImagePreview } from "./ImagePreview";
 import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
@@ -13,9 +13,9 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
-import { sameUsageSummary, type MessageUsageSummary } from "@/lib/message-usage";
-import { MessageUsage, UsageDuration } from "./MessageUsage";
-import { UsageIcon } from "./UsageIcon";
+import { sameUsageSummary, type MessageUsageSummary } from "@/tsgw/message-usage/message-usage";
+import { MessageUsage, UsageDuration } from "@/tsgw/message-usage/MessageUsage";
+import { UsageIcon } from "@/tsgw/message-usage/UsageIcon";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, type SplitDiffFile, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
@@ -1739,6 +1739,7 @@ function getMessageImages(content: CustomMessage["content"] | UserMessage["conte
 }
 
 function imageSource(img: ImageContent): string {
+  // SAFETY: persisted pi-ai images may use flat optional fields absent from the UI type.
   const flat = img as unknown as { data?: string; mimeType?: string };
   if (img.source) {
     return img.source.type === "base64"

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { SafeMarkdownBody } from "./SafeMarkdownBody";
-import { ImagePreview } from "./ImagePreview";
+import { SafeMarkdownBody } from "@/components/SafeMarkdownBody";
+import { ImagePreview } from "@/components/ImagePreview";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
@@ -85,7 +85,7 @@ export function UserMessageView({ time, message, cwd, onOpenFile, entryId, onFor
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
       {imageBlocks.map((img, i) => {
         // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
-        // pi-ai on-disk format uses flat {data, mimeType} — handle both
+        // SAFETY: pi-ai on-disk images use optional flat {data, mimeType} absent from the UI type.
         const flat = img as unknown as { data?: string; mimeType?: string };
         const src = img.source
           ? img.source.type === "base64"

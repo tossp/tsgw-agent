@@ -1,10 +1,16 @@
 import type { LocalePlugin } from "../types";
+import { runningSubagentMessages } from "../../../tsgw/subagent-status/messages";
+import { messageUsageMessages } from "../../../tsgw/message-usage/messages";
+import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 內建繁體中文語系。 */
 export const zhTWLocale: LocalePlugin = {
   id: "zh-TW",
   label: "繁體中文",
   messages: {
+    ...runningSubagentMessages["zh-TW"],
+    ...messageUsageMessages["zh-TW"],
+    ...userMessageViewMessages["zh-TW"],
     "common.ok": "確定",
     "common.language": "語言",
     "common.models": "模型",
@@ -717,8 +723,6 @@ export const zhTWLocale: LocalePlugin = {
     "chat.runningTools": "正在執行 {names}...",
     "chat.runningToolsMore": "正在執行 {names}（另有 {count} 個）...",
     "chat.waitingModel": "正在等待模型...",
-    "chat.runningSubagent": "有 {count} 個子代理正在執行（{descriptions}）",
-    "chat.runningSubagents": "有 {count} 個子代理正在執行（{descriptions}）",
     "chat.runningCommand": "正在執行命令...",
     "chat.thinking": "正在思考...",
     "chat.processDetails": "處理詳細資料",
@@ -727,20 +731,6 @@ export const zhTWLocale: LocalePlugin = {
     "chat.toolCall": "次工具呼叫",
     "chat.toolCalls": "次工具呼叫",
     "chat.turnDuration": "耗時 {time}",
-    "chat.usageDetails": "查看精確用量",
-    "chat.usageTurn": "本輪用量",
-    "chat.usageResponse": "本次回應用量",
-    "chat.usageModel": "模型",
-    "chat.usageProvider": "模型供應商",
-    "chat.usageRequestStarted": "請求開始",
-    "chat.usageResponseCompleted": "回應完成",
-    "chat.usageStopReason": "結束原因",
-    "chat.usageError": "錯誤訊息",
-    "chat.usageCostDetail": "{kind}費用",
-    "chat.usageDuration": "耗時",
-    "chat.usageAverage": "平均輸出速度",
-    "chat.usageAverageHint": "輸出 token 數 ÷ 同一統計範圍的耗時；整輪平均包含工具執行及等待時間",
-    "chat.usageIncomplete": "用量不完整：部分回應沒有用量記錄。",
     "chat.viewFullOutput": "檢視完整輸出",
     "chat.loadingFullOutput": "載入中…",
     "chat.downloadFullOutput": "下載完整輸出",
@@ -1749,8 +1739,6 @@ export const zhTWLocale: LocalePlugin = {
     "i18n.thinking": "思考",
     "i18n.largeMessageReveal": "訊息內容過大（{size}）。點選即可用純文字查看；為保持頁面流暢，已停用 Markdown 轉譯。",
     "i18n.loadingThinking": "正在載入思考內容...",
-    "chat.messageSource": "原文",
-    "chat.renderMessage": "渲染",
     "i18n.copyMessage": "複製訊息",
     "i18n.editFromHere": "從此處編輯",
     "i18n.editFromHereTitle": "從此處編輯，並在這個工作階段中建立分支",

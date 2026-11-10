@@ -2,7 +2,7 @@
 
 import { Fragment } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { averageOutputRate, formatUsageCost, formatUsageTokens, type MessageUsageSummary } from "@/lib/message-usage";
+import { averageOutputRate, formatUsageCost, formatUsageTokens, type MessageUsageSummary } from "./message-usage";
 import { formatTurnDuration } from "@/lib/turn-duration";
 import { UsageIcon, type UsageIconKind } from "./UsageIcon";
 import type { AssistantMessage } from "@/lib/types";

@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentUsage } from "./types";
+import type { AgentMessage, AgentUsage } from "@/lib/types";
 
 export interface MessageUsageSummary {
   usage: AgentUsage;

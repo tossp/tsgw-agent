@@ -19,6 +19,7 @@ import { AgentCommandError, agentStatusUrl, isPromptRejectedError, sendAgentComm
 import { createSideChat, SIDE_REFUSAL_MESSAGES } from "@/lib/side-chat-client";
 import { missingCwdFromBody } from "@/lib/missing-cwd";
 import { reportCatError } from "@/lib/cat-monitoring";
+import { useNoticeDismiss } from "@/tsgw/notice-dismiss/useNoticeDismiss";
 import {
   deleteSessionViewSnapshot,
   getSessionViewSnapshot,
@@ -3298,10 +3299,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Pause notice expiry while hovered or focused.
   // The remainingMs/startedAt/oldestId refs implement a true pause-and-resume instead of resetting the 5s timer.
   const [pausedNoticeId, setPausedNoticeId] = useState<string | null>(null);
-  const dismissNotice = useCallback((id: string) => {
-    dispatchNotice({ type: "remove", id });
-    setPausedNoticeId((paused) => paused === id ? null : paused);
-  }, []);
+  const dismissNotice = useNoticeDismiss(dispatchNotice, setPausedNoticeId);
   const noticeRemainingMsRef = useRef(NOTICE_VISIBLE_MS);
   const noticeTimerStartedAtRef = useRef<number | null>(null);
   const noticeOldestIdRef = useRef<string | null>(null);

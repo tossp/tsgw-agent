@@ -1,10 +1,16 @@
 import type { LocalePlugin } from "../types";
+import { runningSubagentMessages } from "../../../tsgw/subagent-status/messages";
+import { messageUsageMessages } from "../../../tsgw/message-usage/messages";
+import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 内置简体中文语言包。 */
 export const zhCNLocale: LocalePlugin = {
   id: "zh-CN",
   label: "简体中文",
   messages: {
+    ...runningSubagentMessages["zh-CN"],
+    ...messageUsageMessages["zh-CN"],
+    ...userMessageViewMessages["zh-CN"],
     "common.ok": "确定",
     "common.language": "语言",
     "common.models": "模型",
@@ -717,8 +723,6 @@ export const zhCNLocale: LocalePlugin = {
     "chat.runningTools": "正在运行 {names}...",
     "chat.runningToolsMore": "正在运行 {names}（另有 {count} 个）...",
     "chat.waitingModel": "正在等待模型...",
-    "chat.runningSubagent": "有 {count} 个子代理正在运行（{descriptions}）",
-    "chat.runningSubagents": "有 {count} 个子代理正在运行（{descriptions}）",
     "chat.runningCommand": "正在运行命令...",
     "chat.thinking": "正在思考...",
     "chat.processDetails": "处理详情",
@@ -727,20 +731,6 @@ export const zhCNLocale: LocalePlugin = {
     "chat.toolCall": "次工具调用",
     "chat.toolCalls": "次工具调用",
     "chat.turnDuration": "耗时 {time}",
-    "chat.usageDetails": "查看精确用量",
-    "chat.usageTurn": "本轮用量",
-    "chat.usageResponse": "本次响应用量",
-    "chat.usageModel": "模型",
-    "chat.usageProvider": "模型提供商",
-    "chat.usageRequestStarted": "请求开始",
-    "chat.usageResponseCompleted": "响应完成",
-    "chat.usageStopReason": "结束原因",
-    "chat.usageError": "错误信息",
-    "chat.usageCostDetail": "{kind}费用",
-    "chat.usageDuration": "耗时",
-    "chat.usageAverage": "平均输出速度",
-    "chat.usageAverageHint": "输出 token 数 ÷ 同一统计范围的耗时；整轮平均包含工具执行及等待时间",
-    "chat.usageIncomplete": "用量不完整：部分响应没有用量记录。",
     "chat.viewFullOutput": "查看完整输出",
     "chat.loadingFullOutput": "加载中…",
     "chat.downloadFullOutput": "下载完整输出",
@@ -1749,8 +1739,6 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.thinking": "思考",
     "i18n.largeMessageReveal": "消息内容过大（{size}）。点击以纯文本查看 — 已禁用 markdown 渲染以避免页面卡顿。",
     "i18n.loadingThinking": "正在加载思考内容...",
-    "chat.messageSource": "原文",
-    "chat.renderMessage": "渲染",
     "i18n.copyMessage": "复制消息",
     "i18n.editFromHere": "从此处编辑",
     "i18n.editFromHereTitle": "从此处编辑，此会话内创建分支",

@@ -4,7 +4,7 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 const { formatUsageTokens, formatUsageCost, averageOutputRate, summarizeTurnUsage, sameUsageSummary } = await jiti.import("./message-usage.ts");
-const { getTurnDurationMs } = await jiti.import("./turn-duration.ts");
+const { getTurnDurationMs } = await jiti.import("@/lib/turn-duration");
 const usage = (input = 232, output = 258, cacheRead = 57_856, cacheWrite = 0, cost = 0.0088) => ({
   input, output, cacheRead, cacheWrite,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },

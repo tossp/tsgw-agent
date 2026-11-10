@@ -8,7 +8,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { MessageUsage, usageDetailsText } = await jiti.import("./MessageUsage.tsx");
 const { UsageIcon } = await jiti.import("./UsageIcon.tsx");
-const { MessageView } = await jiti.import("./MessageView.tsx");
+const { MessageView } = await jiti.import("@/components/MessageView");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { getLocalePlugin } = await jiti.import("@/lib/i18n/registry");
 const summary = {
@@ -193,7 +193,7 @@ test("derived usage changes and click callbacks participate in MessageView memoi
 });
 
 test("chat uses the existing toast path and original turn range for summary and duration", async () => {
-  const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../components/ChatWindow.tsx", import.meta.url), "utf8");
   assert.match(source, /addNotice\(\{ message \}\)/);
   assert.match(source, /onShowUsageDetails=\{showUsageDetails\}/);
   assert.match(source, /usageSummary: hasAnchor \? summarizeTurnUsage\(messages, groupStartIdx, endIdx, turnDurationMs\) : undefined/);

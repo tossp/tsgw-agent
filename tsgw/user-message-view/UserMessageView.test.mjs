@@ -8,9 +8,9 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { MessageView } = await jiti.import("./MessageView.tsx");
+const { MessageView } = await jiti.import("@/components/MessageView");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
-const { getLocalePlugin } = await jiti.import("../lib/i18n/registry.ts");
+const { getLocalePlugin } = await jiti.import("@/lib/i18n/registry");
 
 function renderUser(content, props = {}) {
   const message = { role: "user", content };

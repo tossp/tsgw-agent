@@ -1,10 +1,16 @@
 import type { LocalePlugin } from "../types";
+import { runningSubagentMessages } from "../../../tsgw/subagent-status/messages";
+import { messageUsageMessages } from "../../../tsgw/message-usage/messages";
+import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 内置英语语言包。 */
 export const enLocale: LocalePlugin = {
   id: "en",
   label: "English",
   messages: {
+    ...runningSubagentMessages.en,
+    ...messageUsageMessages.en,
+    ...userMessageViewMessages.en,
     "common.ok": "OK",
     "common.language": "Language",
     "common.models": "Models",
@@ -717,8 +723,6 @@ export const enLocale: LocalePlugin = {
     "chat.runningTools": "Running {names}...",
     "chat.runningToolsMore": "Running {names} (+{count})...",
     "chat.waitingModel": "Waiting for model...",
-    "chat.runningSubagent": "{count} subagent running ({descriptions})",
-    "chat.runningSubagents": "{count} subagents running ({descriptions})",
     "chat.runningCommand": "Running command...",
     "chat.thinking": "Thinking...",
     "chat.processDetails": "Process details",
@@ -727,20 +731,6 @@ export const enLocale: LocalePlugin = {
     "chat.toolCall": "tool call",
     "chat.toolCalls": "tool calls",
     "chat.turnDuration": "took {time}",
-    "chat.usageDetails": "Show exact usage",
-    "chat.usageTurn": "Turn usage",
-    "chat.usageResponse": "Response usage",
-    "chat.usageModel": "Model",
-    "chat.usageProvider": "Provider",
-    "chat.usageRequestStarted": "Request started",
-    "chat.usageResponseCompleted": "Response completed",
-    "chat.usageStopReason": "Stop reason",
-    "chat.usageError": "Error",
-    "chat.usageCostDetail": "{kind} cost",
-    "chat.usageDuration": "Elapsed time",
-    "chat.usageAverage": "Average output speed",
-    "chat.usageAverageHint": "Output tokens / elapsed time for the same scope; whole-turn averages include tool execution and waiting",
-    "chat.usageIncomplete": "Partial usage: some responses have no recorded usage.",
     "chat.viewFullOutput": "view full output",
     "chat.loadingFullOutput": "loading…",
     "chat.downloadFullOutput": "download full output",
@@ -1749,8 +1739,6 @@ export const enLocale: LocalePlugin = {
     "i18n.thinking": "Thinking",
     "i18n.largeMessageReveal": "Message content is very large ({size}). Click to view as plain text — markdown rendering is disabled to keep the page responsive.",
     "i18n.loadingThinking": "Loading thinking...",
-    "chat.messageSource": "Source",
-    "chat.renderMessage": "Render",
     "i18n.copyMessage": "Copy message",
     "i18n.editFromHere": "Edit from here",
     "i18n.editFromHereTitle": "Edit from here — branches within this session",

@@ -1,5 +1,5 @@
-// Standalone Chromium regression: node e2e/usage-notice.mjs
-// Like run.mjs, owns one loopback next dev and an entirely synthetic agent dir.
+// Standalone Chromium regression: node tsgw/message-usage/usage-notice.mjs
+// Like e2e/run.mjs, owns one loopback next dev and an entirely synthetic agent dir.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -13,10 +13,10 @@ import { chromium } from "playwright";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
-const { getLocalePlugin } = await jiti.import("../lib/i18n/registry.ts");
+const { getLocalePlugin } = await jiti.import("@/lib/i18n/registry");
 const averageHint = getLocalePlugin("en").messages["chat.usageAverageHint"];
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const lockPath = join(root, ".next/dev/lock");
 assert.ok(!existsSync(lockPath), "Use this worktree without another next dev instance");
 const agentRules = readFileSync(join(root, "AGENTS.md"), "utf8");

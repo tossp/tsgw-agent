@@ -8,7 +8,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { RunningSubagentsStatus } = await jiti.import("./RunningSubagentsStatus.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
-const { getRunningSubagents } = await jiti.import("@/lib/session-family");
+const { getRunningSubagents } = await jiti.import("./running-subagents.ts");
 const { getLocalePlugin } = await jiti.import("@/lib/i18n/registry");
 const { translateMessage } = await jiti.import("@/lib/i18n/format");
 
@@ -49,7 +49,7 @@ test("shows a small decorative native SVG before the text", () => {
 
 test("preserves the three original paths and solid colours in a transparent SVG", () => {
   for (const name of ["pi-blocks-running.svg", "pi-blocks-still.svg"]) {
-    const svg = readFileSync(new URL(`../public/icons/${name}`, import.meta.url), "utf8");
+    const svg = readFileSync(new URL(`../../public/icons/${name}`, import.meta.url), "utf8");
     const paths = [...svg.matchAll(/<path\b[^>]*fill="([^"]+)"[^>]*d="([^"]+)"/g)];
     assert.deepEqual(paths.map(([, fill, d]) => [fill, d]), [
       ["#F19284", "M13 13H42V32H32V23H13Z"],
@@ -65,12 +65,12 @@ test("selects an actually static SVG for reduced motion without JavaScript", () 
   const html = renderStatus([child("a", "Review")]);
   assert.match(html, /<picture\b/);
   assert.match(html, /<source media="\(prefers-reduced-motion: reduce\)" srcSet="\/icons\/pi-blocks-still\.svg"/);
-  const still = readFileSync(new URL("../public/icons/pi-blocks-still.svg", import.meta.url), "utf8");
+  const still = readFileSync(new URL("../../public/icons/pi-blocks-still.svg", import.meta.url), "utf8");
   assert.doesNotMatch(still, /animation|<animate\b/);
 });
 
 test("smoothly crossfades the blocks clockwise every 450ms and respects reduced motion", () => {
-  const svg = readFileSync(new URL("../public/icons/pi-blocks-running.svg", import.meta.url), "utf8");
+  const svg = readFileSync(new URL("../../public/icons/pi-blocks-running.svg", import.meta.url), "utf8");
   assert.match(svg, /animation: pi-block-highlight \.45s ease-in-out infinite/);
   assert.match(svg, /#pi-yellow\s*\{ animation-delay: -\.3s;/);
   assert.match(svg, /#pi-blue\s*\{ animation-delay: -\.15s;/);
@@ -123,8 +123,8 @@ test("provides count and description translations in every supported locale", ()
 });
 
 test("inserts the independent block while preserving both upstream status blocks in ChatWindow", () => {
-  const shell = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
-  const chat = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+  const shell = readFileSync(new URL("../../components/AppShell.tsx", import.meta.url), "utf8");
+  const chat = readFileSync(new URL("../../components/ChatWindow.tsx", import.meta.url), "utf8");
   const component = readFileSync(new URL("./RunningSubagentsStatus.tsx", import.meta.url), "utf8");
   // Pinned d128bae blocks: compaction/queue-label changes are upstream behavior, not this independent status UI.
   const mainPhase = `{(agentRunning || isCompacting) && !hasStreamingContent && (agentPhase || isCompacting) && (
