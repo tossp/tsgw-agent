@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { piMetadataIcons } from "@/tsgw/branding/icons";
 import { Noto_Sans_Mono } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -18,22 +19,7 @@ export const metadata: Metadata = {
   title: "Pi Web",
   description: "Pi Web interface for the pi coding agent",
   applicationName: "Pi Web",
-  icons: {
-    icon: [
-      {
-        url: "/icons/pi-blocks.svg",
-        sizes: "any",
-        type: "image/svg+xml",
-      },
-    ],
-    apple: [
-      {
-        url: "/icons/pi-blocks-180.png",
-        sizes: "180x180",
-        type: "image/png",
-      },
-    ],
-  },
+  icons: piMetadataIcons,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

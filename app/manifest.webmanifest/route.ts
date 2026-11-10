@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { piManifestIcons } from "../../tsgw/branding/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -16,14 +17,7 @@ export function GET() {
     theme_color: "#1a1a1a",
     categories: ["developer", "productivity"],
     lang: "en",
-    icons: [
-      {
-        src: "/icons/pi-blocks.svg",
-        sizes: "any",
-        type: "image/svg+xml",
-        purpose: "any",
-      },
-    ],
+    icons: piManifestIcons,
   };
 
   return Response.json(manifest, {
