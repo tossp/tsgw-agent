@@ -14,7 +14,7 @@ import { startPiAccess } from "./login2-start.mjs";
 import { runPiVoiceTimingChecks } from "./login2-voice-timing.mjs";
 import { checkPiIdentityCard, checkPiPasswordControls, checkPiReferenceRead, checkPiReferenceScan, runPiTranslatedLayoutChecks } from "./login2-layout.mjs";
 
-const piRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const piRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const piArtifacts = join(piRoot, "test-results/login2");
 const piAgentDir = mkdtempSync(join(tmpdir(), "pi-login2-e2e-"));
 const piBase = "http://127.0.0.1:30141";

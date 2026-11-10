@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getPiLoginSourceIp } from "./login-source-ip.ts";
+import { createJiti } from "jiti";
+
+const { getPiLoginSourceIp } = await createJiti(import.meta.url).import("./server.ts");
 
 test("login IP display prefers a dedicated client header, then the first forwarded address", () => {
   assert.equal(getPiLoginSourceIp(new Headers({ "X-Ts-Client-IP": "203.0.113.1", "X-Real-IP": "203.0.113.2", "X-Forwarded-For": "203.0.113.3, 10.0.0.1" })), "203.0.113.1");

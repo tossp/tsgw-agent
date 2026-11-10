@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
+import { registerHooks } from "node:module";
+import { createJiti } from "jiti";
+
+registerHooks({ load(url, context, nextLoad) {
+  if (!url.endsWith(".module.css")) return nextLoad(url, context);
+  return { format: "module", shortCircuit: true, source: "export default new Proxy({}, { get: (_, key) => String(key) });" };
+} });
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 import { readPiAccessAuth, submitPiAccessPassword } from "./pi-access-auth.ts";
 import { getPiAccessCopy } from "./pi-access-copy.ts";
 
@@ -94,18 +102,23 @@ test("Pi existing-session copy asks for a click rather than a password in every 
   }
 });
 
-test("Pi identity card keeps the original three fields and uses the existing password credential", () => {
+test("Pi identity card keeps the original three fields and uses the existing password credential", async () => {
   const piCopy = getPiAccessCopy("zh-CN", "password");
   assert.equal(piCopy.identityToken, "身份令牌");
   assert.equal(piCopy.identityNumber, "身份编号");
   assert.equal(piCopy.accessLevel, "权限等级");
-  const piPage = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+  const piPage = readFileSync(new URL("./LoginPage.tsx", import.meta.url), "utf8");
   assert.match(piPage, /const PI_ACCESS_IDENTITY_ID = "9527"/);
   assert.doesNotMatch(piPage, /getRandomValues|Math\.random/);
   assert.match(piPage, /type="password"/);
   assert.ok(piPage.includes("data-pi-existing-session>••••••••</b>"));
   assert.equal(piPage.includes("piCopy.tokenVerified"), false);
   assert.match(piPage, /data-pi-identity-row><span>\{piCopy.accessLevel\}<\/span><b>3<\/b>/);
+  const { default: LoginPage } = await jiti.import("./index.ts");
+  const { I18nProvider } = await jiti.import("@/hooks/useI18n");
+  const page = LoginPage();
+  assert.equal(page.type, I18nProvider);
+  assert.equal(page.props.children.type.name, "PiLoginContent");
 });
 
 test("Pi login links to the project fork without granting the new tab an opener", () => {

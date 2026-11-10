@@ -16,14 +16,15 @@
 
 全部动画由 React 组件、状态和 CSS Modules 重现；无 iframe、注入脚本或第三方运行时。
 
-- `app/login2/page.tsx`：React 页面、现有语言上下文和密码表单。
-- `app/login2/PiAccessScene.tsx`、`pi-access.module.css`：原版三行品牌、暖白档案底板、中央状态、独立身份卡和 WELCOME 版式；含左上实时时钟。
-- `app/login2/PiAccessReticle.tsx`：原版黑白双弧准星，按实际文字边界留出遮罩，避免长文案与圆弧相交。
-- `app/login2/usePiAccess.ts`：阶段计时、请求取消和登录状态。
-- `app/login2/pi-access-auth.ts`：只调用现有 `/api/web-auth`，成功后复查会话。
-- `app/login2/PiAccessAudio.tsx`：开场由真实用户手势启动中文播报；后续受限时在正常页面交互中重试，用户可静音。
-- `app/login2/pi-access-voices.ts`：黑幕期间并行预加载六段音频，失败或最多 8 秒超时后仍允许继续，不提前播放。
-- `app/login2/pi-access-copy.ts`：本页专用三语文案，不扩散修改上游语言包。
+- `app/login2/page.tsx`：Next 路由薄入口，默认导出本模块 `index.ts` 的页面。
+- `tsgw/login2/LoginPage.tsx`：React 页面、现有语言上下文和密码表单；公共入口为 `tsgw/login2/index.ts`。
+- `tsgw/login2/PiAccessScene.tsx`、`pi-access.module.css`：原版三行品牌、暖白档案底板、中央状态、独立身份卡和 WELCOME 版式；含左上实时时钟。
+- `tsgw/login2/PiAccessReticle.tsx`：原版黑白双弧准星，按实际文字边界留出遮罩，避免长文案与圆弧相交。
+- `tsgw/login2/usePiAccess.ts`：阶段计时、请求取消和登录状态。
+- `tsgw/login2/pi-access-auth.ts`：只调用现有 `/api/web-auth`，成功后复查会话。
+- `tsgw/login2/PiAccessAudio.tsx`：开场由真实用户手势启动中文播报；后续受限时在正常页面交互中重试，用户可静音。
+- `tsgw/login2/pi-access-voices.ts`：黑幕期间并行预加载六段音频，失败或最多 8 秒超时后仍允许继续，不提前播放。
+- `tsgw/login2/pi-access-copy.ts`：本页专用三语文案，不扩散修改上游语言包。
 - `public/login2/assets/`：原创生成的静态图片和音频。
 
 序列为黑幕加载、等待开始、标识入场、洗白、访问许可、密码输入、请求接收、读取、核验通过、欢迎和揭幕。
@@ -90,10 +91,10 @@ commit `8ec3132e69f0906b3ed2f7eb083b1035cd69c1d4`（原仓库 MIT）。
 运行：
 
 ```sh
-node --experimental-strip-types --test app/login2/pi-access.test.mjs app/login2/pi-access-voices.test.mjs
+node --experimental-strip-types --test tsgw/login2/pi-access.test.mjs tsgw/login2/pi-access-voices.test.mjs
 node_modules/.bin/tsc --noEmit
 npm run lint
-node e2e/login2.mjs
+node tsgw/login2/login2.mjs
 ```
 
 浏览器脚本使用隔离的临时 agent 目录及测试密码，启动并停止自己的开发进程。

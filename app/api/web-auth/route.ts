@@ -6,7 +6,7 @@ import {
   retryAfterSeconds,
 } from "@/lib/auth-throttle";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { getPiLoginSourceIp } from "@/lib/login-source-ip";
+import { getPiLoginSourceIp } from "@/tsgw/login2/server";
 import {
   createWebSessionToken,
   isValidBasicAuthorization,
