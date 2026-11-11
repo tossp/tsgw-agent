@@ -29,7 +29,6 @@ test(`npm ${npmVersion} preserves the local tgz postinstall using only its appli
   // Synthetic, dependency-free fixture only; never production pack/build/smoke.
   execFileSync("tar", ["-czf", tarball, "package"], { cwd: directory, env });
   const digest = createHash("sha256").update(readFileSync(tarball)).digest("hex");
-  assert.equal(createHash("sha256").update(readFileSync(tarball)).digest("hex"), digest);
   allowSmokeInstallScripts(env, npmVersion, tarball, ptyVersion);
   const config = readFileSync(env.npm_config_userconfig, "utf8");
   if (Number(npmVersion.split(".")[0]) >= 12) {

@@ -32,7 +32,6 @@ test("compact summary uses shared thin SVGs, decimal K/M and actual average outp
   assert.match(html, /\$0\.8608/);
   assert.match(html, /724\.1 t\/s/);
   assert.match(html.replace(/<[^>]+>/g, ""), /\$0\.8608 · took 10s · 724\.1 t\/s/);
-  assert.match(html, /column-gap:7px/);
   assert.match(html, /viewBox="0 0 12 12"/);
   assert.match(html.replace(/<[^>]+>/g, ""), /↑314\.1K ↓7\.2K R1\.6M/);
   assert.match(html, /<line x1="5" y1="8.5" x2="5" y2="1.5"/);

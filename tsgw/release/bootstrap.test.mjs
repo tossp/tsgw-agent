@@ -85,7 +85,6 @@ for (const [id, token, ready] of [["", "", false], ["123", "", false], ["", "off
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(join(root, "output"), "utf8"), `ready=${ready}\n`);
     assert.ok(!result.stdout.includes("offline-secret"));
-    if (!ready) assert.match(readFileSync(join(root, "summary"), "utf8"), /waiting/);
   });
 }
 

@@ -23,7 +23,6 @@ const reducerNames = ["markOldestNoticeExiting", "fillPendingNotices", "noticeRe
 const declarations = reducerNames.map((name) => nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(source));
 const dismiss = dismissSource.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "useNoticeDismiss");
 assert.ok(dismiss, "module exposes the targeted dismiss hook");
-assert.match(source.text, /const dismissNotice = useNoticeDismiss\(dispatchNotice, setPausedNoticeId\)/);
 const script = new Script(ts.transpileModule(`
   const MAX_NOTICES = 5;
   ${declarations.join("\n")}

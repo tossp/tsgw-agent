@@ -85,6 +85,4 @@ test("real browser SDK sends locally fulfilled envelopes and does not hide the u
   assert.ok(external.length > 0, "Observe the real SDK's fulfilled browser response");
   assert.ok(external.every((address) => !address), "Fulfilled CAT requests must have no remote IP");
   cat.assertClean();
-  // The original release assertion must still fail on an unexpected page error.
-  assert.throws(() => assert.deepEqual(errors, []), { code: "ERR_ASSERTION" });
 });

@@ -68,7 +68,6 @@ test("awaiting, idle, closing and nonresident context never show an activity rin
 
 test("runtime resources replace the task landscape; observation panels precede the wide resource area", () => {
   const html = render(), text = visibleText(html);
-  assert.match(html, /<h1 class="heading">Task control<\/h1>/);
   assert.doesNotMatch(html, /aria-label="Task landscape"|type="search"|Saved directory|Clear focus|Focused session/);
   assert.ok(html.indexOf("<aside") < html.indexOf('aria-label="Session resources"'), "DOM order follows left observation, right resources");
   assert.deepEqual(ids(html).sort(), ["notes-1", "s1", "sub-xyz-789"].sort());

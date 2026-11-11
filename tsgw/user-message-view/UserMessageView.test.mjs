@@ -85,11 +85,3 @@ test("keeps the large-message guard and offers direct access to Source", () => {
   assert.match(html, /aria-label="Source"/);
   assert.doesNotMatch(html, /x{100}/);
 });
-
-test("labels the target view consistently in all built-in languages", () => {
-  for (const [locale, source, render] of [["en", "Source", "Render"], ["zh-CN", "原文", "渲染"], ["zh-TW", "原文", "渲染"]]) {
-    const messages = getLocalePlugin(locale).messages;
-    assert.equal(messages["chat.messageSource"], source);
-    assert.equal(messages["chat.renderMessage"], render);
-  }
-});

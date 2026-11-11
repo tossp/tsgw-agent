@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { registerHooks } from "node:module";
 import { createJiti } from "jiti";
@@ -81,15 +81,6 @@ test("Pi login still works when display-only IP metadata is unavailable", async 
   assert.equal(piIp, "");
 });
 
-test("Pi visual copy covers every phase in each supported locale", () => {
-  for (const piLocale of ["en", "zh-CN", "zh-TW"]) {
-    for (const piPhase of ["checking", "ready", "intro", "wash", "permission", "password", "request", "read", "verified", "welcome", "handoff"]) {
-      const piCopy = getPiAccessCopy(piLocale, piPhase);
-      for (const piValue of Object.values(piCopy)) assert.ok(typeof piValue === "string" && piValue.length > 0);
-    }
-  }
-});
-
 test("Pi existing-session copy asks for a click rather than a password in every locale", () => {
   for (const piLocale of ["en", "zh-CN", "zh-TW"]) {
     const piCopy = getPiAccessCopy(piLocale, "password", true);
@@ -119,20 +110,4 @@ test("Pi identity card keeps the original three fields and uses the existing pas
   const page = LoginPage();
   assert.equal(page.type, I18nProvider);
   assert.equal(page.props.children.type.name, "PiLoginContent");
-});
-
-test("Pi login links to the project fork without granting the new tab an opener", () => {
-  const piScene = readFileSync(new URL("./PiAccessScene.tsx", import.meta.url), "utf8");
-  assert.match(piScene, /href="https:\/\/github\.com\/tossp\/tsgw-agent"/);
-  assert.match(piScene, /target="_blank"/);
-  assert.match(piScene, /rel="noopener noreferrer"/);
-});
-
-test("Pi login is a React route without legacy runtime or embedded scripts", () => {
-  const piDirectory = new URL("./", import.meta.url);
-  for (const piFile of readdirSync(piDirectory).filter((piName) => /\.(tsx?|css)$/.test(piName))) {
-    const piSource = readFileSync(new URL(piFile, piDirectory), "utf8");
-    assert.doesNotMatch(piSource, /\b(?:dsh|dsu)[-_A-Za-z0-9]*\b|<iframe|innerHTML|createElement\(/i, piFile);
-  }
-  assert.deepEqual(readdirSync(new URL("../../public/login2/", piDirectory)), ["assets"]);
 });

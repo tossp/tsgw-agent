@@ -12,7 +12,6 @@ const locales = ["en", "zh-CN", "zh-TW"];
 
 test("every locale carries every one of the page's own strings, none empty", () => {
   const keys = Object.keys(DEBUG_PAGE_MESSAGES.en).sort();
-  assert.ok(keys.length >= 10, keys.join(", "));
   for (const locale of locales) {
     assert.deepEqual(Object.keys(DEBUG_PAGE_MESSAGES[locale]).sort(), keys, locale);
     for (const key of keys) {

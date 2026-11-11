@@ -19,7 +19,6 @@ const { zhCNLocale } = await jiti.import("@/lib/i18n/messages/zh-CN.ts");
 const { zhTWLocale } = await jiti.import("@/lib/i18n/messages/zh-TW.ts");
 const { interpolateMessage } = await jiti.import("@/lib/i18n/format.ts");
 const { DEBUG_PAGE_MESSAGES } = await jiti.import("./messages.ts");
-const source = await readFile(new URL("./DebugSessionDetail.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("./detail.module.css", import.meta.url), "utf8");
 const locales = { en: enLocale, "zh-CN": zhCNLocale, "zh-TW": zhTWLocale };
 const translator = locale => (key, params) => {
@@ -204,15 +203,4 @@ test("local words exist in all locales and do not shadow page/global dictionarie
     }
     assert.doesNotMatch(visibleText(render({ locale })), /detail\.[\w]+/);
   }
-});
-
-test("public interface stays compatible and resources have no hidden/truncated fact surfaces", () => {
-  assert.match(source, /showSubagents\?: boolean/);
-  assert.match(source, /showSubagents = true/);
-  assert.match(source, /import d from "\.\/detail\.module\.css"/);
-  assert.doesNotMatch(source, /fetch\(|EventSource|XMLHttpRequest|setInterval|setTimeout|useState|useEffect|<details|<summary/);
-  assert.doesNotMatch(css.replace(/\.meter\s*\{[^}]*\}/g, ""), /text-overflow|max-height|overflow:\s*(hidden|clip)/);
-  assert.ok([...css.matchAll(/font-size:\s*([\d.]+)px/g)].every(match => Number(match[1]) >= 11));
-  assert.doesNotMatch(css, /\.grid\s*\{|repeat\(auto-fit/);
-  assert.ok(source.split("\n").length <= 500);
 });

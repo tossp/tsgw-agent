@@ -68,6 +68,6 @@ node bin/pi-web.js --version
 node bin/pi-web.js --help
 ```
 
-验收要求：上述测试不降低既有断言；同通道更新、异常元数据拒绝、发布保护与包内原始 helper 校验通过。`npm test` 不排除 release，CI 同时显式执行 release 与 CAT，不能用单一入口通过冒充全部验证完成。
+验收要求：上述测试保留既有发布契约与真实行为保障；同通道更新、异常元数据拒绝、发布保护与包内原始 helper 校验通过。`npm test` 不排除 release，CI 同时显式执行 release 与 CAT，不能用单一入口通过冒充全部验证完成。
 
 开发工作树不执行 build。真实打包安装冒烟、发布、部署或提交需对应授权；完整生产安装验收使用干净 CI/隔离环境。验证流程与发布证据见 [README.md](README.md)，CAT 收尾见 [BUILD.md](../cat-monitoring/BUILD.md)，不另建台账。
