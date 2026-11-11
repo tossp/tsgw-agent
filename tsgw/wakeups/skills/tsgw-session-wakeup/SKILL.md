@@ -2,28 +2,26 @@
 name: tsgw-session-wakeup
 description: 需要延后继续、自我提醒、跨普通会话交接，或查询、取消一次性唤醒时使用。
 license: MIT
-compatibility: 需要提供 wakeup 工具的 TSGW 宿主及 Pi Code mode；调度、查询待执行项与取消通过 Code mode 调用。
+compatibility: 需要提供本次操作所需 wakeup 工具的 TSGW 宿主及 codemode。
 ---
 
 # 会话交接与定时唤醒
 
-本技能与宿主 wakeup 工具配套提供，仅指导使用现有工具，不新增调度实现、服务或界面。加载本技能时，四个 wakeup 工具必须存在；发现缺失时直接报告宿主能力不一致并停止，不降级、不安装、不修改配置。工具存在不代表已获得执行授权。
+本技能与宿主 wakeup 工具配套提供，仅指导使用现有工具，不新增调度实现、服务或界面。仅核对本次操作所需的工具，不要求四个工具齐全；无关工具缺失不阻断当前操作。工具存在不代表已获得执行授权。
 
 ## 工具发现与调用前确认
 
-在 Code mode 中先核对四个工具是否齐全，再按需发现和读取本次所需工具的声明。参数与返回值以实际声明为准，不复制完整 schema：
+在 `codemode` 中按本次操作发现并读取所需工具的声明。参数与返回值以实际声明为准，不复制完整 schema。例如安排唤醒只需发现 `schedule_wakeup`，不预检其他三个工具：
 
 ```js
-const required = ["schedule_wakeup", "list_wakeups", "cancel_wakeup", "list_session_wakeups"];
-const available = new Set(ALL_TOOLS.map(({ name }) => name));
-const missing = required.filter(name => !available.has(name));
-if (missing.length) throw new Error(`宿主能力不一致：缺少工具 ${missing.join(", ")}`);
-text(await searchTools("wakeup", { limit: 8 }));
-text(await describeTool("schedule_wakeup"));
+text(await searchTools("schedule_wakeup", { limit: 1 }));
+const declaration = await describeTool("schedule_wakeup");
+if (!declaration) throw new Error("本次所需工具不可用：schedule_wakeup");
+text(declaration);
 ```
 
-- `schedule_wakeup`、`list_wakeups`、`cancel_wakeup` 采用 `exposure: "codemode"`，默认不向模型直接声明，按需发现后使用 `tools.<name>()` 调用；`list_session_wakeups` 保持直接暴露，也支持经 Code mode 调用。这是默认暴露策略，不是禁止显式激活的权限限制；不根据工具是否同时直接声明判断可用性。
-- 工具缺失、无法读取所需声明或 Code mode 不可用时，直接报告具体缺项或错误并停止，不另设直接调用兜底；不擅自安装、启用、重载、部署或修改用户配置。
+- `schedule_wakeup`、`list_wakeups`、`cancel_wakeup` 采用 `exposure: "codemode"`，默认不向模型直接声明，按需发现后使用 `tools.<name>()` 调用；`list_session_wakeups` 保持直接暴露，也支持经 `codemode` 调用。这是默认暴露策略，不是禁止显式激活的权限限制；不根据工具是否同时直接声明判断可用性。
+- 仅当本次所需工具缺失、无法读取其声明或 `codemode` 不可用时，报告具体缺项或错误并停止当前操作，不因无关工具缺失而停止，也不另设直接调用兜底；不擅自安装、启用、重载、部署或修改用户配置。
 - 明确目标、时间、消息和授权。`session_id` 省略时指当前会话；跨会话必须使用已核实的、已存在且有持久化文件的普通会话 ID，不能猜 ID，也不能直接唤醒子代理；需交接给子代理时，唤醒其普通父会话，由父会话按既有机制处理。普通 fork 不因有父会话就成为子代理。
 - `after_seconds` 是正数秒；与 `at` 必须二选一。`at` 必须是未来的 ISO 8601 时间，包含 `Z` 或数值时区偏移（如 `+08:00`）。把“明天”等换成明确日期；时区有歧义先确认，不自行采用主机时区。相对延后可直接使用秒数。
 
@@ -47,7 +45,7 @@ text(await describeTool("schedule_wakeup"));
 
 ## 最小示例
 
-以下均为 Code mode 脚本，仅在已获得对应动作的授权、已完成上述工具核对并读取相关声明后执行。占位会话 ID、路径和消息须替换为已核实信息；不为验证技能而运行创建或取消示例。
+以下均为 `codemode` 脚本，仅在已获得对应动作的授权、已发现并读取本次所需工具声明后执行。占位会话 ID、路径和消息须替换为已核实信息；不为验证技能而运行创建或取消示例。
 
 ### 自唤醒：十分钟后继续
 
@@ -72,7 +70,7 @@ text(await tools.schedule_wakeup({
 
 ### 查询待执行项与会话历史
 
-先分别 `describeTool("list_wakeups")`、`describeTool("list_session_wakeups")`，再按需执行。先在沙箱内过滤本次任务的记录，再输出必要字段，不将其他会话的交接正文送入模型上下文：
+查询待执行项时先读取 `describeTool("list_wakeups")`；查询历史时先读取 `describeTool("list_session_wakeups")`。下列两个片段各自独立，按需选择，不要求另一个查询工具可用。先在沙箱内过滤本次任务的记录，再输出必要字段，不将其他会话的交接正文送入模型上下文：
 
 ```js
 const wakeupId = "<本次任务已确认的 wakeupId>";
@@ -81,7 +79,10 @@ text(pending
   .filter(item => item.wakeupId === wakeupId)
   .map(({ wakeupId, targetSessionId, scheduledAt }) =>
     ({ wakeupId, targetSessionId, scheduledAt })));
+```
 
+```js
+const wakeupId = "<本次任务已确认的 wakeupId>";
 const history = await tools.list_session_wakeups({
   session_id: "<要查询历史的目标会话 ID>"
 });
@@ -113,6 +114,6 @@ text(await tools.cancel_wakeup({
 - 创建成功后立即返回，不等待到点。目标忙碌时按 `followUp` 排队，不中断当前回答；不承诺精确触发时刻。
 - 定时器只存在于当前服务进程内；进程重启后丢失，不自动恢复、补发或重试。会话空闲回收或关闭浏览器不等于服务进程重启。
 - 不使用 `sleep` 或轮询等待到点，不擅自建立周期任务、自我续排或换服务兜底。安排成功后结束当前等待，由宿主到点投递。
-- 创建、取消结果不明确或调用中途报错时，先查本进程待执行项与目标会话历史，核对 ID、目标、时间和事件；副作用可能已生效，不盲目重复创建或取消。取消可能已生效但历史写入失败；仍无法判定时明确报告“未确认”。
+- 创建、取消结果不明确或调用中途报错时，再按需发现查询工具，核对本进程待执行项或目标会话历史中的 ID、目标、时间和事件；副作用可能已生效，不盲目重复创建或取消。取消可能已生效但历史写入失败；所需查询工具不可用或仍无法判定时，明确报告“未确认”并停止，不重复操作。
 - 只有工具明确成功并返回记录后，才能说“已安排”。报告实际返回的 `wakeupId`、`targetSessionId` 和 `scheduledAt` 对应的明确日期时间及其时区，不仅说“稍后”或“明天”，并提示进程重启会丢失。
 - 取消成功也须依据实际工具结果汇报；将“已安排”“已接受／排队”和“任务完成”分开。未验证的真实触发、跨会话执行或重启行为须明确列出，不以查询成功冒充投递验收。

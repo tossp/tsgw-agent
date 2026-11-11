@@ -28,11 +28,11 @@
 | [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [信息覆盖、设计与验收](debug/DESIGN.md) |
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
-| [wakeups](wakeups/AGENTS.md) | `index.ts`：`createSessionOwnerAccess`、`createWakeupExtension`、`getWakeupRuntime` | [行为、技能与验证](wakeups/README.md) |
+| [wakeups](wakeups/AGENTS.md) | `index.ts`：`createSessionOwnerAccess`、`createWakeupExtension`、`getWakeupRuntime` | 模块规则；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
 
 ### wakeups
 
-[模块规则](wakeups/AGENTS.md)与[行为说明](wakeups/README.md)维护现有契约。公开宿主入口为 `index.ts`；运行时、会话写入与生命周期约束仍以模块规则为准。
+[模块规则](wakeups/AGENTS.md)集中维护行为、接入与验证契约；调用指导见[技能](wakeups/skills/tsgw-session-wakeup/SKILL.md)。公开宿主入口为 `index.ts`。
 
 ## 接入与上游改动清单
 
@@ -50,6 +50,8 @@
 
 ## 验证与操作边界
 
+- 引用工具时使用实际声明名称（如 `codemode`），不自行加空格或改变大小写；代码标识符和真实界面标签保持原样。
+- 测试保护真实行为和稳定外部契约，不约束文案措辞、示例数量或内部源码写法。删除低价值检查不以另造复杂测试替代；协议字段、公开资源、认证与发布边界的静态验证仍有价值，不能因采用字符串断言而一刀切删除。
 - 模块测试与代码同目录存放；根 `package.json` 的 `scripts.test` 必须包含 `tsgw/**/*.test.mjs`，目录调整后检查包括 release 在内的全部模块测试确实被发现，不排除发布 fixture；release 与 CAT 在 CI 中另有显式定向入口。
 - 按改动范围运行真实实现测试、TypeScript 检查和 lint；禁止在开发工作树执行 `next build`。不得通过跳过原有失败用例或降低检查来宣称通过。
 - 保持项目既有权限边界；目录整理不代表已获提交、合并、推送、发布或部署授权。

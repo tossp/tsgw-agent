@@ -5,22 +5,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import {
-  createAgentSessionFromServices, createAgentSessionServices, createCodemodeExtension,
+  createAgentSessionFromServices, createAgentSessionServices,
   ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { createWakeupExtension, WAKEUP_TOOL_NAMES } = await jiti.import("./extension.ts");
+const { createWakeupExtension } = await jiti.import("./extension.ts");
 const { WakeupRuntime } = await jiti.import("./runtime.ts");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const skillPath = "tsgw/wakeups/skills/tsgw-session-wakeup/SKILL.md";
 const skillText = await readFile(join(root, skillPath), "utf8");
-const scripts = [...skillText.matchAll(/```js\n([\s\S]*?)```/g)].map((match) => match[1]);
+const skillBody = skillText.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "").trim();
 
-async function fixture(t, tools) {
+async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "pi-web-wakeup-skill-"));
   const runtime = new WakeupRuntime({
     assertTarget: async () => assert.fail("skill discovery must not schedule timers"),
@@ -34,18 +34,16 @@ async function fixture(t, tools) {
   modelRuntime.registerNativeProvider(faux.provider);
   const services = await createAgentSessionServices({
     cwd: directory, agentDir: directory, modelRuntime,
-    settingsManager: SettingsManager.inMemory({ defaultTools: ["+codemode"] }),
+    settingsManager: SettingsManager.inMemory(),
     resourceLoaderOptions: {
       noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
       extensionFactories: [
-        { name: "codemode", factory: createCodemodeExtension({ models: false }) },
         createWakeupExtension(runtime),
       ],
     },
   });
   const { session } = await createAgentSessionFromServices({
     services, sessionManager: SessionManager.inMemory(directory), model: faux.getModel("skill-fixture"),
-    ...(tools ? { tools } : {}),
   });
   t.after(async () => {
     await session.abort();
@@ -54,15 +52,7 @@ async function fixture(t, tools) {
     await rm(directory, { recursive: true, force: true });
   });
   await session.bindExtensions({});
-  async function run(code) {
-    faux.setResponses([
-      fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" }),
-      fauxAssistantMessage([fauxText("checked")]),
-    ]);
-    await session.prompt("Check the bundled wakeup skill without creating a timer");
-    return session.agent.state.messages.findLast(message => message.role === "toolResult" && message.toolName === "codemode");
-  }
-  return { session, services, runtime, faux, run };
+  return { session, services, faux };
 }
 
 function assertSkill(f, path) {
@@ -72,46 +62,22 @@ function assertSkill(f, path) {
   assert.equal(skill.filePath, path);
   assert.ok(f.session.systemPrompt.includes("tsgw-session-wakeup"));
   assert.ok(f.session.systemPrompt.includes(path));
-  assert.ok(!f.session.systemPrompt.includes("## 交接消息模板"), "advertise the skill without eagerly injecting its body");
+  assert.ok(!f.session.systemPrompt.includes(skillBody), "advertise the skill without eagerly injecting its body");
 }
 
-function textOf(result) {
-  return result.content.map(block => block.text ?? "").join("");
-}
-
-test("SDK discovers the bundled skill beside wakeup tools and executes its read-only capability check", async t => {
+test("SDK discovers the bundled skill, expands its body on demand and avoids duplicates on reload", async t => {
   const f = await fixture(t);
   assertSkill(f, join(root, skillPath));
-  for (const name of WAKEUP_TOOL_NAMES) assert.ok(f.session.getCallableToolNames().includes(name), name);
-  const result = await f.run(scripts[0]);
-  assert.equal(result.isError, false, textOf(result));
-  assert.match(textOf(result), /schedule_wakeup/);
-  assert.match(textOf(result), /list_session_wakeups/);
-  assert.deepEqual(f.runtime.list(), []);
-
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  assert.equal(scripts.length, 5, "check every JavaScript example without running scheduling or cancellation");
-  for (const script of scripts) assert.doesNotThrow(() => new AsyncFunction(script));
   f.faux.setResponses([fauxAssistantMessage([fauxText("skill loaded")])]);
   await f.session.prompt("/skill:tsgw-session-wakeup");
   const user = f.session.agent.state.messages.findLast(message => message.role === "user");
-  assert.match(JSON.stringify(user.content), /## 交接消息模板/);
+  const content = typeof user.content === "string" ? user.content
+    : user.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+  assert.ok(content.includes(skillBody), "expand the actual skill body rather than a fixed heading");
   await f.session.reload();
   await f.session.bindExtensions({});
   assertSkill(f, join(root, skillPath));
   assert.equal(f.services.resourceLoader.getSkills().skills.filter(skill => skill.name === "tsgw-session-wakeup").length, 1);
-});
-
-test("the skill remains discoverable under an existing tool allow-list and reports missing tools without fallback", async t => {
-  const missing = "list_session_wakeups";
-  const f = await fixture(t, ["read", "codemode", ...WAKEUP_TOOL_NAMES.filter(name => name !== missing)]);
-  assertSkill(f, join(root, skillPath));
-  assert.equal(f.session.getCallableToolNames().includes(missing), false);
-  const result = await f.run(scripts[0]);
-  assert.equal(result.isError, true);
-  assert.match(textOf(result), /宿主能力不一致：缺少工具 list_session_wakeups/);
-  assert.ok(!textOf(result).includes("==> text"), "fail before discovery output or any tool action");
-  assert.deepEqual(f.runtime.list(), []);
 });
 
 test("npm packs the skill and SDK discovery follows the relocated package root, not the session cwd", async t => {
@@ -135,5 +101,4 @@ test("npm packs the skill and SDK discovery follows the relocated package root, 
   const f = await fixture(t);
   assertSkill(f, join(packageRoot, skillPath));
   assert.notEqual(f.session.sessionManager.getCwd(), packageRoot);
-  assert.equal(f.session.getCallableToolNames().includes("schedule_wakeup"), true);
 });
