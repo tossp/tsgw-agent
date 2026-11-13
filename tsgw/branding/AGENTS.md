@@ -17,7 +17,7 @@ Three-colour Pi favicon, transparent Apple Touch PNG, manifest icons and the fav
 | `public/icons/pi-blocks.svg`, `pi-blocks-180.png` | Stable Next public URLs; source files and bytes remain here. |
 
 ## Host dependencies and upgrade checks
-Next exposes public assets from `public/`; moving them into this module alone would break those URLs. Keep the original SVG shape, PNG 180×180 RGBA, manifest purpose `any`, runtime name, cache behavior and existing icon URLs. Running/still animation assets belong to `subagent-status`.
+Next exposes public assets from `public/`; moving them into this module alone would break those URLs. Keep the original SVG shape, PNG 180×180 RGBA, manifest purpose `any`, runtime name, cache behavior and existing icon URLs.
 
 ## Verification
 `node --test tsgw/branding/*.test.mjs app/manifest.test.mjs lib/favicon-badge.test.mjs public/sw.test.mjs`

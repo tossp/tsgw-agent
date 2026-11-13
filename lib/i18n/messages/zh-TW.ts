@@ -1,6 +1,4 @@
 import type { LocalePlugin } from "../types";
-import { runningSubagentMessages } from "../../../tsgw/subagent-status/messages";
-import { messageUsageMessages } from "../../../tsgw/message-usage/messages";
 import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 內建繁體中文語系。 */
@@ -8,8 +6,6 @@ export const zhTWLocale: LocalePlugin = {
   id: "zh-TW",
   label: "繁體中文",
   messages: {
-    ...runningSubagentMessages["zh-TW"],
-    ...messageUsageMessages["zh-TW"],
     ...userMessageViewMessages["zh-TW"],
     "common.ok": "確定",
     "common.language": "語言",

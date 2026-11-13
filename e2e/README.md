@@ -57,7 +57,6 @@ Coverage:
   session, directory, draft, files and group expansion; + still opens in the
   same tab, and no session is created, copied, prompted or stopped. An
   unavailable directory shows the validation error instead of another session.
-- The [subagent-status module](../tsgw/subagent-status/AGENTS.md) browser check (`tsgw/subagent-status/subagent-status.mjs`, invoked by `e2e/run.mjs`) verifies running subagents at the chat tail without opening Agents, even with an idle parent. Synthetic running-id polls check nested descendants, matching counts and descriptions, removal through zero, long-description wrapping at desktop/phone widths, and both Chinese locales without dispatching a model.
 - The model picker, with a synthetic catalog: on a phone, a simulated keyboard
   (visual viewport shrink, pan, a late height with no event) keeps the same
   filter focused and the list in the visible viewport. Native phone keyboards
@@ -83,7 +82,7 @@ Do not run it while CAT is upgrading. No model calls are made.
 Fork standalone browser entries (run from the project root, without another dev process in the same checkout):
 
 - [login2](../tsgw/login2/README.md): `node tsgw/login2/login2.mjs`.
-- [Usage and notice dismissal](../tsgw/message-usage/AGENTS.md): `node tsgw/message-usage/usage-notice.mjs`.
+- [Individual notice dismissal](../tsgw/notice-dismiss/AGENTS.md): `node tsgw/notice-dismiss/e2e.mjs`.
 - [User-message Source / Render](../tsgw/user-message-view/AGENTS.md): `node tsgw/user-message-view/user-message-render-toggle.mjs`.
 - [Debug dashboard](../tsgw/debug/DESIGN.md): `E2E_BASE_URL=<existing-dev-server> node tsgw/debug/e2e.mjs`; this one reuses an existing server and never starts a second one.
 - [CAT runtime and live-upload boundaries](../tsgw/cat-monitoring/AGENTS.md); [release installation smoke](../tsgw/release/README.md) is a separate clean-build workflow.

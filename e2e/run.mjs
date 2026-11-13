@@ -18,7 +18,6 @@ import { checkModelDiscovery } from "./model-discovery.mjs";
 import { checkModelOrder } from "./model-order.mjs";
 import { checkModelContext } from "./model-context.mjs";
 import { checkModelSelector } from "./model-selector.mjs";
-import { checkSubagentStatus } from "../tsgw/subagent-status/subagent-status.mjs";
 import { checkSideSession } from "./side-session.mjs";
 import { checkFilesPlacement, showSidebarSessions } from "./sidebar.mjs";
 import { checkSessionNavigation } from "./session-navigation.mjs";
@@ -524,7 +523,6 @@ try {
     await checkCodeBackground(page);
     await checkStreamingMetrics(page);
     await checkModelSelector(page, { base, project, artifacts });
-    await checkSubagentStatus(page, { base, sessionId: RICH, artifacts, width: viewport.width });
     assert.deepEqual(errors, [], `Browser errors at width ${viewport.width}`);
     console.log(`PASS: ${viewport.width}px browser pagination, branch, markdown, code, tool call, and compaction navigation`);
     await context.tracing.stop();

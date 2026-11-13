@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
+import { Fragment, memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { SafeMarkdownBody } from "./SafeMarkdownBody";
@@ -13,7 +13,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
-import { MessageUsage, UsageDuration, UsageIcon, sameUsageSummary, type MessageUsageSummary } from "@/tsgw/message-usage";
+import { formatTurnDuration } from "@/lib/turn-duration";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, type SplitDiffFile, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
@@ -28,7 +28,7 @@ import { toolFieldsOfInput, type ToolField } from "@/lib/tool-fields";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
-import { getTranscriptNotices } from "@/lib/transcript-notices";
+import { formatNoticeTokens, getTranscriptNotices } from "@/lib/transcript-notices";
 import { TRANSCRIPT_NOTICE_WARNING_COLOR, transcriptNoticeText } from "@/components/TranscriptNotices";
 import type {
   AgentMessage,
@@ -154,8 +154,6 @@ interface Props {
   writtenFiles?: WrittenFile[];
   /** The whole turn's time, for a final answer with no process details to show it. */
   turnDurationMs?: number;
-  usageSummary?: MessageUsageSummary;
-  onShowUsageDetails?: (message: string) => void;
   onCompact?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
@@ -207,12 +205,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, usageSummary, onShowUsageDetails, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
     return <UserMessageView time={formatTime(message.timestamp)} message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} usageSummary={usageSummary} onShowUsageDetails={onShowUsageDetails} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -247,8 +245,6 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
     && prev.turnDurationMs === next.turnDurationMs
-    && sameUsageSummary(prev.usageSummary, next.usageSummary)
-    && prev.onShowUsageDetails === next.onShowUsageDetails
     && prev.sessionId === next.sessionId
     && prev.onCompact === next.onCompact
     && prev.isCompacting === next.isCompacting
@@ -268,7 +264,9 @@ export function AssistantMessageHeader({ modelName, estimatedTokens = 0, tps = n
       {estimatedTokens > 0 && (
         <span style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, whiteSpace: "nowrap", color: "var(--text)" }} title={t("i18n.estimatedTokens")}>
           <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 400 }}>
-            <UsageIcon kind="output" size={10} />
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+            </svg>
             {/* Both minimum widths leave a pixel for per-glyph rounding at the widest value. */}
             <span style={{ minWidth: "calc(6ch + 1px)" }}>{estimatedTokens}</span>
           </span>
@@ -298,8 +296,6 @@ function AssistantMessageView({
   searchBlock,
   writtenFiles,
   turnDurationMs,
-  usageSummary,
-  onShowUsageDetails,
   onCompact,
   isCompacting,
   compactError,
@@ -318,8 +314,6 @@ function AssistantMessageView({
   searchBlock?: AssistantContentBlock;
   writtenFiles?: WrittenFile[];
   turnDurationMs?: number;
-  usageSummary?: MessageUsageSummary;
-  onShowUsageDetails?: (message: string) => void;
   onCompact?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
@@ -396,6 +390,13 @@ function AssistantMessageView({
     .filter((b): b is TextContent => b.type === "text")
     .map((b) => b.text)
     .join("\n");
+
+  const stats = message.usage ? formatUsage(message.usage) : [];
+  if (turnDurationMs !== undefined) {
+    if (stats.length > 0) stats.push({ text: "·" });
+    const time = formatTurnDuration(turnDurationMs);
+    stats.push(formatDurationPart(t("chat.turnDuration", { time }), time));
+  }
 
   const copyContent = () => {
     copyText(textContent).then(() => {
@@ -551,14 +552,15 @@ function AssistantMessageView({
       <div style={{
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
-        {!isStreaming && (usageSummary || message.usage) ? (
-          <>
-            <MessageUsage summary={usageSummary ?? { usage: message.usage!, durationMs: message.durationMs, scope: "response", complete: true }} response={message} onShowDetails={onShowUsageDetails} />
-            {!usageSummary && message.durationMs === undefined && turnDurationMs !== undefined && <UsageDuration durationMs={turnDurationMs} />}
-          </>
-        ) : !isStreaming && turnDurationMs !== undefined ? (
-          <UsageDuration durationMs={turnDurationMs} />
-        ) : null}
+        {stats.length > 0 && !isStreaming && (
+          // One item per count: a single space at 11px ran them together. The
+          // spaces stay in the text for copying; the flex gap draws the room.
+          <div style={{ display: "flex", flexWrap: "wrap", columnGap: 7, fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+            {stats.map((part, index) => (
+              <Fragment key={index}>{index > 0 && " "}<UsagePart part={part} /></Fragment>
+            ))}
+          </div>
+        )}
         {textContent && !isStreaming && (
           <button
             onClick={copyContent}
@@ -1840,6 +1842,79 @@ function getToolPreview(block: ToolCallContent, resultPatchPath: string | null):
 
   const first = input[keys[0]];
   return String(first).slice(0, 120);
+}
+
+function formatUsage(usage: {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: { total: number };
+}): StatPart[] {
+  // pi's TUI footer: ↑1.2k ↓567 R8.9k W12, with its formatTokens().
+  const parts: StatPart[] = [];
+  if (usage.input) parts.push({ icon: "up", before: "↑", text: formatNoticeTokens(usage.input) });
+  if (usage.output) parts.push({ icon: "down", before: "↓", text: formatNoticeTokens(usage.output) });
+  if (usage.cacheRead) parts.push({ text: `R${formatNoticeTokens(usage.cacheRead)}` });
+  if (usage.cacheWrite) parts.push({ text: `W${formatNoticeTokens(usage.cacheWrite)}` });
+  if (usage.cost?.total) parts.push({ text: `$${usage.cost.total.toFixed(4)}` });
+  return parts;
+}
+
+// "took 12s" as a clock and "12s": the words around the time stay as hidden
+// text, wherever the language puts them.
+function formatDurationPart(label: string, time: string): StatPart {
+  const index = label.indexOf(time);
+  if (index < 0) return { text: label };
+  return { icon: "clock", before: label.slice(0, index), text: time, after: label.slice(index + time.length) };
+}
+
+/** One count of the stats line; `before`/`after` are copied and read aloud, not shown. */
+interface StatPart {
+  text: string;
+  icon?: "up" | "down" | "clock";
+  before?: string;
+  after?: string;
+}
+
+const STAT_ICON_PATHS = {
+  up: "M6 10.5V1.5M2.5 5 6 1.5 9.5 5",
+  down: "M6 1.5v9M2.5 7 6 10.5 9.5 7",
+  clock: "M6 1.25a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 1 0 0-9.5M6 3.5V6l1.75 1",
+};
+
+// Unseen but still text: font-size 0 stays in a copied selection, where a
+// zero-width overflow box drops it and sr-only's absolute box adds a line break.
+const HIDDEN_STAT_TEXT: CSSProperties = { fontSize: 0 };
+
+// ↑ and ↓ come from whatever font has them: Segoe UI or a CJK fallback on
+// Windows draws them small, heavy or off the baseline. The icons are drawn
+// here instead; their text stays, zero-width, for copying and screen readers.
+// Everything stays inline: a block or flex box would copy as a line break
+// between the icon and its count.
+function UsagePart({ part }: { part: StatPart }) {
+  if (!part.icon) return <span>{part.text}</span>;
+  return (
+    <span>
+      {part.before && <span style={HIDDEN_STAT_TEXT}>{part.before}</span>}
+      <svg
+        width={part.icon === "clock" ? 10 : 9}
+        height={part.icon === "clock" ? 10 : 9}
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+        style={{ display: "inline", verticalAlign: part.icon === "clock" ? "-0.1em" : "-0.05em", marginRight: part.icon === "clock" ? 3 : 1 }}
+      >
+        <path d={STAT_ICON_PATHS[part.icon]} />
+      </svg>
+      {part.text}
+      {part.after && <span style={HIDDEN_STAT_TEXT}>{part.after}</span>}
+    </span>
+  );
 }
 
 function BashExecutionView({ message, sessionId }: { message: BashExecutionMessage; sessionId?: string }) {

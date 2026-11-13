@@ -13,13 +13,11 @@ import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBl
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
-import { summarizeTurnUsage, type MessageUsageSummary } from "@/tsgw/message-usage";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
-import { RunningSubagentsStatus } from "@/tsgw/subagent-status";
 import { NoticeDismissButton } from "@/tsgw/notice-dismiss";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
@@ -57,7 +55,6 @@ interface Props {
   initialScrollPosition?: ChatScrollPosition | null;
   onScrollPositionChange?: (sessionId: string, position: ChatScrollPosition) => void;
   sessionRunning?: boolean;
-  runningSubagents?: readonly SessionInfo[];
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
   /** Shown above the composer while a fresh composer is still empty: where its session starts. */
@@ -258,7 +255,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cacheMis
   );
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, runningSubagents, newSessionCwd, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, panel = false, onSideSession, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onFilesUploaded, onOpenSubagent, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, panel = false, onSideSession, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onFilesUploaded, onOpenSubagent, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const completionNotificationsEnabled = !isHiddenRelation(session?.relation);
@@ -317,7 +314,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     onOpenSettings, onDebugSnapshotReaderChange, t,
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
-  const showUsageDetails = useCallback((message: string) => addNotice({ message }), [addNotice]);
   // Only whether a reply is streaming and has content yet: the chunks themselves
   // re-render StreamingReply alone.
   const isStreaming = useStreamingSelector(streamingStore, selectIsStreaming);
@@ -1126,7 +1122,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; recoverTruncation?: boolean; turnDurationMs?: number; usageSummary?: MessageUsageSummary; withNotices?: boolean } = {}): ReactNode => {
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; recoverTruncation?: boolean; turnDurationMs?: number; withNotices?: boolean } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
                 if (msg.role === "custom" && msg.customType === SIDE_BOUNDARY_MESSAGE_TYPE) return <SideChatDivider key="side-chat-divider" />;
                 if (isHiddenCustomMessage(msg)) return null;
@@ -1173,8 +1169,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={options.writtenFiles}
                     turnDurationMs={options.turnDurationMs}
-                    usageSummary={options.usageSummary}
-                    onShowUsageDetails={showUsageDetails}
                     onCompact={options.recoverTruncation ? handleCompact : undefined}
                     isCompacting={options.recoverTruncation ? isCompacting : undefined}
                     compactError={options.recoverTruncation ? compactError : undefined}
@@ -1293,7 +1287,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                           would otherwise stay open once its answer shows up, e.g. when
                           switching between an answered and an unanswered leaf of the same
                           turn. Manual toggles survive every other re-render. */}
-                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processMessageCount} toolCallCount={processToolCount} durationMs={finalAnswerMessage ? undefined : turnDurationMs} cacheMisses={processCacheMisses} defaultExpanded={!answered} reveal={revealProcess} t={t}>
+                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processMessageCount} toolCallCount={processToolCount} durationMs={turnDurationMs} cacheMisses={processCacheMisses} defaultExpanded={!answered} reveal={revealProcess} t={t}>
                         {processViews}
                       </ProcessDetailsGroup>
                     </div>,
@@ -1316,8 +1310,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   rendered.push(renderMessage(finalAssistantIdx, {
                     messageOverride: finalAnswerMessage,
                     writtenFiles,
-                    turnDurationMs,
-                    usageSummary: hasAnchor ? summarizeTurnUsage(messages, groupStartIdx, endIdx, turnDurationMs) : undefined,
+                    // Without process details the turn's time goes under the answer.
+                    turnDurationMs: processViews.length === 0 ? turnDurationMs : undefined,
                     recoverTruncation: endIdx === messages.length && !isStreaming && !hasAssistantAnswer(finalAnswerMessage),
                   }));
                 }
@@ -1348,8 +1342,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t, isCompacting, (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0))}</span>
               </div>
             )}
-
-            <RunningSubagentsStatus runningSubagents={runningSubagents} />
 
             {bashRunning && !pendingBash && (
               <div className="py-2 text-[13px] text-text-muted">
