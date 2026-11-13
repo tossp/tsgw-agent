@@ -10,7 +10,7 @@ import { WakeupRuntime, type WakeupSessionStore } from "./runtime";
 import type { Wakeup } from "./scheduler";
 
 export type WakeupWrapper = Pick<AgentSessionWrapper,
-  "inner" | "isAlive" | "isRunning" | "waitUntilReady" | "prepareMcpForRun" | "acquirePromptAdmission" | "cwd" | "sessionFile">;
+  "inner" | "isAlive" | "shellRunning" | "waitUntilReady" | "prepareMcpForRun" | "acquirePromptAdmission" | "beginCustomMessageSubmission" | "cwd" | "sessionFile">;
 
 export interface WakeupHostAccess {
   getSession(sessionId: string): WakeupWrapper | undefined;
@@ -67,25 +67,30 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
     let wrapper = access.getSession(wakeup.targetSessionId);
     if (!wrapper?.isAlive()) wrapper = await access.reopenSession(wakeup.targetSessionId, snapshot.file);
     if (wrapper.inner.sessionId !== wakeup.targetSessionId) throw new Error("Reopened session ID does not match wakeup target");
-    await wrapper.waitUntilReady();
-    // Let an earlier parked/admitted prompt proceed before taking its admission slot.
-    while (wrapper.isAlive() && wrapper.isRunning() && !wrapper.inner.isStreaming) await delay(50);
-    // Share normal prompt admission: concurrent MCP preparation must not overwrite the
-    // wrapper's one Stop cancellation handle. Release on acceptance, not model completion.
-    const release = await wrapper.acquirePromptAdmission();
+    // Count preparation before its first await, just like send(): shell commands must not
+    // overtake an idle submission, and ctx.shutdown() must wait until it is accepted.
+    const finishSubmission = wrapper.beginCustomMessageSubmission();
     try {
-      if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
-      if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}`);
-      if (!await wrapper.prepareMcpForRun(new AbortController().signal)) throw new Error("Wakeup stopped while MCP servers were connecting");
-      // A manual compaction or shell command is busy without streaming. Do not wait on
-      // pendingPromptCount here: parked prompts themselves need this admission to drain.
-      while (wrapper.isAlive() && (wrapper.inner.isCompacting || wrapper.inner.isBashRunning)) await delay(50);
-      if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
-      if (!existsSync(snapshot.file)) throw new Error("Target session file was deleted before wakeup delivery");
-      assertOrdinary(wrapper.inner.sessionManager.getEntries());
-      await submitWakeup(wrapper, wakeup);
+      await wrapper.waitUntilReady();
+      // Share normal admission and its one MCP Stop handle, not the model's whole run.
+      const release = await wrapper.acquirePromptAdmission();
+      try {
+        if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
+        if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}`);
+        if (!await wrapper.prepareMcpForRun(new AbortController().signal)) throw new Error("Wakeup stopped while MCP servers were connecting");
+        // A streaming follow-up can queue beside !bash. Only a new run must wait for
+        // shell execution AND user_bash hooks; a run may have ended during the MCP wait.
+        // Never wait on isRunning(): parked prompts need this same admission to drain.
+        while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) await delay(50);
+        if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
+        if (!existsSync(snapshot.file)) throw new Error("Target session file was deleted before wakeup delivery");
+        assertOrdinary(wrapper.inner.sessionManager.getEntries());
+        await submitWakeup(wrapper, wakeup);
+      } finally {
+        release();
+      }
     } finally {
-      release();
+      finishSubmission();
     }
   });
 }

@@ -17,10 +17,10 @@ Adds an individual close button and a stable callback to remove exactly one noti
 | File / function | Integration |
 | --- | --- |
 | `hooks/useAgentSession.ts` / notice controls | Calls `useNoticeDismiss` with the existing reducer dispatch and pause setter; returns the callback. |
-| `components/ChatWindow.tsx` / NoticeShelf | Renders `NoticeDismissButton` with the existing notice id and callback. |
+| `components/ChatWindow.tsx` / NoticeShelf | Imports `NoticeDismissButton`, takes `dismissNotice` from the existing session hook, passes it as `onDismiss` to the shelf and renders the button with the existing notice id. No other fork change to ChatWindow. |
 
 ## Host dependencies and upgrade checks
-Keep the reducer's `remove` action, refill behavior and React dispatcher identities. Do not copy the upstream notice shelf or reducer into the fork module. Use the existing `chat.close` translation and preserve button geometry and accessibility.
+Keep the reducer's `remove` action, refill behavior and React dispatcher identities. Do not copy the upstream notice shelf or reducer into the fork module. Use the existing `chat.close` translation and preserve button geometry and accessibility. v0.16.0's `splitNoticeLinks` keeps URLs clickable within text parts (and terminal art unchanged); retain those links and their focus/hover pause behavior alongside the added close button. All session-ending, fork-draft and tool-clock wiring in ChatWindow stays upstream-owned.
 
 ## Verification
 ```sh

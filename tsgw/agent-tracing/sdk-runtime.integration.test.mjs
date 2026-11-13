@@ -16,7 +16,7 @@ import {
 import { Sentry, AgentTracer, markEnvelopes, settleSpans, spansSince, agentSpans, modelSpans, attrs } from "./tracer-fixture.mjs";
 
 const { version } = JSON.parse(await readFile(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url), "utf8"));
-assert.equal(version, "1.5.0", "this auth contract regression must run against the target SDK, not the old installation");
+assert.equal(version, "1.5.2", "this auth contract regression must run against the target SDK, not the old installation");
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { createTracingAgentSessionFromServices } = await jiti.import("./index.ts");
 const fetch = globalThis.fetch;

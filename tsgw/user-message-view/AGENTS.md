@@ -7,6 +7,7 @@
 ## 范围、入口与边界
 
 - `UserMessageView.tsx` 提供 `UserMessageView` 和 `replaceUserMessageText`。保留宿主已有复制、编辑、取消编辑、新会话、时间、附件、技能紧凑显示/展开、CRLF/lone CR 显示归一化；默认 Markdown 渲染，增加的 Source / Render 是每个已挂载消息的局部状态。
+- v0.16.0 的 `onFork(entryId, editTarget)` 两参数契约必须同步到迁移后的组件：普通消息/仅图片消息传原消息，技能传恢复为 `/skill:` 命令且保留附件的消息，由宿主填入新会话草稿。复制拒绝由失败回调消费，不显示 Copied、不产生未处理的 Promise rejection；只有成功才显示 Copied。
 - Source 是 React 文本节点，保持 HTML 标签、实体、模板和 Markdown 的字面值，不走 Markdown/HTML/math 管线；无文本消息不显示切换。复制/编辑技能仍使用命令；切换不发送请求、不改变原始消息或模型输入。
 - `messages.ts` 保存三语言 `chat.messageSource` / `chat.renderMessage`，宿主语言包薄 spread；组件继续通过既有 `useI18n` 读取。
 - 不接管会话、发送、分支或编辑机制，不另造状态存储或渲染器。旧专有文件已迁走、不留兼容壳；行为细则集中在本模块，`docs/agents/sessions.md` 仅保留固定主题索引。
@@ -27,8 +28,9 @@
 | `lib/i18n/messages/{en,zh-CN,zh-TW}.ts`：`chat.messageSource` / `chat.renderMessage` | 原语言包直接从本模块纯数据 `messages.ts` 薄 spread。仅文案接入，不改共享动作/guard 文案或 fallback。 |
 | `lib/sidebar-actions.test.mjs`：三语言夹具加载 | 沿用该测试已有的 Jiti 读取实际语言包，支持模块文案的无扩展名导入；不修改生产逻辑或测试断言。 |
 | 原 `components/{UserMessageView.tsx,UserMessageView.test.mjs}`、`e2e/{user-message-render-toggle.mjs,user-message-render-fixtures.mjs}` | 用 mv 迁入本模块；修复宿主导入及 E2E 项目根目录推导。 |
+| `e2e/run.mjs`；`.github/workflows/tsgw-npm.yml` 的 Chromium 安装后步骤 | 显式执行 `user-message-interactions.mjs`；不进入普通单测发现，不要求无浏览器的 checks job 安装 Chromium。 |
 
-`components/MessageView.test.mjs` 的宿主导入和公开出口保持有效，本轮无需改动。`components/ChatWindow.tsx` 仍从宿主 `MessageView` 使用既有出口，不要求改成依赖本模块内部；无新增生命周期或后端接入。根 `AGENTS.md`、`tsgw/AGENTS.md`、`docs/agents/sessions.md` 和 `e2e/README.md` 保留模块薄索引。
+`components/MessageView.test.mjs` 的宿主导入和公开出口保持有效；完整保留上游测试，仅追加相关工具结果/时钟的 memo 比较和时钟传递回归。`components/ChatWindow.tsx` 的 `forkFromMessage` 沿用上游：将第二参数解析为草稿文本与图片后交给 `handleFork`，不改成依赖本模块内部；无新增生命周期或后端接入。根 `AGENTS.md`、`tsgw/AGENTS.md`、`docs/agents/sessions.md` 和 `e2e/README.md` 保留模块薄索引。
 
 ## 共享代码权衡
 
@@ -42,10 +44,11 @@
 - `components/ImagePreview.tsx`、`lib/types.ts` 的 `UserMessage` / `TextContent` / `ImageContent`：附件预览、两种磁盘图片结构；文本替换不丢附件、不改原消息，兼容性双重断言有就地 SAFETY 依据。
 - `lib/clipboard.ts` 的 `copyText`、`lib/slash-display.ts` 的 `skillExpansionToCommand` / `skillExpansionContent`：技能命令复制/编辑、去 envelope 的展开正文与完整 Source 各自语义保持。
 - `hooks/useI18n.tsx`、`lib/i18n/registry.ts`、宿主语言包：英/简/繁目标视图标签，复用共享复制/编辑/新会话/展开/guard 文案，不改 key 或值。
-- `components/MessageView.tsx`：time 格式化、entryId、cwd/onOpenFile、forking、编辑与取消回调原样传递；`ChatWindow` 的分支/发送生命周期不归本模块。
+- `components/MessageView.tsx`：time 格式化、entryId、cwd/onOpenFile、两参数 onFork、forking、编辑与取消回调原样传递；除迁出用户组件/文本替换 helper、共享 SafeMarkdownBody 引用外，助手/工具主体保持上游实现，包括 toolClocks、相关 entries 的 memo 比较、Stopped 及错误/最终答案去重、复制失败处理和 natural token width / 8ch TPS badge。`ChatWindow` 的 `onSessionEnded`、分支草稿/发送生命周期不归本模块。
 - `app/globals.css`：既有 `.message-action-label` 在窄屏隐藏文字、保留 title 与图标；保持 hover/focus 显示、键盘操作、窄屏换行和 300px 消息泡滚动。
 - React 提供组件局部状态与 JSX；测试用 `jiti`（启用 tsconfigPaths）和 `react-dom/server` 经宿主 `MessageView` / `I18nProvider` 渲染真实实现。浏览器夹具消费 Playwright、Next dev CLI 与 sessions / agent API；只使用临时 JSONL，不调用模型。CAT 接入由宿主维护，不从本模块接线。
-- `package.json` 已有 `tsgw/**/*.test.mjs`，无需改测试发现或依赖；`e2e/run.mjs` 是独立宿主入口，不由本模块改写。
+- `user-message-interactions.mjs` 用 Next 自带 webpack 和 TypeScript 将真实 `MessageView`、`I18nProvider` 及其依赖打入临时目录，由 Playwright route 在 Chromium 内加载并点击；不 mock 组件/hook、不起服务、不写 `.next`，仅在复制拒绝/成功场景替换浏览器剪贴板边界。覆盖普通/仅图片/技能消息的 fork 第二参数、编辑目标与附件、forking 禁用、拒绝复制、Source/Render/技能展开及大消息 guard。临时包与浏览器在退出时清理，需已有 Playwright Chromium。
+- `package.json` 已有 `tsgw/**/*.test.mjs`；该模式只发现无浏览器的模块单测。组件浏览器检查使用非 `.test.mjs` 专用文件名，由 `e2e/run.mjs` 和 fork 发布工作流在 Chromium 就绪后显式调用；不静默跳过、不增加普通单测的浏览器依赖。
 
 ## 验证与验收
 
@@ -54,8 +57,9 @@ node --experimental-strip-types --test tsgw/user-message-view/*.test.mjs compone
 node_modules/.bin/eslint components/MessageView.tsx tsgw/user-message-view/*.{ts,tsx,mjs}
 node_modules/.bin/tsc --noEmit --incremental false
 node tsgw/user-message-view/user-message-render-toggle.mjs
+node --test tsgw/user-message-view/user-message-interactions.mjs
 ```
 
 - 独立浏览器脚本会起停当前 checkout 的回环 Next dev，应与其他 E2E 串行并使用隔离环境执行。产物仍在 `test-results/e2e/`；不构建、不使用真实用户会话或模型。
 - 验收：默认渲染及 HTML 字面显示、逐消息独立切换、Source fidelity、复制/编辑/新会话、图片、技能折叠/展开、大消息 guard、英简繁标签、键盘与桌面/手机布局均保持。
-- 目录归集的既有验证记录：本模块与 message-usage 加 `MessageView.test.mjs` 合计 81/81 真实测试通过；TypeScript noEmit 与定向 ESLint 通过；首次主动 LSP 未报类型错误，复查的 push-only 静默结果不单独作为 clean 证据。E2E 当时仅做语法检查，不能视为浏览器或全仓集成通过。文档归集不新增代码验收结果，不另建重复台账。
+- 单独组件浏览器回归不等于会话 API/通知货架的端到端回归；后两者仍用各自独立脚本验收。LSP push-only 静默结果不能单独视为 clean，配合 TypeScript noEmit 与定向 ESLint。

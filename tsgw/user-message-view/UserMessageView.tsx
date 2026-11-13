@@ -36,7 +36,7 @@ export function UserMessageView({ time, message, cwd, onOpenFile, entryId, onFor
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
   entryId?: string;
-  onFork?: (entryId: string) => void;
+  onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
   onEditContent?: (message: UserMessage, entryId: string) => void;
   onCancelEdit?: () => void;
@@ -111,10 +111,12 @@ export function UserMessageView({ time, message, cwd, onOpenFile, entryId, onFor
   const canCancelEdit = !!isEditing && !!onCancelEdit;
 
   const copyContent = () => {
+    // A refused copy is silent: no "Copied", and the rejection is handled
+    // so it never surfaces as an unhandled one (lib/clipboard.ts).
     copyText(copyTarget).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }, () => {});
   };
 
   return (
@@ -318,7 +320,7 @@ export function UserMessageView({ time, message, cwd, onOpenFile, entryId, onFor
               )}
               {canFork && (
                 <button
-                  onClick={() => { onFork!(entryId!); }}
+                  onClick={() => { onFork!(entryId!, editTarget); }}
                   disabled={forking}
                    title={forking ? t("i18n.creatingSession") : t("i18n.newSessionTitle")}
                   style={{

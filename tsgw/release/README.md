@@ -47,7 +47,7 @@ if: >-
 7. `npm run build`（仅 `tsgw` 分支注入 `SENTRY_RELEASE` / `CAT_DEFER_UPLOAD=1`，离线生成带 Debug ID 的 JS/map，不读取 CAT 凭据或访问 CAT），并拒绝 `.next/dev`、`.next/server/route-cache`
 8. 仅 `tsgw` 用 `tsgw/cat-monitoring/cat-artifacts.mjs` 归档同次构建的 JS/map 和版本清单，标准 S3 CLI 上传到七牛，见 [CAT 构建归档与补传](../cat-monitoring/BUILD.md)；归档失败不能丢失 map 后继续发布
 9. 仅 `tsgw` 在 S3 归档成功后删除临时构建目录内的 `.map`，再运行 `node tsgw/release/pack.mjs "$RUNNER_TEMP/tsgw-package"`；npm files 排除规则不作为唯一保障
-10. `npx playwright install --with-deps chromium`（smoke 用 Playwright 真的开登录页和终端）
+10. `npx playwright install --with-deps chromium`，随后显式运行 `node --test tsgw/user-message-view/user-message-interactions.mjs`（浏览器交互不进入此前的普通单测；smoke 也用 Playwright 真的开登录页和终端）
 11. `node tsgw/release/smoke.mjs "$RUNNER_TEMP/tsgw-package"`
 12. 写 step summary（包名、通道版本、dist-tag、ref、commit、事件），上传整个 pack 目录为 artifact `tsgw-npm-<version>`，保留 7 天
 

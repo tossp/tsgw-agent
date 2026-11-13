@@ -3,6 +3,7 @@ import { reportCatError } from "@/tsgw/cat-monitoring";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
+import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -62,16 +63,18 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    reportCatError(error, { source: "agent-api", operation: commandType, session_id: id, status: 500 });
     // Read by its fields: the wrapper that threw may come from another route's bundle.
     const missingCwd = missingCwdFromBody(error);
+    const status = (error as { status?: number })?.status === 404 ? 404 : 500;
+    reportCatError(error, { source: "agent-api", operation: commandType, session_id: id, status });
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(missingCwd ? cwdMissingBody(missingCwd) : {}),
+      ...((error as { code?: unknown } | null)?.code === EXTENSION_REPORTED_CODE ? { code: EXTENSION_REPORTED_CODE } : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
-    }, { status: 500 });
+    }, { status });
   }
 }
 

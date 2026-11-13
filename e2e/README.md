@@ -67,8 +67,13 @@ Coverage:
   shown names once with A–Z, appends later additions, and saves only the changed array order
   while preserving rename tracking (`model-order.mjs`, desktop and phone widths,
   mocked config routes).
+- `/compact` leaves the composer focused and accepts the next draft while its
+  POST is pending, on desktop and phone widths. The compaction response is mocked;
+  no model is called (`composer-focus.mjs`).
 - A local extension checks dialog keyboard navigation, Esc cancellation,
-  collapse/expand draft preservation, countdown display, and server-side expiry.
+  collapse/expand draft preservation, countdown display, server-side expiry,
+  and that `setEditorText` replaces the composer's draft while `pasteToEditor`
+  inserts at the caret.
 - The production assistant header keeps its height and numeric columns when streaming metrics appear, update and disappear. Static component renders cover digit boundaries with proportional and monospace fonts, without a live model. Run this check alone with `node e2e/streaming-metrics.mjs` (1280, 390 and 320px).
 
 The TSGW-only CAT regression is standalone: `node tsgw/cat-monitoring/e2e.mjs`, or
@@ -83,7 +88,7 @@ Fork standalone browser entries (run from the project root, without another dev 
 
 - [login2](../tsgw/login2/README.md): `node tsgw/login2/login2.mjs`.
 - [Individual notice dismissal](../tsgw/notice-dismiss/AGENTS.md): `node tsgw/notice-dismiss/e2e.mjs`.
-- [User-message Source / Render](../tsgw/user-message-view/AGENTS.md): `node tsgw/user-message-view/user-message-render-toggle.mjs`.
+- [User-message Source / Render](../tsgw/user-message-view/AGENTS.md): `node tsgw/user-message-view/user-message-render-toggle.mjs`; component fork/copy interactions: `node --test tsgw/user-message-view/user-message-interactions.mjs` (also run by the main browser suite and the release workflow after Chromium is installed, never by ordinary unit-test discovery).
 - [Debug dashboard](../tsgw/debug/DESIGN.md): `E2E_BASE_URL=<existing-dev-server> node tsgw/debug/e2e.mjs`; this one reuses an existing server and never starts a second one.
 - [CAT runtime and live-upload boundaries](../tsgw/cat-monitoring/AGENTS.md); [release installation smoke](../tsgw/release/README.md) is a separate clean-build workflow.
 

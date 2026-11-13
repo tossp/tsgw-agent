@@ -158,6 +158,9 @@ jobs:
       - name: Install Chromium for the smoke test
         run: npx playwright install --with-deps chromium
 
+      - name: User message browser interactions
+        run: node --test tsgw/user-message-view/user-message-interactions.mjs
+
       - name: Smoke test the packed artifact
         run: node tsgw/release/smoke.mjs "$RUNNER_TEMP/tsgw-package"
 

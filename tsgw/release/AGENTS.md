@@ -24,7 +24,7 @@ CAT 归档和补传属于 `../cat-monitoring/`；登录与 Playwright 登录辅�
 | `bin/pi-web-update.js`：包身份/通道 helper require | 更新检查和安装继续遵循当前包及当前通道；不改 npm 调用和更新决策 |
 | `app/api/app-update/route.ts`：helper import | Web 更新端点复用本模块；缓存、超时及响应契约不变 |
 | `lib/pi-web-options.test.mjs`：helper require | 测试跟随新路径，保留命令名断言 |
-| `.github/workflows/tsgw-npm.yml`：`Release helper tests`、版本/打包/冒烟、CAT 归档/补传步骤 | 调用新路径；测试步骤逐模块要求 `tsgw/release/*.test.mjs` 与 `tsgw/cat-monitoring/*.test.mjs` 非空，然后显式运行两者 |
+| `.github/workflows/tsgw-npm.yml`：`Release helper tests`、版本/打包/冒烟、CAT 归档/补传步骤 | 调用新路径；测试步骤逐模块要求 `tsgw/release/*.test.mjs` 与 `tsgw/cat-monitoring/*.test.mjs` 非空，然后显式运行两者；Chromium 安装后显式执行 user-message-view 交互检查，不让普通单测提前依赖浏览器 |
 | `.github/workflows/tsgw-npm-bootstrap.yml`：版本公式注释 | 仅修正文档性源码路径，初始化与认证行为不变 |
 | `package.json`：`files`、`scripts.test` | 原始运行时文件与模块正式文档必须入包；`npm test` 的 `tsgw/**/*.test.mjs` 包含 release 在内的全部模块，CI 同时显式定向 release 与 CAT |
 | `tsgw/AGENTS.md`：公共入口、文档与测试发现约定 | 常规测试覆盖全部模块，CI 对 release 与 CAT 另保留显式非空测试入口 |

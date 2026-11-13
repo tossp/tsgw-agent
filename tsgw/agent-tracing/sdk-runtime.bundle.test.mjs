@@ -100,4 +100,30 @@ try {
     cwd: unrelatedCwd, env, timeout: 30_000,
   });
   assert.match(result.stdout, /RELOCATED_SDK_OK/);
+
+  // Each process gets a fresh marker cache; neither failure may fall through to SDK creation.
+  const guardRunner = join(installedDir, "check-guard.mjs");
+  await writeFile(guardRunner, `
+import assert from "node:assert/strict";
+const { createTracingAgentSessionFromServices } = await import("./sdk-runtime.mjs");
+await assert.rejects(createTracingAgentSessionFromServices({}),
+  /Pi SDK Agent tracing auth contract changed/);
+console.log("SDK_GUARD_OK");
+`);
+  const sdkEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+  for (const [name, source] of [
+    ["missing runtime marker", `export { AgentSession } from ${JSON.stringify(sdkEntry)};`],
+    ["different AgentSession identity", "export class AgentSession {}\nexport function markRuntimeStreamFunction() {}"],
+  ]) {
+    await t.test(`relocated bundle rejects ${name}`, async () => {
+      const incompatibleDir = join(root, name.replaceAll(" ", "-"));
+      await mkdir(join(incompatibleDir, "dist/core"), { recursive: true });
+      await writeFile(join(incompatibleDir, "package.json"), JSON.stringify({ type: "module" }));
+      await writeFile(join(incompatibleDir, "dist/core/agent-session.js"), source);
+      const rejected = await exec(process.execPath, [guardRunner], {
+        cwd: unrelatedCwd, env: { ...env, PI_PACKAGE_DIR: incompatibleDir }, timeout: 30_000,
+      });
+      assert.match(rejected.stdout, /SDK_GUARD_OK/);
+    });
+  }
 });
