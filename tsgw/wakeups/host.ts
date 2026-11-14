@@ -10,7 +10,7 @@ import { WakeupRuntime, type WakeupSessionStore } from "./runtime";
 import type { Wakeup } from "./scheduler";
 
 export type WakeupWrapper = Pick<AgentSessionWrapper,
-  "inner" | "isAlive" | "shellRunning" | "waitUntilReady" | "prepareMcpForRun" | "acquirePromptAdmission" | "beginCustomMessageSubmission" | "cwd" | "sessionFile">;
+  "inner" | "isAlive" | "shellRunning" | "prepareMcpForRun" | "acquirePromptAdmission" | "beginCustomMessageSubmission" | "cwd" | "sessionFile">;
 
 export interface WakeupHostAccess {
   getSession(sessionId: string): WakeupWrapper | undefined;
@@ -71,8 +71,8 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
     // overtake an idle submission, and ctx.shutdown() must wait until it is accepted.
     const finishSubmission = wrapper.beginCustomMessageSubmission();
     try {
-      await wrapper.waitUntilReady();
-      // Share normal admission and its one MCP Stop handle, not the model's whole run.
+      // Share admission and prepareMcpForRun's Stop handle for session_start and MCP,
+      // not the model's whole run. A separate binding wait would bypass Stop.
       const release = await wrapper.acquirePromptAdmission();
       try {
         if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");

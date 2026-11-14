@@ -25,7 +25,7 @@ async function eventually(check) {
   assert.fail("Timed out waiting for wakeup lifecycle");
 }
 
-async function fixture(t, { mcp = false, tool = false, shellExecution = false } = {}) {
+async function fixture(t, { mcp = false, tool = false, shellExecution = false, sessionStart = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-wakeup-lifecycle-"));
   const previousDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -38,10 +38,13 @@ async function fixture(t, { mcp = false, tool = false, shellExecution = false } 
     gates.push(gate);
     return gate;
   };
-  const shell = hold(), connection = hold(), toolGate = hold();
+  const shell = hold(), connection = hold(), toolGate = hold(), binding = hold();
   let context, disposed = false;
   const extension = (pi) => {
-    pi.on("session_start", (_event, ctx) => { context = ctx; });
+    pi.on("session_start", async (_event, ctx) => {
+      context = ctx;
+      if (sessionStart) { binding.entered = true; await binding.promise; }
+    });
     pi.on("user_bash", async () => {
       if (shellExecution) return { operations: {
         async exec(_command, _cwd, { onData }) {
@@ -80,7 +83,7 @@ async function fixture(t, { mcp = false, tool = false, shellExecution = false } 
   } } : {});
   wrapper.start();
   wrapper.beginExtensionBinding();
-  await wrapper.waitUntilReady();
+  if (!sessionStart) await wrapper.waitUntilReady();
   const getSession = () => wrapper.isAlive() ? wrapper : undefined;
   const runtime = createWakeupHost({ getSession, resolvePath: async () => manager.getSessionFile(),
     reopenSession: () => assert.fail("this active target must not reopen"),
@@ -97,7 +100,7 @@ async function fixture(t, { mcp = false, tool = false, shellExecution = false } 
   });
   const history = () => runtime.history(inner.sessionId);
   const schedule = (message = "scheduled handoff", after_seconds = 0.01) => runtime.schedule(inner.sessionId, { message, after_seconds });
-  return { wrapper, inner, manager, runtime, faux, shell, connection, toolGate, hold, history, schedule,
+  return { wrapper, inner, manager, runtime, faux, shell, connection, toolGate, binding, hold, history, schedule,
     shutdown: () => context.shutdown(), disposed: () => disposed,
     notifications: () => manager.getEntries().filter((e) => e.type === "custom_message" && e.customType === WAKEUP_NOTIFICATION_TYPE),
   };
@@ -164,6 +167,24 @@ test("wakeup preparation counts as pending and defers extension shutdown through
   await eventually(() => !f.wrapper.isAlive());
   assert.equal(await f.wrapper.waitUntilDisposed(2000), true);
   assert.deepEqual(f.runtime.list().map((e) => e.wakeupId), [future.wakeupId]);
+});
+
+test("Stop withdraws a wakeup waiting for session_start before any model run", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, { sessionStart: true });
+  f.faux.setResponses([answer()]);
+  await eventually(() => f.binding.entered);
+  await f.schedule();
+  await eventually(() => f.wrapper.isRunning());
+  await f.wrapper.send({ type: "abort" });
+  await eventually(async () => (await f.history())[0]?.status === "failed");
+  assert.equal(f.faux.state.callCount, 0);
+  assert.equal(f.notifications().length, 0);
+  assert.equal(f.wrapper.isRunning(), false, "Stop releases the submission count without waiting for session_start");
+  f.binding.release();
+  await f.wrapper.waitUntilReady();
+  await nextTurn();
+  assert.equal(f.faux.state.callCount, 0, "finishing session_start must not deliver the withdrawn wakeup");
+  assert.deepEqual((await f.history())[0].events.map((e) => e.event), ["created", "failed"]);
 });
 
 test("Stop may clear an accepted queued wakeup without replaying or relabelling it failed", { timeout: 15000 }, async (t) => {
