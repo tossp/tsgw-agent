@@ -1,6 +1,6 @@
 // Adapted from @Nuctori's script-style CI/E2E fixtures in PR #617 (issue #599).
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -551,7 +551,6 @@ try {
   await checkProjectNavigation({ browser, base, artifacts, fixture: projectNavigation, otherSessionId: BRANCH, api, post });
   await checkSideSession({ browser, base, artifacts, parentSessionId: RICH });
   await checkDirectoryPicker({ browser, base, fixture: directoryPicker });
-  execFileSync(process.execPath, ["--test", join(root, "tsgw/user-message-view/user-message-interactions.mjs")], { cwd: root, stdio: "inherit", timeout: 150_000 });
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

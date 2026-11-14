@@ -1,12 +1,10 @@
 import type { LocalePlugin } from "../types";
-import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 內建繁體中文語系。 */
 export const zhTWLocale: LocalePlugin = {
   id: "zh-TW",
   label: "繁體中文",
   messages: {
-    ...userMessageViewMessages["zh-TW"],
     "common.ok": "確定",
     "common.language": "語言",
     "common.models": "模型",

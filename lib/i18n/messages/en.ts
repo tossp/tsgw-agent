@@ -1,12 +1,10 @@
 import type { LocalePlugin } from "../types";
-import { userMessageViewMessages } from "../../../tsgw/user-message-view/messages";
 
 /** Pi Web 内置英语语言包。 */
 export const enLocale: LocalePlugin = {
   id: "en",
   label: "English",
   messages: {
-    ...userMessageViewMessages.en,
     "common.ok": "OK",
     "common.language": "Language",
     "common.models": "Models",

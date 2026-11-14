@@ -88,7 +88,6 @@ Fork standalone browser entries (run from the project root, without another dev 
 
 - [login2](../tsgw/login2/README.md): `node tsgw/login2/login2.mjs`.
 - [Individual notice dismissal](../tsgw/notice-dismiss/AGENTS.md): `node tsgw/notice-dismiss/e2e.mjs`.
-- [User-message Source / Render](../tsgw/user-message-view/AGENTS.md): `node tsgw/user-message-view/user-message-render-toggle.mjs`; component fork/copy interactions: `node --test tsgw/user-message-view/user-message-interactions.mjs` (also run by the main browser suite and the release workflow after Chromium is installed, never by ordinary unit-test discovery).
 - [Debug dashboard](../tsgw/debug/DESIGN.md): `E2E_BASE_URL=<existing-dev-server> node tsgw/debug/e2e.mjs`; this one reuses an existing server and never starts a second one.
 - [CAT runtime and live-upload boundaries](../tsgw/cat-monitoring/AGENTS.md); [release installation smoke](../tsgw/release/README.md) is a separate clean-build workflow.
 

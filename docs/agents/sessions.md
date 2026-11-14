@@ -254,9 +254,6 @@ New sessions and the files tab ("the files tab" here is the files section below 
 - A status with nothing visible (empty after stripping ANSI) gets no cell. Touch screens get 44px cells (widget triggers included) only when the bar has a command button.
 - Statuses exist only while the session's wrapper is alive, so a fresh chat or a session nobody has prompted yet shows no cells (and no buttons) until its first message.
 
-## User messages: Source / Render
-See [user-message view rules](../../tsgw/user-message-view/AGENTS.md) for Source / Render behavior, shared rendering boundaries and verification.
-
 ## Message list props stay stable (`components/ChatWindow.tsx`)
 - ChatWindow re-renders on every chat update (streamed chunks aside, see below): tool results, notices, statuses, and each render an extension's custom panel sends (one or two per key typed into it). `MessageView` and `MarkdownBody` are `memo`'d, so each prop the list hands them keeps its identity while the transcript is unchanged: `toolResultsMap` is memoized, and a grouped turn's answer and process copies and its written-files list come from `getFinalAnswerViews()` / `keepWrittenFiles()` (`lib/turn-views.ts`), cached per stored message. Copies built inline re-ran every visible answer's markdown per keystroke (#1005).
 
