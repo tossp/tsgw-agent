@@ -436,7 +436,9 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "wakeups" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [wakeupPanelHost, setWakeupPanelHost] = useState<HTMLDivElement | null>(null);
+  const closeWakeupPanel = useCallback(() => setActiveTopPanel(panel => panel === "wakeups" ? null : panel), []);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -456,7 +458,7 @@ export function AppShell() {
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
+    panel: "agents" | "wakeups" | "branches" | "system" | "tools" | "session" | "debug",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -2515,6 +2517,9 @@ export function AppShell() {
             )}
           </button>
           {showChat && selectedSession && <WakeupPanelTrigger key={selectedSession.id} sessionId={selectedSession.id} refreshKey={refreshKey} compact={isMobile}
+            open={activeTopPanel === "wakeups"} panelHost={wakeupPanelHost}
+            onToggle={() => { setMobileToolbarMoreOpen(false); toggleTopPanel("wakeups"); }}
+            onClose={closeWakeupPanel}
             onOpenResponse={(id, entryId) => {
               const target = sessionCatalog.find(session => session.id === id);
               if (!target) return false;
@@ -2636,6 +2641,7 @@ export function AppShell() {
               overflowY: "auto",
               zIndex: 500,
             }}>
+              {activeTopPanel === "wakeups" && <div ref={setWakeupPanelHost} />}
               {activeTopPanel === "agents" && activeSessionFamily && selectedSession && (
                 <AgentSessionPanel
                   rootSession={activeSessionFamily.root}

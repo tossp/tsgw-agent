@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
 import { isPlainActivation, sessionDeepLink } from "@/lib/session-links";
 import type { Locale } from "@/lib/i18n/types";
@@ -108,7 +109,11 @@ function Health({ health, locale }: { health: WakeupHealth; locale: Locale }) {
   </div>;
 }
 
-type WakeupPanelProps = { sessionId: string; refreshKey?: string | number; compact?: boolean; onOpenResponse?: (sessionId: string, entryId: string) => boolean };
+type WakeupPanelProps = {
+  sessionId: string; refreshKey?: string | number; compact?: boolean;
+  open: boolean; onToggle: () => void; onClose: () => void; panelHost: HTMLElement | null;
+  onOpenResponse?: (sessionId: string, entryId: string) => boolean;
+};
 
 function WakeupDetail({ item: current, locale }: { item: WakeupQueryItem; locale: Locale }) {
   const wakeupId = current.wakeupId;
@@ -173,64 +178,58 @@ export function WakeupRow({ item, locale, onOpenResponse, onNavigate }: {
   </li>;
 }
 
-function WakeupPanel({ sessionId, refreshKey, onOpenResponse, compact }: WakeupPanelProps) {
+function WakeupPanel({ sessionId, refreshKey, onOpenResponse, compact, open, onToggle, onClose, panelHost }: WakeupPanelProps) {
   const { locale } = useI18n();
-  const [open, setOpen] = useState(false);
   const data = useWakeupList(sessionId, refreshKey, open);
   const trigger = useRef<HTMLButtonElement>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const id = useId();
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => {
+    onClose();
+    trigger.current?.focus({ preventScroll: true });
+  }, [onClose]);
 
   useEffect(() => {
-    if (!open) return;
-    const node = dialog.current;
+    if (!open || !panelHost) return;
+    const node = panel.current;
     const opener = trigger.current;
-    if (!node) return;
-    node.showModal();
     closeButton.current?.focus({ preventScroll: true });
-    return () => {
-      const restore = node.contains(document.activeElement) || document.activeElement === document.body;
-      node.close();
-      if (restore && opener?.isConnected) opener.focus({ preventScroll: true });
+    const dismiss = (event: PointerEvent) => {
+      if (event.composedPath().some(target => target === node || target === opener)) return;
+      onClose();
     };
-  }, [open]);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+      event.preventDefault(); event.stopPropagation(); close();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+      if ((document.activeElement === document.body || node?.contains(document.activeElement)) && opener?.isConnected) {
+        opener.focus({ preventScroll: true });
+      }
+    };
+  }, [open, panelHost, close, onClose]);
 
   if (!open && !showWakeupTrigger(data.items, data.health, data.failed)) return null;
   const counts = wakeupCounts(data.items);
   const countLabel = [counts.active ? `${counts.active} ${wakeupText(locale, "active")}` : "", counts.unknown ? `${counts.unknown} ${wakeupText(locale, "verify")}` : ""].filter(Boolean).join(" · ");
   const hasAlert = data.failed || (data.health && data.health.state !== "ready") || data.items.some(item => item.unsaved || item.status === "unknown" || (item.status === "pending" && !item.armed));
-  const label = `${wakeupText(locale, "title")}${countLabel ? ` · ${countLabel}` : ""}${data.nextCursor ? "+" : ""}${hasAlert ? " !" : ""}`;
+  const quantity = `${data.items.length}${data.nextCursor ? "+" : ""}`;
+  const label = `${wakeupText(locale, "title")} · ${quantity}${countLabel ? ` · ${countLabel}` : ""}${hasAlert ? " !" : ""}`;
   return <>
-    <button type="button" ref={trigger} className={styles.trigger} aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
-      aria-label={label} title={label} data-compact={compact || undefined} data-alert={hasAlert || undefined} onClick={() => setOpen(true)}>
+    <button type="button" ref={trigger} className={styles.trigger} aria-expanded={open} aria-controls={open ? id : undefined}
+      aria-label={label} title={label} data-compact={compact || undefined} data-alert={hasAlert || undefined}
+      data-active={counts.active > 0 || undefined} onClick={onToggle}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M8 2H4v4M16 2h4v4" /></svg>
-      <span>{label}</span>
+      <span className={styles.triggerLabel}>{wakeupText(locale, "title")}</span>
+      <span className={styles.badge} aria-hidden="true">{quantity}{hasAlert ? "!" : ""}</span>
     </button>
-    {open && <dialog id={id} ref={dialog} className={styles.panel} aria-labelledby={`${id}-title`}
-      onCancel={event => { event.preventDefault(); close(); }}
-      onKeyDown={event => {
-        if (event.key === "Tab") {
-          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], summary, [tabindex]:not([tabindex='-1'])"))
-            .filter(node => node.getClientRects().length > 0);
-          const first = controls[0];
-          const last = controls[controls.length - 1];
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-        }
-        if (event.key === "Escape" && !event.nativeEvent.isComposing && !event.defaultPrevented) {
-          event.preventDefault(); event.stopPropagation(); close();
-        }
-      }}
-      onPointerDown={event => {
-        if (event.target !== event.currentTarget) return;
-        const bounds = event.currentTarget.getBoundingClientRect();
-        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
-          event.preventDefault(); close();
-        }
-      }}>
-      <header className={styles.header}><h2 id={`${id}-title`}>{wakeupText(locale, "title")}</h2>
+    {open && panelHost && createPortal(<section id={id} ref={panel} className={styles.panel} role="region" aria-labelledby={`${id}-title`}>
+      <header className={styles.header}><h2 id={`${id}-title`}>{label}</h2>
         <button type="button" ref={closeButton} onClick={close}>{wakeupText(locale, "close")}</button>
       </header>
       <div className={styles.body}>
@@ -241,7 +240,7 @@ function WakeupPanel({ sessionId, refreshKey, onOpenResponse, compact }: WakeupP
         <ul className={styles.list}>{data.items.map(item => <WakeupRow key={item.wakeupId} item={item} locale={locale} onOpenResponse={onOpenResponse} onNavigate={close} />)}</ul>
         {data.nextCursor && <button type="button" className={styles.more} disabled={data.loading} onClick={data.more}>{wakeupText(locale, data.loading ? "loading" : "loadMore")}</button>}
       </div>
-    </dialog>}
+    </section>, panelHost)}
   </>;
 }
 

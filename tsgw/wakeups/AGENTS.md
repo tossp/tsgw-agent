@@ -2,7 +2,7 @@
 
 ## 入口与文档
 
-- 浏览器经 `@/tsgw/wakeups` 的 `index.ts` 使用 `WakeupPanelTrigger` 和纯数据类型。
+- 浏览器经 `@/tsgw/wakeups` 的 `index.ts` 使用 `WakeupPanelTrigger` 和纯数据类型。入口由宿主传入 `open/onToggle/onClose` 与 `panelHost`，模块将只读内容挂入共享顶栏面板槽位。
 - Node 宿主经 `@/tsgw/wakeups/server` 使用工具注册、owner 适配、runtime、observer 和只读查询；浏览器不得导入 Node 入口。
 - 技能资源位于 `skills/tsgw-session-wakeup/SKILL.md`。当前行为、数据流和取舍见[设计文档](../../docs/tsgw-wakeups-design.md)；工具调用说明以技能为准。
 
@@ -36,7 +36,7 @@
 | `lib/rpc-manager.ts` | `acquirePromptAdmission()`、`shellRunning`、`beginCustomMessageSubmission()` | 复用宿主 admission、shell 状态与提交计数，不另建会话锁或注册表。 |
 | `instrumentation-node.ts` | `registerNodeInstrumentation()` | Node 服务启动时初始化恢复；错误写日志，不改其他 instrumentation 初始化。 |
 | `app/api/tsgw/wakeups/route.ts`、`[wakeupId]/route.ts` | GET | 模块专用只读查询，统一投影、禁缓存、非法过滤返回 400。 |
-| `components/AppShell.tsx` | 模块 import、当前会话顶栏 | 只挂载浏览器模块入口，不在宿主组件实现面板或调度。 |
+| `components/AppShell.tsx` | 模块 import、当前会话顶栏、`activeTopPanel`/`toggleTopPanel`、共享面板槽位 | 接入独立 wakeup 按钮、受控开关及 portal 容器；沿用共享顶面板互斥和布局，不在宿主组件实现任务列表或调度。 |
 | `lib/message-display.ts` | `isMessageGroupAnchor()` | 让 wakeup 通知保持独立消息锚点，不改写其他上游分组语义。 |
 | `package.json` | `scripts.test`、`files` | 发现 `tsgw/**/*.test.mjs` 并将技能资源包含在包中。 |
 | `AGENTS.md`、`tsgw/AGENTS.md`、`docs/agents/tools.md` | 模块索引 | 仅维护专用入口、行为文档和技能的链接索引。 |
@@ -52,6 +52,7 @@
 - Node instrumentation、进程信号、HMR 复用、`proper-lockfile` stale/update 与原子文件写入方式变化时，复核恢复、失锁暂停和旧 owner 禁写约束。
 - codemode exposure、显式激活及恢复工具集、资源发现/重载和 launcher 包根 cwd 变化时，复核工具可见性；npm `files` 变化时，确认技能资源仍进入包。
 - `message-display.ts` 的 wakeup 锚点应与上游通知分组逻辑并存。未来计时器不计入 `subagentsActive`，不改变上游轮次完成语义。
+- 顶栏 `activeTopPanel`、共享容器定位、窄屏 More、Agents/侧聊和 MiniStrip 行为变化时，复核 wakeup 互斥接线；面板内部继续由模块实现。`ui.test.mjs` 运行真实 React 与隔离 Chromium；`e2e.mjs` 在本 worktree 独占 Next dev 中核验真实 AppShell，仅用合成会话、只读查询与本地 CAT 拦截。
 
 ## 验证命令
 
@@ -63,6 +64,8 @@ node_modules/.bin/tsc --noEmit --incremental false
 npm run lint
 npm test
 git diff --check
+# 显式浏览器回归：本 worktree 无其他开发服务，安装本地 Chromium
+node tsgw/wakeups/e2e.mjs
 ```
 
 存储性能测量为显式操作，不属于默认测试：
