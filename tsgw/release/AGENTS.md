@@ -51,7 +51,7 @@ CAT 归档和补传属于 `../cat-monitoring/`；登录与 Playwright 登录辅�
 3. 检查 `next.config.ts` 原始导入及 CLI 原始 require 的依赖全部在 npm `files`；不要以 Next 编译成功替代安装后可用性检查。
 4. 检查 `npm test` 的 `tsgw/**/*.test.mjs` 发现包括 release 在内的全部模块；CI 显式发布测试入口对 release 与 CAT 两模块均非空且不跳过既有用例。
 5. 核对 smoke 的 `../login2/login2-start.mjs`、登录资产/API、终端 SSE 和安装目录契约仍符合宿主。
-6. 核对模块文档、固定根索引和打包断言引用新路径；`docs/upstream-v*.md` 是历史验收事实，允许保留当时路径，不机械改写。
+6. 核对模块文档、固定根索引和打包断言引用当前路径；上游整合流程见 [整合指南](../../docs/upstream.md)，不在操作文档累积历史验收记录。
 
 ## 验证
 
@@ -70,4 +70,4 @@ node bin/pi-web.js --help
 
 验收要求：上述测试保留既有发布契约与真实行为保障；同通道更新、异常元数据拒绝、发布保护与包内原始 helper 校验通过。`npm test` 不排除 release，CI 同时显式执行 release 与 CAT，不能用单一入口通过冒充全部验证完成。
 
-开发工作树不执行 build。真实打包安装冒烟、发布、部署或提交需对应授权；完整生产安装验收使用干净 CI/隔离环境。验证流程与发布证据见 [README.md](README.md)，CAT 收尾见 [BUILD.md](../cat-monitoring/BUILD.md)，不另建台账。
+开发工作树不执行 build。真实打包安装冒烟、发布、部署或提交需对应授权；完整生产安装验收使用干净 CI/隔离环境。验证流程与发布结果核验见 [README.md](README.md)，CAT 收尾见 [BUILD.md](../cat-monitoring/BUILD.md)，不另建台账。

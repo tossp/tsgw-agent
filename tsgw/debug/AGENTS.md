@@ -1,54 +1,64 @@
-# Debug 任务大盘模块
+# Debug 任务大盘模块规则
 
-## 公共入口
+## 范围与入口
 
-`index.ts` 统一导出 `DebugPage`，`app/debug/page.tsx` 通过 `@/tsgw/debug` 接入。信息覆盖、设计与既有验收见 [DESIGN.md](DESIGN.md)。
+- `index.ts` 公开导出 `DebugPage`，外部经 `@/tsgw/debug` 接入。当前页面、数据语义和已核实缺口以 [DESIGN.md](DESIGN.md) 为准；本文件维护接入、宿主依赖和验证方法。
+- 主体、样式、本模块文案及测试保留在 `tsgw/debug/`。保持上游 DebugPanel、聊天实现与生命周期独立，不另造会话管理或任务调度器；诊断能力以上游 Debug 为覆盖基线。
+- 仅允许既有 `GET /api/agent/debug[?session=]`、`GET /api/sessions`、`GET /api/agent/<id>?systemPrompt=0`。不发送命令、不启动会话、不续租、不开 EventSource、不读上下文历史，不向用户会话注入测试。未经用户明确确认，不新增或改变后端接口、字段、参数和行为；数据缺口先报告必要性、方案及影响。
 
-## 范围与硬边界
+## 模块内职责
 
-- `/debug` 是当前实例的全局任务观察大盘，诊断是其中一层；信息能力以上游 Debug 为基线，不以独立页面为由删减。
-- **未经用户先行明确确认，不得新增或调整后端接口、返回字段、参数或行为。** 数据缺口先报告必要性、方案与影响，不能用只读接口名义绕过。
-- 当前仅消费既有 `GET /api/agent/debug[?session=]`、`GET /api/sessions`、`GET /api/agent/<id>?systemPrompt=0`。后者只读取当前模型与思考档位；宿主 `get_state` 不启动冷会话、不改最近命令或 idle。前端不发送命令、不续期、不创建 EventSource，不向用户会话注入测试。
-- 不伪造其他窗口的客户端状态；会话目录不等于执行记录，未驻留不等于已完成；历史定时记录不等于进程内仍有定时器。
-- UI 保留 `login2` 的品牌与 SVG 准星语言；用户后续明确要求酷炫、现代的深色控制台，不再沿用暖白档案纸配色。采用石墨蓝底、分层面板、电青强调、紫色子代理、绿灯及橙红异常；不影响聊天区主题，不套工作区极简限制，尊重减少动态效果和键盘操作。
-- 以监控问题组织信息：仅展示服务端驻留的运行态任务家族（执行、等待输入、空闲、关闭中等分别标注），不再保留独立“任务全景”、历史目录、搜索筛选或选择聚焦界面。目录 GET 仅提供名称、项目及关系元数据。普通会话／子代理分开计数，非驻留父级只作关系标题，不显示自身资源、模型或等待采样，也不计活动；fork 不按委派处理。子代理显示真实直接父级，不把单层缩进当作直接父关系。
-- 用户最新要求两栏且交换位置：左侧关注信号／轮询／系统观测，右侧大面积运行态资源，DOM 顺序与视觉一致。桌面主框架一屏扫描，页头不超过 80px；资源和观测区分别处理长内容，不靠缩小字号。多个主会话使用紧凑字段行；子代理在同一家族缩进排列，不单独开列或做大胶囊。资源头第二行放身份、状态、profile 等标签，下面保留描述与直接父级。MCP 保留灯芯／外圈／光晕，异常也有文字。宿主／执行使用两个独立状态灯 Tag，分别读取 `mcp.active`／`mcp.runActive`；不再平铺是／否句子，完整状态由本地化 tip 和无障碍标签表达，实线亮灯与点线空心灯区分活跃／未活跃。执行灯不是 MCP 工具调用指示器。
-- 会话回收检查、MCP 释放使用各自服务端时间和进度条，不把下次检查当作保证关闭。用户明确要求移除最近 idle 重置、重复下一次检查及固定 timeout 三段文字，资源区只留一处回收检查倒计时＋条；Stop 强制回收仍明确提示。事件流按非空完整 holder 归组为 `SSE ×N`，每条连接时间及异常仍可读，不能按同名或短 ID 合并，缺 holder 的连接分别展示。
-- 资源采样复用现有轮询器，每轮最多一个 Debug GET，在驻留 ID 间公平轮换；N 个会话稳定时各自约 2N 秒采样一次，慢请求和隐藏页会延长，不能标成全体每 2 秒更新。缓存按会话分别保留时钟与失败，退出清理，不保留历史 ID、不提供手选优先采样；退出会话不能由迟到回复或旧全局快照重新补回。模型状态读取单独串行，每轮资源查询最多触发一个既有 status GET，不返回或复制其余正文数据。
-- 观察页两种 GET 轮询分别保留真实耗时、在途／慢／失败与失败样本；不伪造其他聊天页遥测。界面移除整块“观测边界”开发说明，约束留在本文；保留未采样、过期、读取失败等实际数据提示。
-- 侧聊属于非子代理会话，行、详情身份及 wrapper 标签明确显示“侧聊”。按项目独立成根并显示真实侧聊来源，不作为委派、不创建来源父级占位；目录缺失时不靠名称猜测身份。
-- 资源主区按任务家族自适应网格展示，不按项目整块分栏：每家族主／子代理同一单元，项目在家族头标识。1366／1440 桌面目标两列，足够宽时三列，窄屏单列；末行单家族利用余宽。仅家族外层边框，成员行无独立卡片／滚动区，资料完整展开、资源主体统一滚动，不使用 dense 重排或按轮询更新时间重新排序以免阅读跳位。采样节奏与排序语义不因网格变化。
-- “运行中”采用旋转 SVG 圆环＋亮青状态标签，仍保留文字；仅既有 `debugStatusState()` 判定为 running 的驻留会话显示圆环，普通／侧聊／子代理一致。等待输入、空闲、关闭及非驻留关系标题不显示运行动画，减少动态效果时保留静态圆环及文字。不改变宿主状态判定或采样节奏。
-- 主体、样式、文案和测试留在本模块；不修改原 `DebugPanel` 或聊天实现，不另造会话或任务调度器。
+| 文件与函数 | 职责 |
+| --- | --- |
+| `DebugPage.tsx`：`DebugPage()`、`copySnapshot()` | 组装资源／模型读取器、可见性与轮询时钟、清理请求和定时器、复制观察结果。 |
+| `page-observer.ts`：`createDebugPageObserver()`；`resource-observer.ts`：`createResourcePageObserver()` | 复用宿主 Debug 轮询器，读取目录并计量；按驻留集合公平轮换详情、隔离缓存与失败、退出清理。 |
+| `live-model-observer.ts`：`createLiveModelObserver()` | 串行读取当前模型／思考状态，过滤并缓存所需字段；退出时永久失效旧请求，防止同 ID 再次驻留后收到旧结果。 |
+| `DebugPageView.tsx`：`DebugPageView()`；`DashboardOverview.tsx`：`DashboardOverview()`；`ObserverPanel.tsx`：`ObserverPanel()` | 页面分区、概览、关注信号、服务器资源及本页轮询实测数据。 |
+| `dashboard-state.ts`：`dashboardRole()`、`dashboardCounts()`、`dashboardGroups()`、`filterDashboardGroups()`、`dashboardIssues()`、`dashboardFreshness()` | 目录与快照角色适配、计数、家族分组、驻留过滤、问题提取和新鲜度；页面固定驻留视图，保留的纯辅助筛选不代表存在筛选 UI。 |
+| `resource-families.ts`：`resourceFamilies()`；`ResourceBoard.tsx`：`ResourceBoard()`、`ResourceRow()`、`SummaryIdle()` | 依宿主家族边界拆分资源单元，展示成员、关系上下文及尚未采样的真实 summary 回收时间。 |
+| `DebugSessionDetail.tsx`：`DebugSessionDetailView()`、`streamGroups()`、`Tag()` | 完整资源事实、按 holder 归组的逐连接明细、MCP 服务器及独立宿主／执行灯态。 |
+| `DebugPageView.module.css`、`resources.module.css`、`detail.module.css`、`DashboardArt.tsx`、`*messages.ts` | 模块配色、分区和家族网格、紧凑明细、品牌素材、三语言及减少动态效果。 |
 
 ## 模块外接入清单
 
-| 文件与接入点 | 原因 / 类别 |
+| 文件与接入点 | 原因与类别 |
 | --- | --- |
-| `app/debug/page.tsx`：`Debug` 与 metadata | 路由入口、导入本模块与页面标题；必要接入 |
-| `AGENTS.md`：Topic Notes | 新模块规则与行为入口索引；文档 |
-| `docs/agents/sessions.md`：独立 Debug 页章节 | 保留固定主题薄索引；范围和验收入口集中在本模块；文档 |
-| `tsgw/debug/DESIGN.md` | 信息覆盖、数据边界、页面方案及验收记录；文档 |
-| 原 `components/tsgw-debug/*` | 模块主体及测试归位后移除，接口不变 |
-| 原 `e2e/tsgw-debug.mjs` | 浏览器验收归入本模块，不丢失验证入口 |
+| `app/debug/page.tsx`：`Debug()`、`metadata` | 导入公共入口并挂载独立页面、设置标题；必要路由接入。 |
+| `proxy.ts`：`config.matcher`、`proxy()` 的登录回跳 | `/debug` 使用既有鉴权，登录后回到原路径；鉴权接入，不扩展业务能力。 |
+| 根 `AGENTS.md`：Topic Notes；`tsgw/AGENTS.md`：公共入口与文档索引；`docs/agents/sessions.md`：TSGW-only standalone Debug page | 模块规则与设计的薄索引；文档接入。 |
 
-`proxy.ts` 已有 `/debug` 鉴权及登录回跳，本轮不修改。`package.json` 已有 `tsgw/**/*.test.mjs` 测试发现，不重复增加脚本。无后端改动，无共享行为重构。
+本模块没有后端实现或共享行为重构。以下宿主文件仅作为依赖复用，不为大盘改写其契约。
 
-## 宿主依赖与升级复核
+## 宿主依赖与升级检查
 
-- `lib/debug-types.ts`、`components/debug-panel-state.ts`：快照及纯格式化/分组/轮询辅助；必须核对字段语义，不能仅为大盘改宿主契约。v0.14.1 的 summary / wrapper `subagent` 实际来自 `suppressCompletionNotifications`，侧聊也为 true；`dashboardRole()` 优先消费已有目录 `relation.kind === "side"`，统一修正行、筛选、计数及详情标签，不改返回数据。`subagents` 保留标志计数但排除已确认侧聊，`subagentResident` 仍兼容目录子代理关系；侧聊计入 `ordinary` / `ordinaryRunning`。
-- `lib/types.ts` 的 `SessionInfo` / 关系信息、`components/SessionTree.tsx` 的标题规则、`SidebarIcons` 和 MCP 状态翻译；目录信息与实时快照分开标注。
-- `lib/agent-client.ts` 的 `agentStatusUrl()`、`app/api/agent/[id]/route.ts` GET 与 `lib/rpc-manager.ts` 的 `send(get_state)`：复核运行态模型／思考字段、`systemPrompt=0`、冷会话不启动及状态读取不重置 idle 的契约；不修改这些宿主文件。
-- `useI18n`、`useTheme`、clipboard；本模块自有文案不扩散到上游全局字典。
-- `tsgw/login2/` 仅是视觉参考；可复用公开品牌图片，不依赖其认证状态机或播报。
-- 升级后检查会话分组、Debug GET 的只读性与时钟、轮询取消、鉴权回跳、每种故障和旧数据提示。
-- 数据限制：目录未返回／缺少对应记录时，现有 Debug 标志无法区分侧聊与真实子代理。此时保留既有仅标志回退及目录读取失败提示；不能宣称已识别侧聊，也不能凭名称或工具推断。目录到达后依关系自动纠正；若要求目录缺失期间也精确识别，须先批准最小后端角色契约，不扩充请求。
+| 宿主文件／具体接口 | 必须复核的契约 |
+| --- | --- |
+| `lib/debug-types.ts`：`DebugSnapshotResponse`、`DebugSessionSummary`、`DebugSessionDetail`；`lib/debug-snapshot.ts`：`buildDebugSnapshot()`；`app/api/agent/debug/route.ts`：`GET()` | wrapper／流定义驻留集合，摘要与详情含各自快照时钟；读取不启动 wrapper、不续租、不开流、不调用 `send()`。明细会查询保活 provider 状态，摘要只计登记数量；每源异常回退不等于健康。 |
+| `lib/rpc-manager.ts`：`AgentSessionWrapper.getDebugSnapshot()`、`send()` 的 `get_state` 分支 | `subagent` 实为 `suppressCompletionNotifications`，侧聊也可为 true。`dashboardRole()` 优先目录 side 关系；侧聊计入 ordinary，已确认侧聊从标志子代理数排除，角色子代理数兼容目录 subagent 关系。目录缺失仍存在身份回退限制。 |
+| `lib/agent-client.ts`：`agentStatusUrl()`；`app/api/agent/[id]/route.ts`：`GET()`；上述 `send()` | `systemPrompt=0`，只查已有存活 wrapper，冷会话返回 `running=false`；模型／思考字段来自当前状态。`get_state` 不更新最近命令或 idle；接口可能等待扩展绑定，本页需保持超时取消。响应仍有其他字段，不扩大本模块缓存与复制范围。 |
+| `components/debug-panel-state.ts`：`createDebugPoller()`、`groupDebugSessions()`、`debugStatusState()`、`debugServerClock()` 及格式化辅助 | 单在途、5 秒取消、隐藏暂停、失败保留原采样时间；普通／侧聊／子代理状态判定一致，服务端时间加本页经过时长推算倒计时，不将检查时间当关闭保证。 |
+| `app/api/sessions/route.ts`：`GET()`；`lib/types.ts`：`SessionInfo` 及关系类型；`lib/session-tree.ts`：`projectNameOf()`；`lib/workspace-memory.ts`：`workspaceKeyOf()`；`components/SessionTree.tsx`：`sessionRowTitle()` | 目录提供名称／项目／分支与关系，不是任务执行记录；家族只按委派关系组织，fork／side 独立成根。非驻留父级仅作关系上下文，不增加资源、计数或请求。 |
+| `components/mcp-config-helpers.ts`：`MCP_SESSION_STATE_KEYS`；`lib/page-debug.ts`：`readHttpProtocol()`、`readPageVisibility()`、`startPageVisibilityTracking()` | MCP 状态翻译与未知值回退；`mcp.active`／`mcp.runActive` 保持独立，执行灯不表示工具调用。本页协议／可见性不能代表其他聊天页的客户端内存或连接池。 |
+| `hooks/useI18n.tsx`：`useI18n()`；`hooks/useTheme.ts`：`useTheme()`；`lib/i18n/format.ts`：`translateMessage()`；`lib/clipboard.ts`：`copyText()` | 本地三语言字典、主题与剪贴板依赖；大盘配色局限模块，不扩散自有文案到全局字典。 |
+| `package.json`：`scripts.test`；`proxy.ts` 的上述接入 | 保持 `tsgw/**/*.test.mjs` 测试发现及 `/debug` 鉴权回跳；不得因独立页面影响上游 Debug 或聊天。 |
+
+`login2` 仅作视觉参考，可使用公开品牌素材，不依赖其认证状态机或播报。wakeups 查询虽已有独立只读接口，当前 Debug 未消费它；升级时不能自动扩大本页三接口范围。当前数据缺口统一见 [设计说明](DESIGN.md#当前数据缺口)。
 
 ## 验证
 
-- `node --experimental-strip-types --test 'tsgw/debug/*.test.mjs'`
-- v0.14.1 本模块适配：61/61 通过（新增侧聊＋真实子代理并存、计数／筛选／分组、非驻留／缺失来源、行与 wrapper 身份、历史及残留详情回归）；实际调用模块状态和 React 服务端渲染，不 mock 分类或分组实现。全量、TypeScript／lint、主动 LSP 与隔离开发服务的 24 项浏览器检查均通过，整合验收及数据限制见 [上游同步记录](../../docs/upstream-v0.14.1.md)。
-- `node_modules/.bin/tsc --noEmit --incremental false`、`npm run lint`、`npm test`
-- `E2E_BASE_URL=<已有开发服务> node tsgw/debug/e2e.mjs`：浏览器夹具，不调用真实模型或任务；不执行 `next build`。
-- 对照正式信息覆盖清单；正常、异常、空数据、过期、元数据失败、多资源、复制、长列表、手机及减少动效均需验收；浏览器验证左观测右资源的几何顺序、1366×768／1440×900 三主会话资源同屏、200 条历史不入资源或采样、多父子家族及第十二条资源可达、区域滚动、真实倒计时数字与条变化、模型／思考归属、同 holder 事件流、慢请求／超时／失败及恢复、退出清理、无驻留父级的活动子代理、孤立子代理及 fork。
-- 以源码差异确认后端和上游 Debug 未改变；浏览器网络只允许上述既有 GET（宿主既有 CAT 配置读取除外）。
+从项目根运行，按实际变更选择检查，不执行 `next build`：
+
+```bash
+node --experimental-strip-types --test 'tsgw/debug/*.test.mjs'
+node_modules/.bin/tsc --noEmit --incremental false
+npm run lint
+npm test
+git diff --check
+```
+
+- 浏览器入口：`E2E_BASE_URL=http://127.0.0.1:30145 node tsgw/debug/e2e.mjs`。脚本强制使用此隔离地址，不接受任意现有服务；`e2e-dev.mjs` 默认端口为 30144，准备服务时须明确设 `E2E_DEV_PORT=30145`，且使用独立开发工作树，避免争用当前工作树的 `.next`。复用已健康的隔离服务，不并发启动第二个同工作树开发进程。
+- 浏览器使用响应夹具并拦截 CAT，不调用真实模型或用户任务；网络仅允许三种既有 GET（宿主 CAT 配置读取除外），禁止历史／非驻留详情请求和 SSE。夹具验收不等于部署产物或真实执行验收。
+- 验收覆盖正常／异常／空／未知／过期、目录及资源／模型失败、慢请求与超时恢复、隐藏暂停、退出及迟到回复、复制、三语言和减少动态效果。
+- 关系与资源检查包括同项目多家族、多级／孤立子代理、非驻留父级、fork／侧聊来源及目录缺失回退，历史目录不进入资源或采样，模型／MCP／SSE／时钟互相隔离，同 holder 合并仍保留逐连接事实，回收／释放倒计时及条随真实时间变化。
+- 布局检查左观测右资源、1366×768／1440×900 两列及三普通主会话代表夹具同屏、宽屏三列与末行填充、长家族和第十二条资源可达、区域滚动及手机全内容可达；不承诺任意大型明细全部同屏。
+- 以差异确认后端合约、上游 DebugPanel 和聊天行为未改变。仅整理文档时检查本地链接及测试是否依赖历史文案，不沿用历史测试次数作为当前验证结论。

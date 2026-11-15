@@ -4,7 +4,7 @@
 > Install stable: `npm install -g tsgw-agent@latest`, then run `tsgw-agent`.
 > Preview channel: `npx tsgw-agent@next`. Previews do not replace `latest`.
 > Default login: [/login2](./tsgw/login2/README.md); `/login` remains available as the classic fallback.
-> See [TSGW releases](./tsgw/release/README.md) for branch/tag publishing and [fork modules](./tsgw/AGENTS.md) for implementation and upgrade checks.
+> See [TSGW releases](./tsgw/release/README.md) for publishing, [upstream integration](./docs/upstream.md) for upgrades, and [fork modules](./tsgw/AGENTS.md) for implementation and maintenance rules.
 > The upstream documentation below retains its original package and command names;
 > for this fork use `tsgw-agent` as both the package and command name.
 

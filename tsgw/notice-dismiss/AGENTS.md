@@ -20,7 +20,7 @@ Adds an individual close button and a stable callback to remove exactly one noti
 | `components/ChatWindow.tsx` / NoticeShelf | Imports `NoticeDismissButton`, takes `dismissNotice` from the existing session hook, passes it as `onDismiss` to the shelf and renders the button with the existing notice id. No other fork change to ChatWindow. |
 
 ## Host dependencies and upgrade checks
-Keep the reducer's `remove` action, refill behavior and React dispatcher identities. Do not copy the upstream notice shelf or reducer into the fork module. Use the existing `chat.close` translation and preserve button geometry and accessibility. v0.16.0's `splitNoticeLinks` keeps URLs clickable within text parts (and terminal art unchanged); retain those links and their focus/hover pause behavior alongside the added close button. All session-ending, fork-draft and tool-clock wiring in ChatWindow stays upstream-owned.
+Keep the reducer's `remove` action, refill behavior and React dispatcher identities. Do not copy the upstream notice shelf or reducer into the fork module. Use the existing `chat.close` translation and preserve button geometry and accessibility. `splitNoticeLinks` keeps URLs clickable within text parts (and terminal art unchanged); retain those links and their focus/hover pause behavior alongside the added close button. All session-ending, fork-draft and tool-clock wiring in ChatWindow stays upstream-owned.
 
 ## Verification
 ```sh
@@ -30,4 +30,4 @@ node tsgw/notice-dismiss/e2e.mjs
 
 `e2e.mjs` 自起独占的 loopback `next dev`、私有临时 agent dir 和一份夹具扩展；夹具命令调用真实 `ctx.ui.notify`，经既有 extension notify 路径进入通知货架。发送前先用真实 `get_commands` 确保会话 wrapper 启动并核验 `e2e-notices` 已作为 extension command 注册，命令由 SDK 分发而不经过模型。回归覆盖 `MAX_NOTICES` 队列轮转与补位、单卡独立关闭（鼠标、Tab + Space、375px tap）、hover/focus 暂停及按剩余时间恢复过期、Close 的本地化标签与 44px 触控目标。脚本不导入语言包或用量模块，只依赖 en-US 界面的既有 `Close` / `Send` / `Stop agent` 文案；不新增后端接口；Node 侧 CAT 经 `../release/smoke-cat.mjs` 的 `startCatCapture` 重定向到本地收集器，浏览器 CAT 由同一夹具接收，finally 校验无旁路并关闭收集器；结束时有界关闭浏览器与开发服务，并复查本次端口已释放。产物在 `test-results/notice-dismiss/`。
 
-宿主升级时复核 `MAX_NOTICES`（5）、`NOTICE_VISIBLE_MS`、`NOTICE_EXIT_ANIMATION_MS`、`.notice-shelf-item` 结构、`onPauseChange` / `onDismiss` 接线和 `chat.close` 文案，变化后重跑该浏览器回归。本回归不依赖消息用量模块，也不与其共享夹具，该模块删除后仍可独立运行。
+宿主升级时复核 `MAX_NOTICES`（5）、`NOTICE_VISIBLE_MS`、`NOTICE_EXIT_ANIMATION_MS`、`.notice-shelf-item` 结构、`onPauseChange` / `onDismiss` 接线和 `chat.close` 文案，变化后重跑该浏览器回归。

@@ -10,8 +10,8 @@
 - **发布边界**：S3 归档成功后从临时构建目录移除 `.map`（不改 JS），再打包、冒烟和发布 npm；不能只依赖 npm files 排除规则。`publish` 与 `cat-upload` 均只 `needs: build`，互不依赖，因此 CAT 不可达或补传失败不会阻断已验收产物发布。S3 归档失败仍阻断，避免 map 丢失。
 - **独立补传**：`cat-upload` 下载原版本归档并校验外层 SHA-256，`tsgw/cat-monitoring/cat-upload.mjs` 再校验每文件 hash、版本及 Debug ID，使用 SDK 已依赖的官方插件公开 API 创建 Release、直接上传已带 Debug ID 的归档目录，绕过可能静默跳过文件的准备步骤。原 JS/map 不修改，不再注入 ID，也不重新构建。该 job 独占仓库级 `SENTRY_AUTH_TOKEN`；错误仍抛出，job 保持失败而非静默成功。
 - **网络入口**：只有补传 runner 将 `cat.tossp.com` 临时解析到 `mctx 1.13.102.6` 并校验 TLS 和健康接口；API 和同域分片地址都走该通道。未改公共 DNS、scnet、DSN、分片大小、并发或 30 秒请求时限。
-- **重试与收尾**：CAT job 超时失败时，在本轮发布、部署及其他已授权任务完成后主动追加手动补传，不等待用户提醒。先确认版本、job 和服务端现状，成功或结果未知时不盲目重复上传；仅下载对应版本同次构建的上述三份归档，校验外层摘要、解压后，以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node tsgw/cat-monitoring/cat-upload.mjs <解压目录>`。随后回读 Release、artifact bundle 与版本关联；索引暂不完整时只做有界只读复核，不立即重传。不改 hosts、中转、分片或超时参数，不重新构建、不运行 `tsgw/release/version.mjs`、不重发 npm。如使用 CI 重试，只重跑该运行的失败 CAT job，仍使用已归档原件。
-- **状态与排队**：CAT job 失败可令整条 workflow 显示红色，但 npm 可能已发布成功，应分别读取两个 job 的结果。沿用原 workflow 级同 ref 并发锁，慢补传仍可能延迟下一次同分支运行；本轮不重构并发策略。
+- **重试与收尾**：CAT job 超时失败时，在对应发布、部署及其他已授权任务完成后主动追加手动补传，不等待用户提醒。先确认版本、job 和服务端现状，成功或结果未知时不盲目重复上传；仅下载对应版本同次构建的上述三份归档，校验外层摘要、解压后，以 `NODE_ENV=production`、独立临时 `SENTRY_CONFIG_DIR` 和安全注入的 `SENTRY_AUTH_TOKEN` 执行 `node tsgw/cat-monitoring/cat-upload.mjs <解压目录>`。随后回读 Release、artifact bundle 与版本关联；索引暂不完整时只做有界只读复核，不立即重传。不改 hosts、中转、分片或超时参数，不重新构建、不运行 `tsgw/release/version.mjs`、不重发 npm。如使用 CI 重试，只重跑该运行的失败 CAT job，仍使用已归档原件。
+- **状态与排队**：CAT job 失败可令整条 workflow 显示红色，但 npm 可能已发布成功，应分别读取两个 job 的结果。workflow 按 ref 使用并发锁，慢补传仍可能延迟下一次同分支运行。
 - **运行时不变**：DSN 默认启用，Release 仍由产物版本确定，机器名仍取 `os.hostname()`；不依赖 CAT 已存在 Release。补传前不保证源码还原，不能承诺旧事件补传后自动重新处理。
 - **本地与标签**：不设置 `CAT_DEFER_UPLOAD` 时保留原行为：没有 token 不生成/上传 map；显式提供 token 的本地构建仍同步上传且失败抛错。`v*` 标签没有上述两个构建值，跳过 S3 归档和 CAT job，原正式版流程不变。
 

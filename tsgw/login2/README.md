@@ -12,20 +12,9 @@
 - 显式的“跳过动画 · 普通登录”备用入口保留原 `/login`，与中央按钮主流程分开；点击中央按钮进入成功序列后，才将备用链接改为直接进入目标页面。
 - 本功能是 fork 的局部增量，不引入插件系统、新配置文件或运行时依赖。
 
-## 实现
+## 交互与展示
 
-全部动画由 React 组件、状态和 CSS Modules 重现；无 iframe、注入脚本或第三方运行时。
-
-- `app/login2/page.tsx`：Next 路由薄入口，默认导出本模块 `index.ts` 的页面。
-- `tsgw/login2/LoginPage.tsx`：React 页面、现有语言上下文和密码表单；公共入口为 `tsgw/login2/index.ts`。
-- `tsgw/login2/PiAccessScene.tsx`、`pi-access.module.css`：原版三行品牌、暖白档案底板、中央状态、独立身份卡和 WELCOME 版式；含左上实时时钟。
-- `tsgw/login2/PiAccessReticle.tsx`：原版黑白双弧准星，按实际文字边界留出遮罩，避免长文案与圆弧相交。
-- `tsgw/login2/usePiAccess.ts`：阶段计时、请求取消和登录状态。
-- `tsgw/login2/pi-access-auth.ts`：只调用现有 `/api/web-auth`，成功后复查会话。
-- `tsgw/login2/PiAccessAudio.tsx`：开场由真实用户手势启动中文播报；后续受限时在正常页面交互中重试，用户可静音。
-- `tsgw/login2/pi-access-voices.ts`：黑幕期间并行预加载六段音频，失败或最多 8 秒超时后仍允许继续，不提前播放。
-- `tsgw/login2/pi-access-copy.ts`：本页专用三语文案，不扩散修改上游语言包。
-- `public/login2/assets/`：原创生成的静态图片和音频。
+动画使用 React 状态和 CSS Modules，不使用 iframe、注入脚本或第三方运行时。文件职责与宿主接线见 [模块规则](AGENTS.md)。
 
 序列为黑幕加载、等待开始、标识入场、洗白、访问许可、密码输入、请求接收、读取、核验通过、欢迎和揭幕。
 黑幕期间并行读取会话并预加载六段完整音频；每段可播放、失败或超时后，显示“点击或按任意键开始”。
@@ -61,10 +50,7 @@ commit `8ec3132e69f0906b3ed2f7eb083b1035cd69c1d4`（原仓库 MIT）。
 `emblem-source.png` 为生成原稿，`emblem.webp` 为本地缩小压缩的网页资产。
 品牌文字由 React 渲染，不烘焙进图。
 
-语音由 `generate_audio` 生成，使用预置男声音色“白桦”，指导为冷静、清晰、克制的系统播报。
-不克隆真人或原插件音色；不含背景音乐。成稿去除多余尾部静音及生成的重复片段，
-逐段转写核对正文。新增开场语，读取段以相同白桦音色重录，避免后半句突然赶读；
-其余五段正文及最终具名欢迎语保持不变。全部按音频原速播放，不针对动画给各段单独加速。
+语音由 `generate_audio` 生成，使用预置男声音色“白桦”，为冷静、清晰、克制的系统播报；不克隆真人或原插件音色，不含背景音乐。全部按音频原速播放，不针对动画单独加速。
 
 | 文件 | 实际播报正文 | 时长（秒，约） |
 | --- | --- | --- |
@@ -81,23 +67,6 @@ commit `8ec3132e69f0906b3ed2f7eb083b1035cd69c1d4`（原仓库 MIT）。
 隐藏页面或卸载会暂停播放；回到可见页面时，仅在用户未静音的情况下尝试恢复。
 浏览器拒绝播放或资源加载失败时无声继续，不改写用户偏好，不影响认证和动画。可见文案始终提供全部必要信息。
 
-## 上游同步与重放
+## 维护与验证
 
-同步 Pi Web 上游时，先保留或重新应用第二套登录页的新增文件，再保留默认入口适配：
-`proxy.ts` 的未认证首页跳转和 `components/SettingsPanel.tsx` 的退出登录跳转均为 `/login2`。
-检查现有 `/api/web-auth` 与 `safeLoginDestination()` 契约。
-若上游改变接口，仅调整本目录的适配代码，不复制服务端密码逻辑。
-
-运行：
-
-```sh
-node --experimental-strip-types --test tsgw/login2/pi-access.test.mjs tsgw/login2/pi-access-voices.test.mjs
-node_modules/.bin/tsc --noEmit
-npm run lint
-node tsgw/login2/login2.mjs
-```
-
-浏览器脚本使用隔离的临时 agent 目录及测试密码，启动并停止自己的开发进程。
-不要在同一 checkout 已运行开发服务时启动第二个 Next 进程，不执行 `next build`。
-验收包括默认入口、退出后的重新登录、真实登录与限流、Cookie、站内跳转、
-移动端、减少动态效果、已有会话点击进入与失效回退、加载等待/点击与键盘开始、音频完整播放/交互重试/静音及加载失败；原 `/login` 必须保持可用。
+上游适配、接入清单和验证命令集中在 [模块规则](AGENTS.md#升级检查)。浏览器回归使用私有 agent 目录和测试密码，运行独占的开发进程；覆盖登录/Cookie/限流、站内跳转、移动端、减少动态效果、已有会话失效回退及六段音频行为。原 `/login` 必须保持可用。

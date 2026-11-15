@@ -11,7 +11,8 @@
 - 模块对外的 TypeScript API 统一经 `index.ts` 导出；外部调用使用 `@/tsgw/<模块名>`，模块内部可直接引用实现文件。公开入口不是导出全部内部文件的聚合器。
 - 按运行环境保留必要专用入口：CAT、login2 和 wakeups 的 Node-only helper 走 `server.ts`；CAT 的 `browser-init.ts`、`server-init.ts`、`next-config.mjs`、`global-error.tsx` 保持专用。Agent tracing 的初始化 policy 独立于 tracer 公共入口。
 - release 使用原生 CommonJS `index.js` 与 `index.d.ts`，外部 CLI/API 使用模块根路径或显式 `index.js`；不保留旧文件的转发壳。构建、归档与补传的 `.mjs` 脚本仍是显式命令入口。
-- 模块规则集中在各模块 `AGENTS.md`；用户行为、设计或操作文档按真实职责同模块存放；wakeups 综合设计按用户要求保存在 `docs/tsgw-wakeups-design.md`。文档不超过 500 行，不另建重复计划或状态台账。固定根主题文档只保留 fork 薄索引，上游其余段落及历史 `docs/upstream-v*.md` 验收事实保持完整。以下命令均在项目根运行。
+- 模块规则集中在各模块 `AGENTS.md`；用户行为、设计或操作文档按真实职责同模块存放，wakeups 设计位于 `docs/tsgw-wakeups-design.md`。根主题文档只保留 fork 薄索引；上游整合流程见 [整合指南](../docs/upstream.md)。以下命令均在项目根运行。
+- 每项规则或操作只保留一处正式来源，其余位置使用摘要和链接。文档不超过 500 行；正文维护当前行为、关键取舍、操作步骤和仍有效的限制，已完成计划、逐轮审阅/验收、旧授权及临时证据交由 Git、CI 和会话历史承载，不另建版本台账或归档副本。
 
 | 模块 | 公共 API / 专用入口 | 正式文档 |
 | --- | --- | --- |
@@ -21,15 +22,11 @@
 | [branding](branding/AGENTS.md) | `index.ts`：图标 URL、metadata 与 manifest 图标 | 模块规则 |
 | [notice-dismiss](notice-dismiss/AGENTS.md) | `index.ts`：关闭按钮与 hook | 模块规则；[浏览器回归](notice-dismiss/e2e.mjs) |
 | [session-title](session-title/AGENTS.md) | `index.ts`：`TITLE_PROMPT` | 模块规则 |
-| [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [信息覆盖、设计与验收](debug/DESIGN.md) |
+| [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [当前界面与数据边界](debug/DESIGN.md) |
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
-| [wakeups](wakeups/AGENTS.md) | `index.ts`：只读会话入口／类型；`server.ts`：工具、runtime、observer、只读查询 | [设计与验收](../docs/tsgw-wakeups-design.md)；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
+| [wakeups](wakeups/AGENTS.md) | `index.ts`：只读会话入口／类型；`server.ts`：工具、runtime、observer、只读查询 | [行为与设计](../docs/tsgw-wakeups-design.md)；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
 | [im](im/AGENTS.md) | `index.ts`：设置面板、来源角标与类型；`server.ts`：进程生命周期与管理 API；`message-data.ts`：纯消息来源数据；`message-source.ts`：宿主事件接入 | [微信与 Telegram](im/README.md) |
-
-### wakeups
-
-[模块规则](wakeups/AGENTS.md)集中维护行为、接入与验证契约；调用指导见[技能](wakeups/skills/tsgw-session-wakeup/SKILL.md)。浏览器入口为 `index.ts`，Node 宿主使用 `server.ts`。
 
 ## 接入与上游改动清单
 
@@ -51,4 +48,5 @@
 - 测试保护真实行为和稳定外部契约，不约束文案措辞、示例数量或内部源码写法。删除低价值检查不以另造复杂测试替代；协议字段、公开资源、认证与发布边界的静态验证仍有价值，不能因采用字符串断言而一刀切删除。
 - 模块测试与代码同目录存放；根 `package.json` 的 `scripts.test` 必须包含 `tsgw/**/*.test.mjs`，目录调整后检查包括 release 在内的全部模块测试确实被发现，不排除发布 fixture；release 与 CAT 在 CI 中另有显式定向入口。
 - 按改动范围运行真实实现测试、TypeScript 检查和 lint；禁止在开发工作树执行 `next build`。不得通过跳过原有失败用例或降低检查来宣称通过。
+- 已合并且工作区干净（含未跟踪文件）的任务 worktree 与已合并临时分支，应在合并收尾时删除；需保留上游贡献分支或未完成成果时明确说明，不能强制丢弃改动。
 - 保持项目既有权限边界；目录整理不代表已获提交、合并、推送、发布或部署授权。
