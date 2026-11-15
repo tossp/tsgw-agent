@@ -1,4 +1,5 @@
 // Types mirrored from pi-mono coding-agent session-manager
+import type { ImMessageSource } from "@/tsgw/im/message-data";
 
 export interface SessionHeader {
   type: "session";
@@ -53,6 +54,7 @@ export interface UserMessage {
   role: "user";
   content: string | (TextContent | ImageContent)[];
   timestamp?: number;
+  imSource?: ImMessageSource;
 }
 
 export interface AgentUsage {

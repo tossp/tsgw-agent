@@ -25,6 +25,7 @@
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
 | [wakeups](wakeups/AGENTS.md) | `index.ts`：`createSessionOwnerAccess`、`createWakeupExtension`、`getWakeupRuntime` | 模块规则；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
+| [im](im/AGENTS.md) | `index.ts`：设置面板、来源角标与类型；`server.ts`：进程生命周期与管理 API；`message-data.ts`：纯消息来源数据；`message-source.ts`：宿主事件接入 | [微信与 Telegram](im/README.md) |
 
 ### wakeups
 
