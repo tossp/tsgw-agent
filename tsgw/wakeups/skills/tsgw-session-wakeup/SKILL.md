@@ -20,7 +20,7 @@ if (!declaration) throw new Error("本次所需工具不可用：schedule_wakeup
 text(declaration);
 ```
 
-- `schedule_wakeup`、`list_wakeups`、`cancel_wakeup`、`query_wakeups` 默认经 codemode 调用；`list_session_wakeups` 仍直接暴露，也可嵌套调用。不以是否同时直接声明判断可用性。
+- 五个唤醒工具默认经 codemode 调用，默认不出现在模型原始工具声明中；可用 `searchTools`／`describeTool` 发现后嵌套调用。不以是否同时直接声明判断可用性。
 - 本次所需工具缺失、声明不可读或 codemode 不可用时，报告具体问题并停止当前操作。不因无关工具缺失而阻断，也不安装、启用、重载、部署、改配置或换服务兜底。
 - 明确目标、时间、交接内容与已有授权。不传目标时唤醒当前会话；`session_id` 必须是核实过的现有普通会话 ID；`cwd` 指核实过的现存绝对项目目录，立即为本次交接创建普通新会话。两者互斥；`title` 仅用于 cwd 新目标。不得猜 ID、按项目显示名猜路径或自动创建项目目录。
 - 拒绝子代理目标；需恢复子代理时唤醒其普通父会话。普通 fork 和侧聊不是子代理，但侧聊自己的工具 allow-list 仍然生效。

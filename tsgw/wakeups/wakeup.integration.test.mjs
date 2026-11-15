@@ -20,8 +20,7 @@ const { createSessionOwnerAccess } = await jiti.import("./session-owner.ts");
 const { AgentSessionWrapper, startRpcSession, getRpcSession, getRpcStartingSessionIds } = await jiti.import("../../lib/rpc-manager.ts");
 const answer = (text = "done") => fauxAssistantMessage([fauxText(text)]);
 const call = (name, args) => fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
-const callWakeup = (name, args) => name === "list_session_wakeups" ? call(name, args)
-  : call("codemode", { code: `return await tools.${name}(${JSON.stringify(args)});` });
+const callWakeup = (name, args) => call("codemode", { code: `return await tools.${name}(${JSON.stringify(args)});` });
 const textOf = (message) => message.content.map((block) => block.text ?? "").join("");
 const notifications = (manager) => manager.getEntries().filter((entry) =>
   entry.type === "custom_message" && entry.customType === WAKEUP_NOTIFICATION_TYPE);
@@ -121,17 +120,12 @@ async function withFixture(check) {
 async function invoke(target, name, args) {
   target.faux.setResponses([callWakeup(name, args), answer()]);
   await target.wrapper.inner.prompt(`Call ${name}`);
-  const toolName = name === "list_session_wakeups" ? name : "codemode";
-  const result = target.wrapper.inner.agent.state.messages.findLast((message) => message.role === "toolResult" && message.toolName === toolName);
+  const result = target.wrapper.inner.agent.state.messages.findLast((message) => message.role === "toolResult" && message.toolName === "codemode");
   assert.equal(result?.isError, false, result && textOf(result));
-  if (toolName === "codemode") return JSON.parse(textOf(result).split("Output:\n")[1]);
-  // AgentSession's persisted toolResult omits structuredContent; the nested
-  // SDK dispatcher below checks structuredContent itself.
-  assert.deepEqual(JSON.parse(textOf(result)), result.details);
-  return result.details;
+  return JSON.parse(textOf(result).split("Output:\n")[1]);
 }
 
-test("three wakeup tools default to codemode, refuse direct calls and retain structured nested results", { timeout: 20_000 }, async () => {
+test("all five wakeup tools default to codemode, refuse direct calls and retain structured nested results", { timeout: 20_000 }, async () => {
   const outcomes = [];
   const script = (pi) => pi.registerTool({
     name: "script", label: "script", description: "Exercise nested tool dispatch", parameters: Type.Object({}),
@@ -142,29 +136,34 @@ test("three wakeup tools default to codemode, refuse direct calls and retain str
         return outcome.result.structuredContent;
       };
       const timer = await run("schedule_wakeup", { after_seconds: 60, message: "nested reminder" });
-      await run("list_wakeups", {});
-      await run("list_session_wakeups", { session_id: timer.targetSessionId });
-      await run("cancel_wakeup", { wakeup_id: timer.wakeupId });
+      const pending = await run("list_wakeups", {});
+      const cancelled = await run("cancel_wakeup", { wakeup_id: timer.wakeupId });
+      const history = await run("list_session_wakeups", { session_id: timer.targetSessionId });
+      const queried = await run("query_wakeups", { session_id: timer.targetSessionId, wakeup_id: timer.wakeupId });
+      assert.deepEqual(pending, [timer]);
+      assert.deepEqual(cancelled, timer);
+      assert.equal(history[0].status, "cancelled");
+      assert.deepEqual(history[0].events.map((event) => event.event), ["created", "cancelled"]);
+      assert.equal(queried.items[0].wakeupId, timer.wakeupId);
+      assert.equal(queried.items[0].status, "cancelled");
       return { content: [{ type: "text", text: "script done" }], details: undefined };
     },
   });
   await withFixture(async (f) => {
     const source = await f.create({ extensions: [script] });
     const session = source.wrapper.inner;
-    const scriptOnly = ["schedule_wakeup", "list_wakeups", "cancel_wakeup"];
     for (const name of WAKEUP_TOOL_NAMES) {
-      assert.equal(session.getActiveToolNames().includes(name), name === "list_session_wakeups", name);
+      assert.equal(session.getActiveToolNames().includes(name), false, name);
       assert.ok(session.getCallableToolNames().includes(name), name);
-      assert.equal(session.getAllTools().find((tool) => tool.name === name).exposure,
-        name === "list_session_wakeups" ? "direct" : "codemode", name);
+      assert.equal(session.getAllTools().find((tool) => tool.name === name).exposure, "codemode", name);
     }
+    const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { session_id: source.id }, {}];
     source.faux.setResponses([
-      fauxAssistantMessage(scriptOnly.map((name, i) => fauxToolCall(name,
-        [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }][i])), { stopReason: "toolUse" }), answer(),
+      fauxAssistantMessage(WAKEUP_TOOL_NAMES.map((name, i) => fauxToolCall(name, args[i])), { stopReason: "toolUse" }), answer(),
     ]);
     await session.prompt("Try unavailable direct calls");
     const refused = session.agent.state.messages.filter((message) => message.role === "toolResult");
-    assert.deepEqual(refused.map((message) => message.toolName), scriptOnly);
+    assert.deepEqual(refused.map((message) => message.toolName), [...WAKEUP_TOOL_NAMES]);
     for (const message of refused) assert.equal(message.isError, true, message.toolName);
     assert.deepEqual(f.runtime.list(), []);
     assert.equal(records(source.manager).length, 0);
@@ -176,6 +175,7 @@ test("three wakeup tools default to codemode, refuse direct calls and retain str
     assert.equal(records(source.manager)[0].data.event, "created");
     assert.deepEqual(await invoke(source, "list_wakeups", {}), [timer]);
     assert.equal((await invoke(source, "list_session_wakeups", { session_id: source.id }))[0].active, true);
+    assert.equal((await invoke(source, "query_wakeups", { wakeup_id: timer.wakeupId })).items[0].wakeupId, timer.wakeupId);
     assert.deepEqual(await invoke(source, "cancel_wakeup", { wakeup_id: timer.wakeupId }), timer);
     let declared;
     source.faux.setResponses([(context) => {
@@ -184,12 +184,11 @@ test("three wakeup tools default to codemode, refuse direct calls and retain str
     }, answer()]);
     await session.prompt("Exercise all nested calls");
     const declaredNames = declared.map((tool) => tool.name);
-    for (const name of scriptOnly) assert.equal(declaredNames.includes(name), false, name);
-    assert.ok(declaredNames.includes("list_session_wakeups"));
+    for (const name of WAKEUP_TOOL_NAMES) assert.equal(declaredNames.includes(name), false, name);
     const codemode = declared.find((tool) => tool.name === "codemode");
-    for (const name of scriptOnly) assert.ok(codemode.description.includes(name), name);
+    for (const name of WAKEUP_TOOL_NAMES) assert.ok(codemode.description.includes(name), name);
     assert.ok(codemode.description.includes("do not sleep or poll"), "schedule guidance must reach codemode");
-    assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "list_wakeups", "list_session_wakeups", "cancel_wakeup"]);
+    assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "list_wakeups", "cancel_wakeup", "list_session_wakeups", "query_wakeups"]);
     for (const item of outcomes) {
       assert.equal(item.isError, false, item.name);
       assert.deepEqual(item.result.structuredContent, item.result.details);

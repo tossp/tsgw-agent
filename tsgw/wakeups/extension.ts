@@ -119,7 +119,7 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
         },
       }));
       pi.registerTool(defineTool({
-        name: "list_session_wakeups", label: "Read session wakeup history",
+        name: "list_session_wakeups", label: "Read session wakeup history", exposure: "codemode",
         description: "Read all wakeup metadata in a session's JSONL, across all branches, without starting the session or changing its file. Reports history separately from current in-memory activity. inactive means no pending timer here, not proof of cancellation or delivery. submitted means accepted/queued, not model task completion. Fork-inherited records do not schedule wakeups for the fork.",
         annotations: { readOnlyHint: true, openWorldHint: false },
         parameters: Type.Object({ session_id: Type.String({ minLength: 1, description: "Session ID whose file to inspect." }) }),

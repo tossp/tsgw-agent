@@ -22,7 +22,7 @@
 | `ui.tsx`、`ui-view.ts`、`ui.module.css` | 会话相关的只读面板、按需详情、三语文案和响应式样式。 |
 | `*.test.mjs` | 模块实现、SDK/宿主集成、UI、资源和存储验证。 |
 
-关键契约：状态清单 `getAgentDir()/integrations/wakeups/state.json` 是恢复权威；状态写入失败暂停调度；只恢复 pending，逾期 pending 补投一次，dispatching 及后续不自动重投。owner 丢失时停止写入和新发送。通知 received 与所在运行 settled 不代表业务成功；SDK `clearQueue()` 无逐条 custom 消息 ID，Stop/Recall 只能记录不确定。目标必须是普通会话；取消不会删除已创建的空会话。细节见设计文档，避免在本规则重复维护完整状态说明。
+关键契约：状态清单 `getAgentDir()/integrations/wakeups/state.json` 是恢复权威；状态写入失败暂停调度；只恢复 pending，逾期 pending 补投一次，dispatching 及后续不自动重投。owner 丢失时停止写入和新发送。通知 received 与所在运行 settled 不代表业务成功；SDK `clearQueue()` 无逐条 custom 消息 ID，Stop/Recall 只能记录不确定。目标必须是普通会话；取消不会删除已创建的空会话。五个唤醒工具默认 `exposure: "codemode"`：默认请求不声明它们，经 codemode 发现并可嵌套调用；上游侧聊工具 allow-list 排除全部五个。细节见设计文档，避免在本规则重复维护完整状态说明。
 
 ## 模块外接入清单
 
