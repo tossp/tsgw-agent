@@ -82,11 +82,23 @@ async function bundleFixture(directory) {
     if(this.resourcePath.endsWith('.css'))return 'export default new Proxy({}, {get:(_,key)=>String(key)})';
     return ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   };`);
-  await writeFile(entry, `import React from 'react'; import {createRoot} from 'react-dom/client';
+  await writeFile(entry, `import React, {useState, useCallback, useEffect} from 'react'; import {createRoot} from 'react-dom/client';
     import {I18nProvider} from ${JSON.stringify(path.join(root, "hooks/useI18n.tsx"))};
     import {WakeupPanelTrigger} from ${JSON.stringify(path.join(root, "tsgw/wakeups/ui.tsx"))};
+    function Host(props) {
+      const [activeTopPanel, setActiveTopPanel] = useState(null);
+      const [panelHost, setPanelHost] = useState(null);
+      const close = useCallback(()=>setActiveTopPanel(panel=>panel==='wakeups'?null:panel),[]);
+      useEffect(()=>setActiveTopPanel(null),[props.sessionId]);
+      return React.createElement(React.Fragment,null,
+        React.createElement(WakeupPanelTrigger,{...props,open:activeTopPanel==='wakeups',panelHost,onClose:close,
+          onToggle:()=>setActiveTopPanel(panel=>panel==='wakeups'?null:'wakeups')}),
+        React.createElement('button',{id:'agents',onClick:()=>setActiveTopPanel(panel=>panel==='agents'?null:'agents')},'Agents'),
+        activeTopPanel && React.createElement('div',{id:'top-panel',style:{position:'fixed',top:44,left:0,width:'100%',zIndex:500}},
+          activeTopPanel==='wakeups'?React.createElement('div',{ref:setPanelHost}):React.createElement('section',{'aria-label':'Agents',role:'region'},'Agent status')));
+    }
     const root=createRoot(document.getElementById('root'));
-    window.renderWakeups=props=>root.render(React.createElement(I18nProvider,null,React.createElement(WakeupPanelTrigger,props)));
+    window.renderWakeups=props=>root.render(React.createElement(I18nProvider,null,React.createElement(Host,props)));
     window.unmountWakeups=()=>root.unmount();`);
   const { webpack } = require("next/dist/compiled/webpack/webpack");
   const compiler = webpack({
@@ -108,7 +120,7 @@ async function fixture(browser, bundle, css, { locale = "en", width = 1024, firs
   // No request may leave the fixture, even if an implementation regresses.
   await page.route("**/*", route => route.abort());
   await page.clock.install();
-  await page.setContent(`<style>:root{--bg:white;--bg-panel:#f5f5f5;--bg-hover:#eee;--border:#ccc;--text:#222;--text-muted:#555;--accent:#245bce}body{font:14px Arial;margin:8px}button{font:inherit}${css}</style><div id="root"></div><button id="outside">Outside</button>`);
+  await page.setContent(`<style>:root{--bg:white;--bg-panel:#f5f5f5;--bg-hover:#eee;--border:#ccc;--text:#222;--text-muted:#555;--accent:#245bce}body{font:14px Arial;margin:8px}button{font:inherit}${css}</style><div id="root" style="display:flex;height:44px;align-items:stretch"></div><button id="outside" style="position:fixed;bottom:8px;left:8px">Outside</button>`);
   await page.evaluate(({ locale, first }) => {
     let visibility = "visible";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
@@ -160,9 +172,10 @@ test("isolated browser exercises the production component with no real sessions"
           sidebar.style.cssText = "width:44px;flex:0 0 44px;padding:0";
           toolbar.append(sidebar, root);
           root.style.display = "contents";
+          document.getElementById("agents").style.cssText = "width:44px;flex:0 0 44px;padding:0";
           const controls = document.createElement("div");
           controls.style.cssText = "display:flex;flex:1;min-width:0;height:100%";
-          for (const name of ["Agents", "More", "Stats", "Files"]) {
+          for (const name of ["More", "Stats", "Files"]) {
             const button = document.createElement("button");
             button.textContent = name;
             button.style.cssText = "width:44px;flex:0 0 44px;padding:0";
@@ -173,12 +186,35 @@ test("isolated browser exercises the production component with no real sessions"
         });
         const trigger = page.locator("button[data-compact=true]");
         await trigger.waitFor();
-        assert.equal(await trigger.getAttribute("aria-label"), "Wakeups · 1 active");
-        assert.equal(await trigger.locator("span").isVisible(), false);
+        assert.equal(await trigger.getAttribute("aria-label"), "Wakeups · 1 · 1 active");
+        assert.equal(await trigger.locator(".triggerLabel").isVisible(), false);
         assert.ok(await page.getByRole("button", { name: "Files", exact: true }).evaluate(node => node.getBoundingClientRect().right <= innerWidth));
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await trigger.click();
-        await page.getByRole("dialog").waitFor();
+        await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
+      } finally { await page.close(); }
+    });
+    await t.test("host panels are mutually exclusive and the quantity/status remain visible when collapsed", async () => {
+      const page = await fixture(browser, bundle, css, { first: result([task("done", { status: "run_settled" }), task("unknown", { status: "unknown" })], { nextCursor: "older" }) });
+      try {
+        const trigger = page.locator(".trigger");
+        assert.equal(await trigger.getAttribute("aria-label"), "Wakeups · 2+ · 1 to verify !");
+        assert.equal(await trigger.locator(".badge").textContent(), "2+!");
+        await trigger.click();
+        await page.getByRole("region", { name: /^Wakeups/ }).waitFor();
+        await trigger.click();
+        assert.equal(await page.getByRole("region").count(), 0);
+        await trigger.click();
+        await page.locator("#agents").click();
+        await page.getByRole("region", { name: "Agents", exact: true }).waitFor();
+        assert.equal(await page.getByRole("region", { name: /^Wakeups/ }).count(), 0);
+        const closed = await requestCount(page);
+        await page.clock.runFor(10000);
+        assert.equal(await requestCount(page), closed);
+        await trigger.click();
+        await page.getByRole("region", { name: /^Wakeups/ }).waitFor();
+        assert.equal(await page.getByRole("region", { name: "Agents", exact: true }).count(), 0);
+        assert.equal(await page.locator("dialog").count(), 0);
       } finally { await page.close(); }
     });
     await t.test("closed panel reads once; refreshKey reads once; health faults expose an otherwise empty entry", async () => {
@@ -186,7 +222,7 @@ test("isolated browser exercises the production component with no real sessions"
       try {
         await page.clock.runFor(10000);
         assert.equal(await requestCount(page), 1);
-        assert.equal(await page.locator("#root button").count(), 0);
+        assert.equal(await page.locator(".trigger").count(), 0);
         await page.evaluate(() => {
           window.wakeupFixture.first.health = { state: "storage_error", isOwner: true, reason: "fixture disk failure" };
           window.renderWakeups({ sessionId: "fixture-session", refreshKey: 1 });
@@ -194,19 +230,19 @@ test("isolated browser exercises the production component with no real sessions"
         await page.getByRole("button", { name: /Wakeups/ }).waitFor();
         assert.equal(await requestCount(page), 2);
         await page.getByRole("button", { name: /Wakeups/ }).click();
-        await page.getByRole("dialog").waitFor();
-        assert.ok((await page.getByRole("dialog").innerText()).includes("Storage unavailable"));
-        assert.ok(!(await page.getByRole("dialog").innerText()).includes("fixture disk failure"));
+        await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
+        assert.ok((await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).innerText()).includes("Storage unavailable"));
+        assert.ok(!(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).innerText()).includes("fixture disk failure"));
         await page.getByText("Storage details", { exact: true }).click();
-        assert.ok((await page.getByRole("dialog").innerText()).includes("fixture disk failure"));
+        assert.ok((await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).innerText()).includes("fixture disk failure"));
       } finally { await page.close(); }
     });
-    await t.test("polls only while open and visible; Escape/backdrop close and restore focus without host Escape", async () => {
+    await t.test("polls only while open and visible; Escape restores focus and outside click keeps its target", async () => {
       const page = await fixture(browser, bundle, css);
       try {
         const trigger = page.getByRole("button", { name: /Wakeups/ });
         await trigger.click();
-        await page.getByRole("dialog").waitFor();
+        await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
         await page.evaluate(() => { window.hostEscapes = 0; window.addEventListener("keydown", e => { if (e.key === "Escape") window.hostEscapes++; }); });
         const opened = await requestCount(page);
         await page.clock.runFor(2500);
@@ -218,17 +254,17 @@ test("isolated browser exercises the production component with no real sessions"
         await page.evaluate(() => window.setFixtureVisibility("visible"));
         await page.waitForFunction(count => window.wakeupFixture.requests.length === count + 1, hidden);
         await page.keyboard.press("Escape");
-        assert.equal(await page.getByRole("dialog").count(), 0);
+        assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
         assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
         assert.equal(await page.evaluate(() => window.hostEscapes), 0);
         const closed = await requestCount(page);
         await page.clock.runFor(10000);
         assert.equal(await requestCount(page), closed);
         await trigger.click();
-        await page.getByRole("dialog").waitFor();
-        await page.mouse.click(2, 2);
-        assert.equal(await page.getByRole("dialog").count(), 0);
-        assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
+        await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
+        await page.locator("#outside").click();
+        assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
+        assert.equal(await page.locator("#outside").evaluate(node => node === document.activeElement), true);
         assert.ok((await page.evaluate(() => window.wakeupFixture.requests.map(r => r.method))).every(method => method === "GET"));
       } finally { await page.close(); }
     });
@@ -241,7 +277,7 @@ test("isolated browser exercises the production component with no real sessions"
           window.wakeupFixture.details["row-0"] = detail;
         }, { next: result([task("older")]), detail: result([task("row-0", { message: '<img src=x onerror="alert(1)">\nFull handoff' })]) });
         await page.getByRole("button", { name: /Wakeups/ }).click();
-        await page.getByRole("dialog").waitFor();
+        await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
         assert.equal(await page.locator(".message").count(), 0);
         assert.ok((await page.evaluate(() => window.wakeupFixture.requests)).every(r => r.path === "/api/tsgw/wakeups"));
         await page.locator(".row").first().locator("summary").click();
@@ -291,7 +327,7 @@ test("isolated browser exercises the production component with no real sessions"
         assert.equal(await page.evaluate(() => window.wakeupFixture.requests.filter(request => request.path.endsWith("/facts")).length), 1);
         await page.getByRole("link", { name: "Run response 1", exact: true }).click();
         assert.deepEqual(await page.evaluate(() => window.navigations), [{ id: "target/中文", entryId: "response-1" }]);
-        assert.equal(await page.getByRole("dialog").count(), 0);
+        assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
       } finally { await page.close(); }
     });
     await t.test("aborts and ignores old session/refresh replies; failed refresh retains readable rows", async () => {
@@ -322,26 +358,26 @@ test("isolated browser exercises the production component with no real sessions"
         await page.waitForFunction(() => window.wakeupFixture.pending[1].signal.aborted);
         await page.evaluate(old => window.wakeupFixture.pending[1].resolve(new Response(JSON.stringify(old))), result([task("old-session")]));
         await settle(page);
-        assert.equal(await page.getByRole("dialog").count(), 0);
-        assert.equal(await page.locator("#root button").count(), 0);
+        assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
+        assert.equal(await page.locator(".trigger").count(), 0);
       } finally { await page.close(); }
     });
-    await t.test("English and both Chinese locales fit phone/tablet dialogs and keep keyboard focus inside", async () => {
+    await t.test("English and both Chinese locales fit phone/tablet panels and let keyboard focus leave", async () => {
       for (const locale of ["en", "zh-CN", "zh-TW"]) for (const width of [320, 390, 768]) {
         const page = await fixture(browser, bundle, css, { locale, width, first: result([task("long", { summary: "Long <handoff> ".repeat(10), cwd: "/" + "long-project/".repeat(20), armed: false, unsaved: true, status: "pending" })]) });
         try {
           await page.getByRole("button", { name: new RegExp(wakeupText(locale, "title")) }).click();
-          await page.getByRole("dialog").waitFor();
+          await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${locale}/${width}: page overflow`);
           assert.equal(await page.locator(".body").evaluate(node => node.scrollWidth > node.clientWidth), false, `${locale}/${width}: panel overflow`);
-          for (let i = 0; i < 8; i++) {
-            await page.keyboard.press("Tab");
-            assert.equal(await page.locator("dialog").evaluate(node => node.contains(document.activeElement)), true);
-          }
-          assert.ok((await page.locator("dialog").innerText()).includes(wakeupText(locale, "unsaved")));
-          assert.ok((await page.locator("dialog").innerText()).includes(wakeupText(locale, "unarmed")));
+          assert.equal(await page.getByRole("button", { name: wakeupText(locale, "close"), exact: true }).evaluate(node => node === document.activeElement), true);
+          await page.keyboard.press("Shift+Tab");
+          assert.equal(await page.locator(".panel").evaluate(node => node.contains(document.activeElement)), false);
+          await page.getByRole("button", { name: wakeupText(locale, "close"), exact: true }).focus();
+          assert.ok((await page.locator(".panel").innerText()).includes(wakeupText(locale, "unsaved")));
+          assert.ok((await page.locator(".panel").innerText()).includes(wakeupText(locale, "unarmed")));
           await page.keyboard.press("Escape");
-          assert.equal(await page.getByRole("dialog").count(), 0);
+          assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
         } finally { await page.close(); }
       }
     });
