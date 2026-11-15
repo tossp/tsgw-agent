@@ -9,9 +9,9 @@
 ## 公共入口与文档索引
 
 - 模块对外的 TypeScript API 统一经 `index.ts` 导出；外部调用使用 `@/tsgw/<模块名>`，模块内部可直接引用实现文件。公开入口不是导出全部内部文件的聚合器。
-- 按运行环境保留必要专用入口：CAT 和 login2 的 Node-only helper 走 `server.ts`；CAT 的 `browser-init.ts`、`server-init.ts`、`next-config.mjs`、`global-error.tsx` 保持专用。Agent tracing 的初始化 policy 独立于 tracer 公共入口。
+- 按运行环境保留必要专用入口：CAT、login2 和 wakeups 的 Node-only helper 走 `server.ts`；CAT 的 `browser-init.ts`、`server-init.ts`、`next-config.mjs`、`global-error.tsx` 保持专用。Agent tracing 的初始化 policy 独立于 tracer 公共入口。
 - release 使用原生 CommonJS `index.js` 与 `index.d.ts`，外部 CLI/API 使用模块根路径或显式 `index.js`；不保留旧文件的转发壳。构建、归档与补传的 `.mjs` 脚本仍是显式命令入口。
-- 模块规则集中在各模块 `AGENTS.md`；用户行为、设计或操作文档按真实职责同模块存放。文档不超过 500 行，不另建重复计划或状态台账。固定根主题文档只保留 fork 薄索引，上游其余段落及历史 `docs/upstream-v*.md` 验收事实保持完整。以下命令均在项目根运行。
+- 模块规则集中在各模块 `AGENTS.md`；用户行为、设计或操作文档按真实职责同模块存放；wakeups 综合设计按用户要求保存在 `docs/tsgw-wakeups-design.md`。文档不超过 500 行，不另建重复计划或状态台账。固定根主题文档只保留 fork 薄索引，上游其余段落及历史 `docs/upstream-v*.md` 验收事实保持完整。以下命令均在项目根运行。
 
 | 模块 | 公共 API / 专用入口 | 正式文档 |
 | --- | --- | --- |
@@ -24,11 +24,11 @@
 | [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [信息覆盖、设计与验收](debug/DESIGN.md) |
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
-| [wakeups](wakeups/AGENTS.md) | `index.ts`：`createSessionOwnerAccess`、`createWakeupExtension`、`getWakeupRuntime` | 模块规则；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
+| [wakeups](wakeups/AGENTS.md) | `index.ts`：只读会话入口／类型；`server.ts`：工具、runtime、observer、只读查询 | [设计与验收](../docs/tsgw-wakeups-design.md)；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
 
 ### wakeups
 
-[模块规则](wakeups/AGENTS.md)集中维护行为、接入与验证契约；调用指导见[技能](wakeups/skills/tsgw-session-wakeup/SKILL.md)。公开宿主入口为 `index.ts`。
+[模块规则](wakeups/AGENTS.md)集中维护行为、接入与验证契约；调用指导见[技能](wakeups/skills/tsgw-session-wakeup/SKILL.md)。浏览器入口为 `index.ts`，Node 宿主使用 `server.ts`。
 
 ## 接入与上游改动清单
 

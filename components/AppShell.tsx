@@ -18,6 +18,7 @@ import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentMiniStrip } from "./AgentMiniStrip";
 import { AgentSessionPanel } from "./AgentSessionPanel";
+import { WakeupPanelTrigger } from "@/tsgw/wakeups";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanel } from "./TerminalPanel";
@@ -2513,6 +2514,13 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          {showChat && selectedSession && <WakeupPanelTrigger key={selectedSession.id} sessionId={selectedSession.id} refreshKey={refreshKey} compact={isMobile}
+            onOpenResponse={(id, entryId) => {
+              const target = sessionCatalog.find(session => session.id === id);
+              if (!target) return false;
+              handleSelectSession(target, false, entryId);
+              return true;
+            }} />}
           {isMobile && (
             <div
               ref={mobileToolbarRef}

@@ -5,7 +5,7 @@ export const WAKEUP_META_TYPE = "pi-web:wakeup";
 export const WAKEUP_NOTIFICATION_TYPE = "pi-web:wakeup-notification";
 
 /** `submitted` means accepted/queued by the SDK, not persisted or executed. */
-export type WakeupEvent = "created" | "cancelled" | "submitted" | "failed";
+export type WakeupEvent = "created" | "cancelled" | "submitted" | "failed" | "received" | "run_settled" | "run_aborted" | "unknown";
 
 export type WakeupRecord = Wakeup & {
   version: 1;
@@ -28,7 +28,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isRecord(value: unknown): value is WakeupRecord {
   if (!isObject(value) || value.version !== 1) return false;
-  if (!["created", "cancelled", "submitted", "failed"].includes(value.event as string)) return false;
+  if (!["created", "cancelled", "submitted", "failed", "received", "run_settled", "run_aborted", "unknown"].includes(value.event as string)) return false;
   for (const field of ["wakeupId", "sourceSessionId", "targetSessionId"] as const) {
     if (typeof value[field] !== "string" || !value[field].trim()) return false;
   }
@@ -40,7 +40,8 @@ function isRecord(value: unknown): value is WakeupRecord {
 
 /**
  * Whole-file audit history, not the selected leaf's branch. File order decides
- * the last event (not its timestamp). Metadata never arms or restores a timer.
+ * equal-strength observations (not their timestamps). A late submitted event
+ * cannot replace receipt or settlement. Metadata never arms or restores a timer.
  * Only a still-created timer owned by this session can be active; inherited
  * fork metadata stays visible but cannot claim its original session's timer.
  */
@@ -62,7 +63,11 @@ export function wakeupHistory(
 
   const armed = new Set(active.filter((item) => item.targetSessionId === sessionId).map((item) => item.wakeupId));
   return [...groups.values()].map((events) => {
-    const last = events[events.length - 1];
+    const last = events.reduce((current, event) => {
+      // Accepted can be appended after receipt or settlement; keep stronger evidence.
+      const strength = { created: 0, submitted: 1, unknown: 3, received: 3, failed: 4, cancelled: 4, run_settled: 5, run_aborted: 5 };
+      return strength[event.event] >= strength[current.event] ? event : current;
+    });
     const isActive = last.event === "created" && last.targetSessionId === sessionId && armed.has(last.wakeupId);
     return {
       wakeupId: last.wakeupId,

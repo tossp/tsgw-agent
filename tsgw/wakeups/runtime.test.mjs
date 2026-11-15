@@ -49,13 +49,14 @@ test("invalid input fails before writing, target lookup or scheduling", async (t
   assert.deepEqual(runtime.list(), []);
 });
 
-test("missing targets and failed creation writes never arm a timer", async (t) => {
+test("missing targets never arm a timer; failed audit does not undo the authoritative schedule", async (t) => {
   const missing = fixture(t);
   await assert.rejects(missing.runtime.schedule("source", { session_id: "missing", after_seconds: 60, message: "task" }), /not found/);
   assert.deepEqual(missing.runtime.list(), []);
   const failed = fixture(t, { failWrite: () => true });
-  await assert.rejects(failed.runtime.schedule("source", { after_seconds: 60, message: "task" }), /write failed/);
-  assert.deepEqual(failed.runtime.list(), []);
+  const scheduled = await failed.runtime.schedule("source", { after_seconds: 60, message: "task" });
+  assert.equal(scheduled.diagnostics[0].code, "wakeup_audit_not_saved");
+  assert.equal(failed.runtime.list()[0].wakeupId, scheduled.wakeupId);
 });
 
 test("cancel appends a separate event and removes the live timer; cannot cancel twice", async (t) => {
@@ -67,10 +68,12 @@ test("cancel appends a separate event and removes the live timer; cannot cancel 
   await assert.rejects(runtime.cancel(wakeup.wakeupId), /not pending/);
 });
 
-test("failed cancellation history reports that the in-memory cancellation already happened", async (t) => {
+test("cancelled audit failure returns successful cancellation with a diagnostic", async (t) => {
   const { runtime } = fixture(t, { failWrite: (record) => record.event === "cancelled" });
   const wakeup = await runtime.schedule("source", { after_seconds: 60, message: "task" });
-  await assert.rejects(runtime.cancel(wakeup.wakeupId), /was cancelled in memory/);
+  const cancelled = await runtime.cancel(wakeup.wakeupId);
+  assert.equal(cancelled.wakeupId, wakeup.wakeupId);
+  assert.equal(cancelled.diagnostics[0].code, "wakeup_audit_not_saved");
   assert.deepEqual(runtime.list(), []);
 });
 
@@ -105,7 +108,6 @@ test("submitted audit write failure never records delivery failure or repeats th
   assert.equal(accepted, 1);
   assert.deepEqual(records.map((r) => r.event), ["created"]);
   assert.equal(logs.mock.calls.length, 1);
-  assert.match(logs.mock.calls[0].arguments[0], /was submitted but its history could not be written/);
   t.mock.timers.tick(60_000);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(accepted, 1);

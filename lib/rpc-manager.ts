@@ -2,7 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
-import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime } from "../tsgw/wakeups";
+import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime, peekWakeupRuntime, createWakeupObserver } from "../tsgw/wakeups/server";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
@@ -662,7 +662,9 @@ export class AgentSessionWrapper {
 
   start(): void {
     this.startedAt = Date.now();
-    this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+    const observer = createWakeupObserver(this.sessionId, this.inner.sessionManager, value => peekWakeupRuntime()?.observe(value));
+    const unsubscribe = this.inner.subscribe((event) => {
+      observer.onEvent(event);
       this.agentTracer.onEvent(event);
       this.lastEventType = typeof event.type === "string" ? event.type : null;
       this.lastEventAt = Date.now();
@@ -694,6 +696,7 @@ export class AgentSessionWrapper {
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
       this.checkExtensionShutdown();
     });
+    this.unsubscribe = () => { observer.dispose(); unsubscribe(); };
     this.resetIdleTimer();
   }
 
@@ -1564,6 +1567,7 @@ export class AgentSessionWrapper {
         // take at its next turn boundary was still sent, and the rest went out with the
         // next prompt. Prompts parked behind a compaction come back too: Stop ends the
         // compaction, whose end would send them.
+        peekWakeupRuntime()?.stopSession(this.sessionId);
         const cleared = this.inner.clearQueue();
         const recalled = this.recallParkedPrompts();
         try {
@@ -1836,6 +1840,7 @@ export class AgentSessionWrapper {
         // Full clear only: pi has no single-item dequeue, and clear+requeue
         // races against the agent loop pulling messages mid-flight. Prompts
         // parked during compaction come back too, as the TUI's clearAllQueues().
+        peekWakeupRuntime()?.stopSession(this.sessionId);
         const cleared = this.inner.clearQueue();
         if (this.parkedDuringCompaction.length === 0) return cleared;
         const recalled = this.recallParkedPrompts();
@@ -2979,6 +2984,14 @@ export function abortSubagent(sessionId: string) {
   return SUBAGENT_CONTROLLER.abort(sessionId);
 }
 
+export function initializeWakeups() {
+  return getWakeupRuntime({
+    getSession: getRpcSession,
+    reopenSession: async (id, file) => (await startRpcSession(id, file, undefined, { requireExistingSession: true })).session,
+    withSessionOwner: createSessionOwnerAccess(getRpcSession, id => getLocks().get(id) ?? closingRpcSessionWait(id)),
+  });
+}
+
 function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {
   if (!globalThis.__piStartLocks) globalThis.__piStartLocks = new Map();
   return globalThis.__piStartLocks;
@@ -3652,13 +3665,7 @@ export async function startRpcSession(
               llamaCppExtension,
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
-              createWakeupExtension(getWakeupRuntime({
-                getSession: getRpcSession,
-                reopenSession: async (id, file) => (await startRpcSession(id, file, undefined, { requireExistingSession: true })).session,
-                withSessionOwner: createSessionOwnerAccess(
-                  getRpcSession, (id) => getLocks().get(id) ?? closingRpcSessionWait(id),
-                ),
-              })),
+              createWakeupExtension(initializeWakeups()),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,

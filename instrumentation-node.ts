@@ -28,4 +28,7 @@ export function registerNodeInstrumentation(): void {
   // it (bin/browser-opener.js), and the routes reuse Node's cached module.
   // A failure is left for the routes' own import to report.
   import("@earendil-works/pi-coding-agent").catch(() => {});
+  void import("@/lib/rpc-manager")
+    .then(({ initializeWakeups }) => initializeWakeups().ready())
+    .catch(error => console.error("[pi-web] Wakeup restoration failed", error));
 }

@@ -1,3 +1,2 @@
-export { createSessionOwnerAccess } from "./session-owner";
-export { createWakeupExtension } from "./extension";
-export { getWakeupRuntime } from "./host";
+export { WakeupPanelTrigger } from "./ui";
+export type { WakeupHealth, WakeupQueryItem, WakeupQueryResult, WakeupStatus } from "./types";
