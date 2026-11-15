@@ -127,7 +127,7 @@ function assertRestricted(wrapper) {
 }
 
 async function rejectWakeupCalls(f, wrapper) {
-  const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { session_id: wrapper.sessionId }];
+  const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { session_id: wrapper.sessionId }, {}];
   f.faux.setResponses([
     (context) => {
       const declared = getCurrentTools(context.messages).map((tool) => tool.name);
@@ -136,9 +136,9 @@ async function rejectWakeupCalls(f, wrapper) {
     }, answer("unavailable tools refused"),
   ]);
   const previous = wrapper.inner.agent.state.messages.length;
-  await wrapper.inner.prompt("Try the four unavailable wakeup tools");
+  await wrapper.inner.prompt("Try the unavailable wakeup tools");
   const results = wrapper.inner.agent.state.messages.slice(previous).filter((message) => message.role === "toolResult");
-  assert.equal(results.length, 4);
+  assert.equal(results.length, WAKEUP_TOOL_NAMES.length);
   assert.deepEqual(results.map((result) => result.toolName).sort(), [...WAKEUP_TOOL_NAMES].sort());
   for (const result of results) {
     assert.equal(result.isError, true, result.toolName);
@@ -162,7 +162,7 @@ async function scheduleFromModel(f, targetId, message) {
 }
 
 async function delivered(f, target, timer, message) {
-  await eventually(async () => (await f.runtime.history(target.sessionId)).find((item) => item.wakeupId === timer.wakeupId)?.status === "submitted");
+  await eventually(async () => (await f.runtime.history(target.sessionId)).find((item) => item.wakeupId === timer.wakeupId)?.events.some(event => event.event === "submitted"));
   const wrapper = getRpcSession(target.sessionId);
   await eventually(() => !wrapper.isRunning());
   const notification = wrapper.inner.sessionManager.getEntries().find((entry) => entry.type === "custom_message"
@@ -195,7 +195,9 @@ test("ordinary model can target live and reclaimed sides; strict reopen preserve
     await eventually(() => f.pushes.filter((push) => push.tag === `pi-session-complete:${f.source.sessionId}`).length === 2);
     assert.equal(f.pushes.some((push) => push.tag === `pi-session-complete:${target.sessionId}`), false,
       "settled side turns, including wakeups after reopen, must not notify completion");
-    assert.deepEqual((await f.runtime.history(target.sessionId)).map((item) => item.status), ["submitted", "submitted"]);
+    const history = await f.runtime.history(target.sessionId);
+    assert.deepEqual(history.map(item => item.status), ["run_settled", "run_settled"]);
+    assert.ok(history.every(item => item.events.some(event => event.event === "submitted") && item.events.some(event => event.event === "received")));
   });
 });
 

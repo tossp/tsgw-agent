@@ -1,0 +1,96 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  max-width: min(100%, 260px);
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.trigger[data-compact] {
+  box-sizing: border-box;
+  flex: 0 0 var(--top-bar-height, 44px);
+  width: var(--top-bar-height, 44px);
+  height: 100%;
+  max-width: var(--top-bar-height, 44px);
+  padding: 0;
+  border-radius: 0;
+  justify-content: center;
+}
+.trigger[data-compact] span { display: none; }
+.trigger svg { flex: 0 0 auto; }
+.trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trigger:hover { background: var(--bg-hover); color: var(--text); }
+.trigger[data-alert] { color: var(--accent); border-color: var(--accent); }
+.panel {
+  box-sizing: border-box;
+  width: min(680px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: min(760px, calc(100dvh - 32px));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+.panel[open] { display: flex; flex-direction: column; }
+.panel::backdrop { background: color-mix(in srgb, var(--text) 24%, transparent); }
+.panel *, .panel *::before, .panel *::after { box-sizing: border-box; min-width: 0; }
+.panel button {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.panel button:hover { background: var(--bg-hover); }
+.panel button:disabled { opacity: .6; cursor: wait; }
+.panel a { color: var(--accent); text-underline-offset: 2px; }
+.panel :is(button, a, summary):focus-visible, .trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.header { display: flex; flex: 0 0 auto; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.body { padding: 12px 14px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; overflow-wrap: anywhere; }
+.health { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); }
+.health[data-alert] { border-color: var(--accent); }
+.diagnostics { margin-top: 4px; color: var(--text-muted); }
+.diagnostics p { margin: 6px 0 0; white-space: pre-wrap; }
+.semantics { margin: 9px 0 12px; color: var(--text-muted); font-size: 12px; }
+.list { margin: 0; padding: 0; list-style: none; }
+.row { padding: 12px 0; border-top: 1px solid var(--border); }
+.rowHeading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px; }
+.rowHeading h3 { flex: 1 1 220px; margin: 0; font-size: 13px; font-weight: 600; white-space: pre-wrap; }
+.status { flex: 0 1 auto; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 12px; }
+.status[data-alert], .notice[data-alert] { color: var(--accent); }
+.facts { display: grid; gap: 4px; margin: 8px 0; }
+.facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+.facts dt { color: var(--text-muted); }
+.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.notice { margin: 6px 0; color: var(--text-muted); }
+.links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; }
+.disclosure { margin-top: 8px; }
+.panel summary { width: fit-content; cursor: pointer; }
+.detail { padding: 8px 10px; margin-top: 8px; border-radius: 6px; background: var(--bg-panel); }
+.detail h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.message { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.more { margin: 8px 0 2px; }
+@media (max-width: 480px) {
+  .trigger { max-width: 170px; }
+  .panel { max-height: calc(100dvh - 24px); }
+  .header { padding: 10px; }
+  .body { padding: 10px; }
+  .facts > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .facts > div + div { margin-top: 3px; }
+}

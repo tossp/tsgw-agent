@@ -1,12 +1,15 @@
 import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionWrapper } from "../../lib/rpc-manager";
 import type { SessionOwnerAccess } from "./session-owner";
 import { invalidateSessionListCache, invalidateSessionManagerCache, resolveSessionPath } from "../../lib/session-reader";
 import { SUBAGENT_META_TYPE } from "../../lib/subagents";
 import { WAKEUP_META_TYPE, WAKEUP_NOTIFICATION_TYPE, readWakeupSessionFile } from "./history";
-import { WakeupRuntime, type WakeupSessionStore } from "./runtime";
+import { WakeupRuntime, type WakeupRuntimeOptions, type WakeupSessionStore } from "./runtime";
+import { createWakeupSession } from "./new-session";
+import { readWakeupReceipt } from "./reconcile";
 import type { Wakeup } from "./scheduler";
 
 export type WakeupWrapper = Pick<AgentSessionWrapper,
@@ -26,7 +29,7 @@ function assertOrdinary(entries: readonly { type: string; customType?: string }[
   }
 }
 
-export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
+export function createWakeupHost(access: WakeupHostAccess, options: WakeupRuntimeOptions = {}): WakeupRuntime {
   const resolvePath = access.resolvePath ?? resolveSessionPath;
   const read = async (sessionId: string) => {
     const file = await resolvePath(sessionId);
@@ -37,21 +40,29 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
   };
   const store: WakeupSessionStore = {
     async assertTarget(sessionId) {
-      const { entries } = await read(sessionId);
+      const { entries, header } = await read(sessionId);
       assertOrdinary(entries);
+      return { cwd: header.cwd };
+    },
+    async create(cwd, title) { return createWakeupSession(cwd, title); },
+    async receipt(task) {
+      const file = await resolvePath(task.targetSessionId);
+      return file ? readWakeupReceipt(file, task.wakeupId, task.targetSessionId) : null;
     },
     async read(sessionId) { return (await read(sessionId)).entries; },
-    async append(record) {
+    async append(record, assertCanAppend) {
       const file = await resolvePath(record.targetSessionId);
       await access.withSessionOwner(record.targetSessionId, (wrapper) => {
         const manager = wrapper.inner.sessionManager;
         if (!wrapper.sessionFile || !existsSync(wrapper.sessionFile)) throw new Error("Target session has not been saved or its file was deleted");
         assertOrdinary(manager.getEntries());
+        assertCanAppend();
         manager.appendCustomEntry(WAKEUP_META_TYPE, record);
       }, () => {
         // SessionManager.open creates a fresh session when its path has disappeared. Never do
         // that for a timer: a deleted target must fail, not be recreated as another session.
         if (!file || !existsSync(file)) throw new Error(`Session not found: ${record.targetSessionId}`);
+        assertCanAppend();
         const manager = SessionManager.open(file);
         if (manager.getSessionId() !== record.targetSessionId) throw new Error("Target session ID changed");
         assertOrdinary(manager.getEntries());
@@ -61,7 +72,8 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
       invalidateSessionListCache();
     },
   };
-  return new WakeupRuntime(store, async (wakeup) => {
+  return new WakeupRuntime(store, async (wakeup, context) => {
+    context.assertCanSubmit();
     const snapshot = await read(wakeup.targetSessionId);
     assertOrdinary(snapshot.entries);
     let wrapper = access.getSession(wakeup.targetSessionId);
@@ -69,19 +81,22 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
     if (wrapper.inner.sessionId !== wakeup.targetSessionId) throw new Error("Reopened session ID does not match wakeup target");
     // Count preparation before its first await, just like send(): shell commands must not
     // overtake an idle submission, and ctx.shutdown() must wait until it is accepted.
+    context.assertCanSubmit();
     const finishSubmission = wrapper.beginCustomMessageSubmission();
     try {
       // Share admission and prepareMcpForRun's Stop handle for session_start and MCP,
       // not the model's whole run. A separate binding wait would bypass Stop.
       const release = await wrapper.acquirePromptAdmission();
       try {
+        context.assertCanSubmit();
         if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
         if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}`);
-        if (!await wrapper.prepareMcpForRun(new AbortController().signal)) throw new Error("Wakeup stopped while MCP servers were connecting");
+        if (!await wrapper.prepareMcpForRun(context.signal)) throw new Error("Wakeup stopped while MCP servers were connecting");
         // A streaming follow-up can queue beside !bash. Only a new run must wait for
         // shell execution AND user_bash hooks; a run may have ended during the MCP wait.
         // Never wait on isRunning(): parked prompts need this same admission to drain.
-        while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) await delay(50);
+        while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) await delay(50, undefined, { signal: context.signal });
+        context.assertCanSubmit();
         if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
         if (!existsSync(snapshot.file)) throw new Error("Target session file was deleted before wakeup delivery");
         assertOrdinary(wrapper.inner.sessionManager.getEntries());
@@ -92,7 +107,7 @@ export function createWakeupHost(access: WakeupHostAccess): WakeupRuntime {
     } finally {
       finishSubmission();
     }
-  });
+  }, options);
 }
 
 /**
@@ -121,8 +136,18 @@ async function submitWakeup(wrapper: WakeupWrapper, wakeup: Wakeup): Promise<voi
 
 const WAKEUP_RUNTIME_KEY = Symbol.for("pi-web.wakeupRuntime");
 
-/** One process-wide registry, independent of wrapper disposal and Next hot reload. Never replay history. */
+/** One process-wide owner; only the dedicated pending state can restore timers. */
+export function getWakeupStateFile(): string { return join(getAgentDir(), "integrations", "wakeups", "state.json"); }
+export function peekWakeupRuntime(): WakeupRuntime | undefined {
+  return (globalThis as Record<symbol, WakeupRuntime | undefined>)[WAKEUP_RUNTIME_KEY];
+}
 export function getWakeupRuntime(access: WakeupHostAccess): WakeupRuntime {
   const global = globalThis as Record<symbol, WakeupRuntime | undefined>;
-  return global[WAKEUP_RUNTIME_KEY] ??= createWakeupHost(access);
+  if (global[WAKEUP_RUNTIME_KEY]) return global[WAKEUP_RUNTIME_KEY]!;
+  const runtime = createWakeupHost(access, { stateFile: getWakeupStateFile() });
+  global[WAKEUP_RUNTIME_KEY] = runtime;
+  const dispose = () => runtime.dispose();
+  process.once("SIGINT", dispose);
+  process.once("SIGTERM", dispose);
+  return runtime;
 }

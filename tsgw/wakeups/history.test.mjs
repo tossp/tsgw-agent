@@ -51,9 +51,23 @@ test("valid v1 metadata aggregates without mutating inputs; memory-only timers d
   assert.deepEqual(wakeupHistory([], active, SESSION), []);
 });
 
+test("late acceptance cannot downgrade receipt/settlement, while uncertainty and later receipt remain distinguishable", () => {
+  for (const [sequence, expected] of [
+    [["created", "received", "submitted"], "received"],
+    [["created", "received", "run_settled", "submitted"], "run_settled"],
+    [["created", "received", "unknown", "submitted"], "unknown"],
+    [["created", "unknown", "received", "submitted"], "received"],
+  ]) {
+    const history = wakeupHistory(sequence.map(event => meta(record(event))), [timer()], SESSION);
+    assert.equal(history[0].status, expected);
+    assert.equal(history[0].active, false);
+    assert.deepEqual(history[0].events.map(event => event.event), sequence);
+  }
+});
+
 test("invalid/unknown-version metadata is skipped without losing valid surrounding events", () => {
   const bad = [null, undefined, [], "text", 1, {}, record("created", { version: 2 }),
-    record("created", { version: "1" }), record("delivered"), record("unknown"),
+    record("created", { version: "1" }), record("delivered"), record("unsupported-event"),
     record("created", { error: 4 })];
   for (const field of ["wakeupId", "sourceSessionId", "targetSessionId", "createdAt", "scheduledAt", "recordedAt", "message"]) {
     const missing = record();

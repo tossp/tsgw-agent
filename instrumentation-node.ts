@@ -31,4 +31,7 @@ export function registerNodeInstrumentation(): void {
   void import("@/tsgw/im/server")
     .then(({ getImService }) => getImService())
     .catch(() => console.error("[pi-web] IM bots could not be restored; check IM configuration and permissions."));
+  void import("@/lib/rpc-manager")
+    .then(({ initializeWakeups }) => initializeWakeups().ready())
+    .catch(error => console.error("[pi-web] Wakeup restoration failed", error));
 }
