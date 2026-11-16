@@ -7,6 +7,7 @@ import type { ImSessionHost } from "./host-types";
 import { abortable, sendPiPrompt, waitForPiIdle } from "./pi-host-run";
 import { registerImMessageSource } from "./message-source";
 import type { ImMessageSource } from "./message-data";
+import { collectWeixinReply, preparePiAttachments, WEIXIN_MEDIA_PROMPT } from "./pi-media";
 
 type Wrapper = Pick<AgentSessionWrapper, "send" | "onEvent" | "isAlive" | "isRunning">;
 
@@ -96,7 +97,7 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
       await access.invalidateList();
       return started.realSessionId;
     },
-    async prompt(id, text, signal, source) {
+    async prompt(id, text, signal, source, attachments) {
       return inSession(id, signal, async () => {
         const info = await abortable(find(id), signal);
         if (!info) throw new Error("Pi 普通会话不存在或不可用，请重新绑定。");
@@ -114,13 +115,21 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
           }
         }
         await waitForPiIdle(wrapper, signal);
+        const media = attachments?.length ? await abortable(preparePiAttachments(attachments, signal), signal) : undefined;
+        if (media) {
+          text += `\n\n${media.links}`;
+          await waitForPiIdle(wrapper, signal);
+        }
+        if (source?.channel === "weixin") text += `\n\n${WEIXIN_MEDIA_PROMPT}`;
         // The marker belongs to this submission, even when two chats send identical text.
         // Prefixing also prevents IM text from executing extension slash commands.
         const requestId = randomUUID();
         const marker = `[IM request ${requestId}]`;
         const releaseSource = source ? access.registerSource(wrapper, { ...source, requestId }) : () => {};
         try {
-          return await sendPiPrompt(wrapper, `${marker}\n${text}`, marker, signal);
+          const answer = await sendPiPrompt(wrapper, `${marker}\n${text}`, marker, signal, media?.images);
+          return source?.channel === "weixin"
+            ? await abortable(collectWeixinReply(answer, info.cwd, signal), signal) : answer;
         } finally {
           releaseSource();
         }

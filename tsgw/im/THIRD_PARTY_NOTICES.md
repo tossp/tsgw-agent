@@ -21,6 +21,17 @@ Source: https://github.com/Tencent/openclaw-weixin/tree/cef0bfc390393f716903e16d
 
 Copyright (C) 2026 Tencent. All rights reserved.
 
+The media upload/download, encryption, input-state and message-item integration also
+reference Tencent's `openclaw-weixin` at commit
+`0ad1ae91347a938f52f1e4e2abd6dcda51e05f9e` (source package 3.0.0-beta-0),
+particularly `src/cdn/upload.ts`, `src/cdn/cdn-upload.ts`,
+`src/cdn/pic-decrypt.ts`, `src/api/types.ts`, `src/messaging/send.ts`, and
+`src/messaging/process-message.ts`.
+
+Source: https://github.com/Tencent/openclaw-weixin/tree/0ad1ae91347a938f52f1e4e2abd6dcda51e05f9e
+
+Copyright (C) 2026 Tencent. All rights reserved.
+
 Both projects use the MIT License. Their copyright and permission notices are
 retained here for adapted portions. This module does not install or bundle the
 DSH plugin, its host runtime, or its unrelated channel SDKs.

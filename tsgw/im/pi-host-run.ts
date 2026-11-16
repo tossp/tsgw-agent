@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentSessionWrapper } from "../../lib/rpc-manager";
 
 export type PiPromptWrapper = Pick<AgentSessionWrapper, "send" | "onEvent" | "isAlive" | "isRunning">;
@@ -126,7 +127,7 @@ export class PiAnswerCollector {
 }
 
 /** Subscribe before dispatch: synchronous user/message events must not be missed. */
-export function sendPiPrompt(wrapper: PiPromptWrapper, text: string, marker: string, signal: AbortSignal): Promise<string> {
+export function sendPiPrompt(wrapper: PiPromptWrapper, text: string, marker: string, signal: AbortSignal, images?: ImageContent[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const collector = new PiAnswerCollector(marker);
     let unsubscribe = () => {};
@@ -161,7 +162,7 @@ export function sendPiPrompt(wrapper: PiPromptWrapper, text: string, marker: str
     check();
     if (finished) return;
     // No streamingBehavior: a Web prompt winning admission must cause a busy refusal.
-    void wrapper.send({ type: "prompt", message: text }).then(() => {
+    void wrapper.send({ type: "prompt", message: text, ...(images?.length ? { images } : {}) }).then(() => {
       accepted = true;
       check();
     }, () => finish(new Error("Pi 暂时无法接收请求；请查看会话状态后重试。")));

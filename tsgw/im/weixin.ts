@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { ImDriver, ImDriverOptions, ImInbound, WeixinCredentials } from "./types";
+import { reportImError } from "./telemetry";
+import type { ImAttachment, ImDriver, ImDriverOptions, ImInbound, WeixinCredentials } from "./types";
+import { prepareWeixinInput, weixinInputText } from "./weixin-inbound";
+import { downloadWeixinAttachment, uploadWeixinAttachment } from "./weixin-media";
 import { WEIXIN_BASE_INFO, WeixinError, weixinAbort, weixinRecord, weixinRequest, weixinString, weixinUrl } from "./weixin-transport";
 
 function chunks(text: string): string[] {
@@ -41,6 +44,8 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
   let task: Promise<void> | undefined;
   let sendQueue = Promise.resolve();
   let stopping: Promise<void> | undefined;
+  let typingController: AbortController | undefined;
+  let typingTask = Promise.resolve();
 
   async function persist(nextCursor = cursor): Promise<void> {
     await saveCheckpoint({
@@ -48,6 +53,40 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
       weixin: { identity, cursor: nextCursor, contexts: Object.fromEntries(contexts), seenIds: [...seen] },
     });
     cursor = nextCursor;
+  }
+
+  async function showTyping(signal: AbortSignal): Promise<void> {
+    let ticket = "";
+    const sendStatus = (status: 1 | 2, requestSignal?: AbortSignal) => weixinRequest({
+      fetchImpl, baseUrl: credentials.baseUrl, endpoint: "ilink/bot/sendtyping",
+      token: credentials.token, signal: requestSignal, timeoutMs: 10_000, allowEmptyResponse: true,
+      body: { ilink_user_id: credentials.ownerUserId, typing_ticket: ticket, status, base_info: WEIXIN_BASE_INFO },
+    });
+    try {
+      signal.throwIfAborted();
+      const config = await weixinRequest({
+        fetchImpl, baseUrl: credentials.baseUrl, endpoint: "ilink/bot/getconfig",
+        token: credentials.token, signal, timeoutMs: 10_000,
+        body: { ilink_user_id: credentials.ownerUserId, context_token: contexts.get(credentials.ownerUserId), base_info: WEIXIN_BASE_INFO },
+      });
+      ticket = weixinString(config.typing_ticket);
+      if (!ticket) return;
+      while (!signal.aborted) {
+        await sendStatus(1, signal);
+        await delay(5000, undefined, { signal });
+      }
+    } catch {
+      if (!signal.aborted) reportImError("typing", { channel: "weixin", botId: bot.id });
+    } finally {
+      if (ticket) {
+        try {
+          // Cancellation must finish before the next indicator starts, including on driver stop.
+          await sendStatus(2);
+        } catch {
+          reportImError("typing-stop", { channel: "weixin", botId: bot.id });
+        }
+      }
+    }
   }
 
   async function accept(raw: unknown, signal: AbortSignal): Promise<void> {
@@ -66,14 +105,13 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
     }
     if (signal.aborted || !id) return;
     const items = Array.isArray(msg.item_list) ? msg.item_list : [];
-    const text = items.map((rawItem) => {
-      const item = weixinRecord(rawItem);
-      const value = weixinRecord(item.text_item).text;
-      return item.type === 1 && typeof value === "string" ? value : "";
-    }).filter(Boolean).join("\n").trim();
-    if (!text) return;
-    // The callback acknowledges receipt/queueing, not completion of a model run.
-    await onMessage({ id, chatId: senderId, senderId, text, isGroup: false });
+    const text = weixinInputText(items);
+    if (!text && !items.some((item) => [2, 3, 4, 5].includes(Number(weixinRecord(item).type)))) return;
+    const input: ImInbound = { id, chatId: senderId, senderId, text, isGroup: false };
+    // Admit before downloading so long-polling and /stop remain responsive.
+    await onMessage(input, (taskSignal) => prepareWeixinInput(input, items, (item) => downloadWeixinAttachment(item, {
+      bot, fetchImpl, signal: taskSignal, mediaDirectory: options.mediaDirectory,
+    }), taskSignal, bot.id));
     seen.add(id);
     while (seen.size > 200) {
       const oldest = seen.values().next().value;
@@ -128,29 +166,42 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
     }
   }
 
-  async function sendNow(message: ImInbound, text: string, signal?: AbortSignal): Promise<void> {
+  function replyContext(message: ImInbound, signal?: AbortSignal): string {
     if (!signal || signal.aborted) throw weixinAbort();
     if (message.chatId !== credentials.ownerUserId || message.senderId !== credentials.ownerUserId
       || message.isGroup || message.threadId) throw new WeixinError("recipient", "微信消息接收者无效。");
-    if (!text.trim()) return;
-    const contextToken = contexts.get(message.chatId);
-    if (!contextToken) throw new WeixinError("context", "请先向微信机器人发送消息后再回复。");
-    for (const part of chunks(text)) {
-      if (signal.aborted) throw weixinAbort();
-      // Never retry an uncertain send: iLink does not promise client_id deduplication.
-      await weixinRequest({
-        fetchImpl, baseUrl: credentials.baseUrl, endpoint: "ilink/bot/sendmessage",
-        token: credentials.token, signal,
-        body: {
-          msg: {
-            from_user_id: "", to_user_id: message.chatId, client_id: `tsgw-weixin-${randomUUID()}`,
-            message_type: 2, message_state: 2,
-            item_list: [{ type: 1, text_item: { text: part } }], context_token: contextToken,
-          },
-          base_info: WEIXIN_BASE_INFO,
+    const token = contexts.get(message.chatId);
+    if (!token) throw new WeixinError("context", "请先向微信机器人发送消息后再回复。");
+    return token;
+  }
+
+  async function sendItem(message: ImInbound, item: Record<string, unknown>, contextToken: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    // Never retry an uncertain send: iLink does not promise client_id deduplication.
+    await weixinRequest({
+      fetchImpl, baseUrl: credentials.baseUrl, endpoint: "ilink/bot/sendmessage",
+      token: credentials.token, signal,
+      body: {
+        msg: {
+          from_user_id: "", to_user_id: message.chatId, client_id: `tsgw-weixin-${randomUUID()}`,
+          message_type: 2, message_state: 2, item_list: [item], context_token: contextToken,
         },
-      });
-    }
+        base_info: WEIXIN_BASE_INFO,
+      },
+    });
+  }
+
+  async function sendNow(message: ImInbound, text: string, signal?: AbortSignal): Promise<void> {
+    if (!signal || signal.aborted) throw weixinAbort();
+    const contextToken = replyContext(message, signal);
+    for (const part of chunks(text)) await sendItem(message, { type: 1, text_item: { text: part } }, contextToken, signal);
+  }
+
+  async function sendAttachmentNow(message: ImInbound, attachment: ImAttachment, signal?: AbortSignal): Promise<void> {
+    if (!signal || signal.aborted) throw weixinAbort();
+    const contextToken = replyContext(message, signal);
+    const item = await uploadWeixinAttachment(attachment, message, { bot, fetchImpl, signal });
+    await sendItem(message, item, contextToken, signal);
   }
 
   return {
@@ -167,11 +218,31 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
     stop() {
       if (stopping) return stopping;
       controller?.abort();
-      stopping = Promise.allSettled([task, sendQueue]).then(() => {
+      typingController?.abort();
+      typingController = undefined;
+      stopping = Promise.allSettled([task, sendQueue, typingTask]).then(() => {
         controller = undefined;
         onStatus({ state: "stopped" });
       }).finally(() => { stopping = undefined; });
       return stopping;
+    },
+    setTyping(message, active) {
+      if (message.chatId !== credentials.ownerUserId || message.senderId !== credentials.ownerUserId) return;
+      if (!active) {
+        typingController?.abort();
+        typingController = undefined;
+      } else if (controller && !controller.signal.aborted && !typingController) {
+        typingController = new AbortController();
+        const signal = AbortSignal.any([controller.signal, typingController.signal]);
+        typingTask = typingTask.then(() => showTyping(signal));
+      }
+    },
+    sendAttachment(message, attachment, requestSignal) {
+      const driverSignal = controller?.signal;
+      const signal = driverSignal && requestSignal ? AbortSignal.any([driverSignal, requestSignal]) : driverSignal;
+      const result = sendQueue.then(() => sendAttachmentNow(message, attachment, signal));
+      sendQueue = result.catch(() => undefined);
+      return result;
     },
     send(message, text) {
       const signal = controller?.signal;

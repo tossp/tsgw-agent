@@ -2,7 +2,7 @@ import { abortable } from "./pi-host-run";
 import { reportImError } from "./telemetry";
 import type { ImSessionHost } from "./host-types";
 import type { ImStore } from "./store";
-import type { ImBot, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImSnapshot } from "./types";
+import type { ImBot, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImReply, ImSnapshot } from "./types";
 
 export type ImDriverFactory = (options: ImDriverOptions) => ImDriver;
 interface RunningBot {
@@ -59,7 +59,7 @@ export class ImRuntime {
             reportImError("receive", { channel: bot.channel, botId: bot.id }, status.error);
           }
         },
-        onMessage: (message) => this.accept(entry, message),
+        onMessage: (message, prepare) => this.accept(entry, message, prepare),
       }),
     };
     this.running.set(bot.id, entry);
@@ -100,7 +100,7 @@ export class ImRuntime {
     });
   }
 
-  private async accept(entry: RunningBot, message: ImInbound): Promise<void> {
+  private async accept(entry: RunningBot, message: ImInbound, prepare?: (signal: AbortSignal) => Promise<ImInbound>): Promise<void> {
     if (entry.controller.signal.aborted) return;
     const key = conversationKey(entry.bot.id, message);
     const fresh = await this.store.update((state) => {
@@ -117,6 +117,7 @@ export class ImRuntime {
       return true;
     });
     if (!fresh || entry.controller.signal.aborted) return;
+    if (!this.queues.has(key)) entry.driver.setTyping?.(message, true);
     // Stop must bypass the chat's queue: a long-running prompt must remain stoppable.
     let task: Promise<void>;
     if (/^\/stop(?:\s|$)/i.test(message.text)) {
@@ -133,33 +134,48 @@ export class ImRuntime {
         const signal = AbortSignal.any([entry.controller.signal, controller.signal]);
         this.active.set(key, controller);
         try {
-          await this.deliver(entry, message,
-            () => abortable(this.process(entry.bot, key, message, signal), signal), signal);
+          await this.deliver(entry, message, async () => {
+            const input = prepare ? await abortable(prepare(signal), signal) : message;
+            signal.throwIfAborted();
+            return abortable(this.process(entry.bot, key, input, signal), signal);
+          }, signal);
         } finally {
           if (this.active.get(key) === controller) this.active.delete(key);
         }
       });
     }
     const settled = task.catch(() => undefined).finally(() => {
-      if (this.queues.get(key) === settled) this.queues.delete(key);
+      if (this.queues.get(key) === settled) {
+        this.queues.delete(key);
+        entry.driver.setTyping?.(message, false);
+      }
     });
     this.queues.set(key, settled);
   }
 
-  private async deliver(entry: RunningBot, message: ImInbound, respond: () => Promise<string>, signal = entry.controller.signal): Promise<void> {
-    let text: string;
+  private async deliver(entry: RunningBot, message: ImInbound, respond: () => Promise<string | ImReply>, signal = entry.controller.signal): Promise<void> {
+    let reply: string | ImReply;
     try {
-      text = await respond();
+      reply = await respond();
     } catch (error) {
       if (signal.aborted) return;
       if (!(error instanceof Error && error.name === "AbortError")) {
         reportImError("process", { channel: entry.bot.channel, botId: entry.bot.id });
       }
-      text = "任务未完成，请在 Web 会话中查看详情；确认项目、模型与连接状态后再试。";
+      reply = "任务未完成，请在 Web 会话中查看详情；确认项目、模型与连接状态后再试。";
     }
     if (signal.aborted) return;
     try {
-      await entry.driver.send(message, text);
+      const text = typeof reply === "string" ? reply : reply.text;
+      if (text.trim()) await entry.driver.send(message, text);
+      if (typeof reply !== "string" && reply.attachments?.length) {
+        const sendAttachment = entry.driver.sendAttachment?.bind(entry.driver);
+        if (!sendAttachment) throw new Error("该渠道暂不支持附件回复。");
+        for (const attachment of reply.attachments) {
+          if (signal.aborted) return;
+          await sendAttachment(message, attachment, signal);
+        }
+      }
     } catch (error) {
       if (signal.aborted) return;
       if (!(error instanceof Error && error.name === "AbortError")) {
@@ -177,7 +193,8 @@ export class ImRuntime {
     return "已请求停止当前会话。";
   }
 
-  private async process(bot: ImBot, key: string, message: ImInbound, signal: AbortSignal): Promise<string> {
+  private async process(bot: ImBot, key: string, message: ImInbound, signal: AbortSignal): Promise<string | ImReply> {
+    if (message.preparationError) return message.preparationError;
     const text = message.text.trim();
     const [command, argument] = text.split(/\s+/, 2);
     if (["/help", "/start"].includes(command.toLowerCase())) {
@@ -218,11 +235,12 @@ export class ImRuntime {
       conversation = { ...conversation, sessionId: id };
     }
     signal.throwIfAborted();
-    const reply = await this.host.prompt(conversation.sessionId!, message.text, signal, {
+    const prompt = [message.text || "请处理附件。", message.quotedText && `以下是微信引用内容，供理解本次消息：\n${message.quotedText}`].filter(Boolean).join("\n\n");
+    const reply = await this.host.prompt(conversation.sessionId!, prompt, signal, {
       channel: bot.channel, botId: bot.id, botName: bot.name,
       chatId: message.chatId, senderId: message.senderId, messageId: message.messageId ?? message.id,
       ...(message.threadId === undefined ? {} : { threadId: message.threadId }),
-    });
+    }, message.attachments);
     signal.throwIfAborted();
     await this.store.update((state) => {
       signal.throwIfAborted();

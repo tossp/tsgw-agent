@@ -33,6 +33,7 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
     else process.env.PI_CODING_AGENT_DIR = previousDir;
   });
   const requests = [];
+  let mediaAnswer = "IM RESULT";
   let finishWeb;
   const server = createServer(async (request, response) => {
     let raw = "";
@@ -40,17 +41,17 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
     const body = JSON.parse(raw);
     requests.push(body);
     if (requests.length === 1) finishWeb = () => reply(response, "WEB RESULT");
-    else reply(response, "IM RESULT");
+    else reply(response, mediaAnswer);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const { port } = server.address();
   await writeFile(join(directory, "models.json"), JSON.stringify({ providers: {
     "im-local": { baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "local-dummy", api: "openai-completions",
-      models: [{ id: "im-test", name: "IM test", reasoning: false, contextWindow: 16000, maxTokens: 1000 }] },
+      models: [{ id: "im-test", name: "IM test", reasoning: false, input: ["text", "image"], contextWindow: 16000, maxTokens: 1000 }] },
   } }));
   await writeFile(join(directory, "settings.json"), JSON.stringify({
-    defaultProvider: "im-local", defaultModel: "im-test", enabledModels: ["im-local/im-test"],
+    defaultProvider: "im-local", defaultModel: "im-test", enabledModels: ["im-local/im-test"], images: { autoResize: false },
   }));
   const jiti = createJiti(import.meta.url, { interopDefault: true });
   const { createPiSessionHost } = await jiti.import("./pi-host.ts");
@@ -88,7 +89,7 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   assert.ok(!JSON.stringify(requests[1].messages).includes(telegram.botName), "route metadata stays out of provider messages");
 
   const weixin = { ...telegram, channel: "weixin", botId: "wx", chatId: "wx-user", threadId: undefined, messageId: "102" };
-  assert.equal(await host.prompt(id, "im-second", new AbortController().signal, weixin), "IM RESULT");
+  assert.deepEqual(await host.prompt(id, "im-second", new AbortController().signal, weixin), { text: "IM RESULT" });
   assert.equal(liveUsers[2].imSource.channel, "weixin");
   const entries = (await readFile(wrapper.sessionFile, "utf8")).trim().split("\n").map(JSON.parse);
   const metadata = entries.filter((entry) => entry.customType === IM_MESSAGE_SOURCE_TYPE);
@@ -97,7 +98,40 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   const historical = buildSessionContext(entries).messages.filter((message) => message.role === "user");
   assert.equal(historical[0].imSource, undefined);
   assert.deepEqual(historical.slice(1).map((message) => message.imSource.channel), ["telegram", "weixin"]);
-  assert.ok(historical.slice(1).every((message) => message.content[0].text === "im-second"));
+  assert.ok(historical.slice(1).every((message) => message.content[0].text.startsWith("im-second")));
   assert.ok(entries.filter((entry) => entry.type === "message" && entry.message.role === "user")
     .every((entry) => entry.message.imSource === undefined), "only the projection has UI fields");
+
+  const mediaDirectory = await mkdtemp(join(tmpdir(), "pi-im-sdk-media-"));
+  t.after(() => rm(mediaDirectory, { recursive: true, force: true }));
+  const imagePath = join(mediaDirectory, "图 (1).png");
+  const filePath = join(mediaDirectory, "report (1).txt");
+  const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  await writeFile(imagePath, Buffer.from(data, "base64"));
+  await writeFile(filePath, "attachment-only sentinel body");
+  mediaAnswer = `READY\n\n[report](<${encodeURI(filePath)}>)\n\n![image](<${encodeURI(imagePath)}>)`;
+  const delivery = await host.prompt(id, "inspect incoming files", new AbortController().signal,
+    { ...weixin, messageId: "103" }, [
+      { type: "image", path: imagePath, name: "图 (1).png", mimeType: "image/png" },
+      { type: "file", path: filePath, name: "report (1).txt", mimeType: "text/plain" },
+    ]);
+  assert.deepEqual(delivery.attachments.map((attachment) => attachment.path), [filePath, imagePath]);
+  assert.ok(!delivery.text.includes(mediaDirectory));
+  assert.equal(wrapper.inner.messages.filter((message) => message.role === "assistant").at(-1).content[0].text, mediaAnswer,
+    "Web keeps the original assistant Markdown");
+  const modelImages = requests.at(-1).messages.flatMap((message) => Array.isArray(message.content) ? message.content : [])
+    .filter((block) => block.type === "image_url");
+  assert.ok(modelImages.some((image) => image.image_url.url === `data:image/png;base64,${data}`), "original image bytes reach the model");
+  assert.ok(!JSON.stringify(requests.at(-1).messages).includes("attachment-only sentinel body"));
+  const refreshedEntries = (await readFile(wrapper.sessionFile, "utf8")).trim().split("\n").map(JSON.parse);
+  const mediaMeta = refreshedEntries.filter((entry) => entry.customType === IM_MESSAGE_SOURCE_TYPE);
+  assert.equal(mediaMeta.length, 3);
+  assert.ok(!JSON.stringify(mediaMeta).includes(data));
+  assert.ok(!JSON.stringify(mediaMeta).includes(mediaDirectory));
+  const refreshed = buildSessionContext(refreshedEntries).messages.filter((message) => message.role === "user").at(-1);
+  assert.equal(refreshed.imSource.messageId, "103");
+  assert.ok(refreshed.content.some((block) => block.type === "image" && block.data === data));
+  const { isFilePathReferencedByEntries } = await jiti.import("../../lib/session-file-references-core.ts");
+  assert.equal(isFilePathReferencedByEntries(imagePath, refreshedEntries), true);
+  assert.equal(isFilePathReferencedByEntries(filePath, refreshedEntries), true);
 });

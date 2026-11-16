@@ -2,7 +2,7 @@
 
 ## 范围与契约
 
-首期支持微信 iLink 扫码、Telegram Bot API 长轮询、文字私聊、Telegram 群聊/Topic、项目内 Pi 会话关联、停止和重启恢复。操作说明与已知限制见 [README.md](README.md)，适配来源及许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+首期支持微信 iLink 扫码、Telegram Bot API 长轮询、文字私聊、Telegram 群聊/Topic、项目内 Pi 会话关联、停止和重启恢复；微信另支持图片/文件双向、语音转写及 inline 引用上下文。操作说明与已知限制见 [README.md](README.md)，适配来源及许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 主体、样式和测试在本目录。浏览器公共入口为 `index.ts`（设置面板、来源角标与类型），Node 初始化和路由入口为 `server.ts`；会话来源的纯数据入口为 `message-data.ts`，宿主事件接入为 `message-source.ts`。客户端通过 `@/tsgw/im` 引用；Node 会话读写代码以相对路径引用这些公共入口，兼容现有不带 Next alias 的 Jiti/SDK 测试。浏览器入口不能导出 Node 模块。
 
@@ -20,16 +20,20 @@
 - 遥测猫通过 `telemetry.ts` 复用 CAT 公共 capture：上报连接/接收入站、任务处理、回复发送、初始化、扫码失败以及设置页网络/JSON 故障；正常停止/取消（含从 Web 停止共享任务的 AbortError）、微信长轮询超时、二维码过期及管理校验 4xx 不报。初始化失败由 service 创建边界上报，GET 不重复捕获同一失败；其他 GET 读取故障和 POST 文件系统故障单独上报（保留原有 HTTP 响应）。任务/发送只报告失败阶段，不附加外部原始异常或聊天正文；接收错误使用驱动已生成的安全状态提示。
 - IM 后台任务可能继承包含 Token 的管理请求上下文。每条服务端 IM 错误使用 Sentry 原生独立 current/isolation scope，复用现有 client 和 `initialScope`（保留 instance / release），标注 `source=im`、`operation`、可选 `channel` / `botId`；不继承请求、聊天上下文和 breadcrumbs，不修改全局 CAT 默认采集、过滤或限流。浏览器沿用 CAT 的标准 scope，仅传固定错误及阶段标签，不附加 action 或响应正文；包括纯文本 401/429 在内的 4xx 不因 JSON 解析失败而上报。连接重试的每次实际失败各自上报，交给遥测猫按异常分组；不另建故障状态或限流器。
 - 长轮询、发送及等待都支持取消；游标只在 runtime 接收入站后推进。发送结果未知时不自动重试；重启恢复连接与关联，不自动重放已经接收的任务。
+- `ImDriver.setTyping` 是可选的同步入队接口，不能让状态网络请求阻塞收发。runtime 从新聊天队列开始到排空维持状态，重复消息不重复开启；微信每个忙碌周期获取 `typing_ticket`，每 5 秒续显，仅内存保存，旧取消完成后才发新开始。停用时 abort 并等待状态任务，取消请求使用独立的 10 秒时限。状态失败仅按 `typing` / `typing-stop` 上报安全阶段，不改连接状态或附带 provider 正文；正常取消不报。只有 `sendtyping` 的成功响应允许空 body，其余传输保留原校验。
+- `ImInbound` 的 attachments 为本地文件描述；平台媒体下载通过 `onMessage(message, prepare?)` 在 runtime 聊天队列内执行，不能堵住长轮询和 `/stop`。下载失败/缺转写/视频给安全提示，不提交空或部分输入；引用保持独立字段，不能触发当前聊天命令。图片按原始字节走 wrapper.images，文件链接写进本次用户正文，Meta 不写媒体数据。
+- 微信附件回复只从归属明确的最终 assistant Markdown 显式本地链接提取；不扫描工具/历史/代码/裸路径/远端 URL，Web 原文保持不变，微信正文以名称替代路径。按现有原聊天串行发文字和附件，上传/发送可取消，不盲重试；TG 保持文字路径。媒体目录是 agent/integrations/im/media 下随机子目录，成功附件留存供历史精确引用，不全局扩大 file roots。图片10MiB/10张、文件100MiB是客户端限制，CDN为官方HTTPS域，所有带能力参数的请求沿用credentialFetch抑制。
+- 微信能力采用情况与后续决定边界见 [WEIXIN_CAPABILITIES.md](WEIXIN_CAPABILITIES.md)，外部协议通用证据保存在记忆系统条目 1149。字段枚举、官方客户端策略和服务端保证必须区分；不把 `group_id`、音频上传枚举、宿主定时/流式能力或缓存期限直接当平台支持。
 
 ## 主体文件
 
 - `types.ts`、`actions.ts`：平台与宿主接口、管理请求入口校验。
 - `store.ts`、`runtime.ts`、`service.ts`：文件持久化、消息路由与取消、管理与扫码生命周期。
-- `pi-host.ts`、`pi-host-run.ts`、`host-types.ts`：既有 wrapper 的会话清单、创建/恢复、顺序提交与回答归属。
+- `pi-host.ts`、`pi-host-run.ts`、`host-types.ts`、`pi-media.ts`：既有 wrapper 的会话清单、创建/恢复、顺序提交、图片/文件输入、最终附件链接提取与回答归属。
 - `message-data.ts`、`message-source.ts`：具体用户消息的来源记录、历史校验/索引、Web 投影及宿主 manager 的临时请求注册。
 - `ImSourceBadge.tsx` 与来源角标样式：微信/Telegram 的用户消息角标，普通 Web 消息无角标。
 - `telegram.ts`：身份核验、授权与群聊路由、长轮询与分段发送。
-- `weixin-login.ts`、`weixin-transport.ts`、`weixin.ts`：扫码状态机、平台传输、主人过滤及 context/cursor 持久化。`weixin-transport.ts` 保留 uint64 JSON 整数精度。
+- `weixin-login.ts`、`weixin-transport.ts`、`weixin.ts`、`weixin-inbound.ts`、`weixin-media.ts`：扫码状态机、平台传输、主人过滤、输入状态、入站引用/转写、媒体加解密及 context/cursor 持久化。`weixin-transport.ts` 保留 uint64 JSON 整数精度。
 - `ImSettings.tsx`、`ImBotDetail.tsx`、`useImSettings.ts`、`im-ui.ts`、`im-settings.module.css`：设置、扫码取消和会话关联。沿用 SettingsUi 与 DirectoryPicker，使用原有手机导航上下文。
 - `telemetry.ts`、`telemetry.test.mjs`：IM 专属错误上报 scope 和真实 SDK 内存 envelope 回归，含默认请求采集阴性对照及正常取消/超时不报。
 - `*.test.mjs`、`e2e.mjs`、`source-e2e.mjs`：协议、路由、并发与取消、真实 wrapper/fork、真实 Sentry 内存 transport 回归，以及设置和消息角标界面流程。

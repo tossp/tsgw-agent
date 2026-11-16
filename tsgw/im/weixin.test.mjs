@@ -50,7 +50,7 @@ function harness(fetchImpl, overrides = {}) {
   const received = [], statuses = [], checkpoints = [];
   const driver = createWeixinDriver({
     bot, checkpoint: {}, fetchImpl,
-    onMessage: async (m) => { received.push(m); },
+    onMessage: async (m, prepare) => { received.push(prepare ? await prepare(new AbortController().signal) : m); },
     onStatus: (s) => { statuses.push(s); },
     saveCheckpoint: async (c) => { checkpoints.push(structuredClone(c)); },
     ...overrides,
@@ -164,7 +164,10 @@ test("real driver filters owner/type, persists private context and cursor, sends
   t.after(() => h.driver.stop());
   h.driver.start(); h.driver.start();
   await until(() => f.calls.length === 2);
-  assert.deepEqual(h.received, [{ ...inbound, text: "hello\nworld" }]);
+  assert.deepEqual(h.received, [
+    { ...inbound, id: "media", text: "", preparationError: "微信附件下载或解密失败，请重新发送，或在 Web 会话上传附件。" },
+    { ...inbound, text: "hello\n[语音转写]\nnot text\nworld" },
+  ]);
   assert.doesNotMatch(JSON.stringify([h.received, h.statuses]), /private|context_token/);
   const saved = h.checkpoints.at(-1).weixin;
   assert.equal(saved.cursor, "cursor-next");

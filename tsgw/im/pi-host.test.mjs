@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -330,4 +333,94 @@ test("real wrapper preflight returns while the host still awaits this prompt's t
   assert.equal(completed, false);
   finishRun();
   assert.equal(await reply, "real final");
+});
+
+async function mediaFixture(t) {
+  const directory = await mkdtemp(join(tmpdir(), "im-host-media-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const image = { type: "image", path: join(directory, "image (1).png"), name: "image (1).png", mimeType: "image/png" };
+  const file = { type: "file", path: join(directory, "report (1).txt"), name: "report (1).txt", mimeType: "text/plain" };
+  const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  return { image, file, data, async write() {
+    await writeFile(image.path, Buffer.from(data, "base64"));
+    await writeFile(file.path, "never embed document contents");
+  } };
+}
+
+async function untilCalls(f, count) {
+  for (let attempt = 0; attempt < 100 && f.calls.length < count; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(f.calls.length, count);
+}
+const weixin = { ...inputSource, channel: "weixin" };
+const fileLink = (file) => `[file](<${encodeURI(file.path)}>)`;
+
+test("host waits for Web before reading images, submits original images, and keeps media out of source metadata", async (t) => {
+  const media = await mediaFixture(t);
+  const f = fixture(); f.begin(); f.setRunning(true);
+  const answer = f.host.prompt("main", "same text", signal(), weixin, [media.image, media.file]);
+  await tick();
+  assert.equal(f.calls.length, 0);
+  await media.write();
+  f.finish(fileLink(media.file));
+  await untilCalls(f, 1);
+  assert.deepEqual(f.calls[0].images, [{ type: "image", data: media.data, mimeType: "image/png" }]);
+  assert.ok(f.calls[0].message.includes(media.file.path));
+  assert.ok(!f.calls[0].message.includes("never embed document contents"));
+  assert.match(f.calls[0].message, /最终答复.*本地 Markdown/);
+  assert.ok(!JSON.stringify(f.sources).includes(media.data));
+  assert.ok(!JSON.stringify(f.sources).includes(media.image.path));
+  f.emit(assistant(fileLink(media.file), "toolUse"));
+  f.emit({ type: "message_end", message: { role: "toolResult", content: fileLink(media.image) } });
+  f.finish("final has no attachments");
+  assert.deepEqual(await answer, { text: "final has no attachments" });
+  assert.equal(f.sources.length, 0);
+});
+
+test("same text from different chats returns only each owned final answer's attachments; Telegram stays text", async (t) => {
+  const media = await mediaFixture(t); await media.write();
+  const f = fixture(); f.begin();
+  const a = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "A" });
+  const b = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "B" });
+  await untilCalls(f, 1);
+  assert.equal(f.sources[0].chatId, "A");
+  f.finish(fileLink(media.image));
+  assert.deepEqual((await a).attachments.map((item) => item.path), [media.image.path]);
+  await untilCalls(f, 2);
+  assert.equal(f.sources[0].chatId, "B");
+  f.finish(fileLink(media.file));
+  assert.deepEqual((await b).attachments.map((item) => item.path), [media.file.path]);
+  const tg = f.host.prompt("main", "same", signal(), inputSource);
+  await untilCalls(f, 3);
+  f.finish(fileLink(media.file));
+  assert.equal(await tg, fileLink(media.file));
+  assert.ok(!f.calls[2].message.includes("微信附件交付约定"));
+});
+
+test("stopped media requests reject and late file events cannot be delivered to the next chat", async (t) => {
+  const media = await mediaFixture(t); await media.write();
+  const f = fixture(); f.begin();
+  const controller = new AbortController();
+  const pending = f.host.prompt("main", "cancelled", controller.signal, weixin, [media.image]);
+  const rejected = assert.rejects(pending, { name: "AbortError" });
+  await untilCalls(f, 1);
+  controller.abort(); await rejected;
+  assert.equal(f.listeners.size, 0);
+  const next = f.host.prompt("main", "next", signal(), { ...weixin, chatId: "next" });
+  await tick();
+  assert.equal(f.calls.length, 1);
+  f.finish(fileLink(media.file));
+  await untilCalls(f, 2);
+  f.finish("new chat answer");
+  assert.deepEqual(await next, { text: "new chat answer" });
+  assert.equal(f.sources.length, 0);
+});
+
+test("invalid media rejects before dispatch or source registration", async (t) => {
+  const media = await mediaFixture(t);
+  const f = fixture(); f.begin();
+  await assert.rejects(f.host.prompt("main", "input", signal(), weixin, [media.image]), { code: "ENOENT" });
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.sources.length, 0);
 });

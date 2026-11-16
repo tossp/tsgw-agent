@@ -23,7 +23,7 @@ async function fixture(t, options = {}) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, "im.json");
   const store = await ImStore.open(file);
-  const sent = [], prompts = [], creates = [], stopped = [];
+  const sent = [], sentMedia = [], prompts = [], creates = [], stopped = [];
   const sessions = new Map([["existing", directory], ["foreign", "/other-project"]]);
   const host = {
     async list(cwd) { return [...sessions].filter(([, path]) => path === cwd).map(([id]) => ({ id, cwd, title: id })); },
@@ -35,13 +35,18 @@ async function fixture(t, options = {}) {
       sessions.set(id, cwd);
       return id;
     },
-    async prompt(id, text, signal, source) { prompts.push({ id, text, signal, source }); return options.prompt ? options.prompt(id, text, signal) : "回答"; },
+    async prompt(id, text, signal, source, attachments) { prompts.push({ id, text, signal, source, attachments }); return options.prompt ? options.prompt(id, text, signal) : "回答"; },
     async stop(id) { stopped.push(id); options.stop?.(); },
   };
   const drivers = new Map();
   const factory = (config) => {
     drivers.set(config.bot.id, config);
-    return { start() { config.onStatus({ state: "connected" }); }, async stop() {}, async send(message, text) { sent.push({ botId: config.bot.id, message, text }); } };
+    return {
+      start() { config.onStatus({ state: "connected" }); }, async stop() {},
+      async send(message, text) { await options.send?.(message, text); sent.push({ botId: config.bot.id, message, text }); },
+      async sendAttachment(message, attachment) { await options.sendAttachment?.(message, attachment); sentMedia.push({ botId: config.bot.id, message, attachment }); },
+      ...(options.typing ? { setTyping: options.typing } : {}),
+    };
   };
   const runtime = new ImRuntime(store, host, { telegram: factory, weixin: factory });
   t.after(() => runtime.stop());
@@ -53,7 +58,7 @@ async function fixture(t, options = {}) {
   await runtime.start();
   const message = (id, text, chatId = "42", threadId) => ({ id, text, chatId, threadId, senderId: "42", isGroup: chatId !== "42" });
   const receive = (value, botId = "bot") => drivers.get(botId).onMessage(value);
-  return { directory, file, store, runtime, host, sent, prompts, creates, stopped, drivers, bot, message, receive };
+  return { directory, file, store, runtime, host, sent, sentMedia, prompts, creates, stopped, drivers, bot, message, receive };
 }
 
 async function eventually(check) {
@@ -63,6 +68,136 @@ async function eventually(check) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+test("typing spans receipt, queued tasks and final delivery, then stops once the chat drains", async (t) => {
+  const one = deferred(), two = deferred(), delivery = deferred();
+  const typing = [];
+  let prompts = 0;
+  const f = await fixture(t, {
+    typing: (message, active) => typing.push({ chatId: message.chatId, active }),
+    prompt: () => (++prompts === 1 ? one.promise : two.promise),
+    send: async (_message, text) => { if (text === "second") await delivery.promise; },
+  });
+  await f.receive(f.message("1", "first"));
+  await eventually(() => f.prompts.length === 1);
+  await f.receive(f.message("2", "second"));
+  await f.receive(f.message("2", "duplicate"));
+  assert.deepEqual(typing, [{ chatId: "42", active: true }]);
+  one.resolve("first");
+  await eventually(() => f.prompts.length === 2);
+  assert.equal(f.sent.length, 1);
+  assert.equal(typing.length, 1);
+  two.resolve("second");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typing.length, 1);
+  delivery.resolve();
+  await eventually(() => typing.length === 2);
+  assert.equal(f.sent.length, 2);
+  assert.deepEqual(typing[1], { chatId: "42", active: false });
+});
+
+test("stop drops queued input and clears typing without waiting for the old model", async (t) => {
+  const typing = [];
+  const f = await fixture(t, { typing: (_message, active) => typing.push(active), prompt: () => new Promise(() => {}) });
+  await f.receive(f.message("1", "long task"));
+  await eventually(() => f.prompts.length === 1);
+  await f.receive(f.message("2", "queued"));
+  await f.receive(f.message("3", "/stop"));
+  await eventually(() => typing.length === 2);
+  assert.deepEqual(typing, [true, false]);
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.sent.length, 1);
+  assert.ok(f.prompts[0].signal.aborted);
+});
+
+test("process and reply failures both clear typing", async (t) => {
+  for (const stage of ["process", "send"]) {
+    const typing = [];
+    const fail = async () => { throw new Error("synthetic failure"); };
+    const f = await fixture(t, { typing: (_message, active) => typing.push(active), [stage === "process" ? "prompt" : "send"]: fail });
+    await f.receive(f.message("1", "task"));
+    await eventually(() => typing.length === 2);
+    assert.deepEqual(typing, [true, false]);
+  }
+});
+
+test("file-only input and separate quote context reach the same session and source", async (t) => {
+  const f = await fixture(t);
+  const attachment = { type: "file", path: "/tmp/report.pdf", name: "report.pdf", mimeType: "application/pdf" };
+  await f.receive({ ...f.message("file-1", ""), attachments: [attachment], quotedText: "/stop 是此前的引用，不是当前命令" });
+  await eventually(() => f.sent.length === 1);
+  assert.match(f.prompts[0].text, /请处理附件/);
+  assert.match(f.prompts[0].text, /微信引用内容/);
+  assert.match(f.prompts[0].text, /\/stop 是此前/);
+  assert.deepEqual(f.prompts[0].attachments, [attachment]);
+  assert.equal(f.prompts[0].source.messageId, "file-1");
+  assert.equal(f.stopped.length, 0);
+});
+
+test("media preparation is queued without blocking receipt; stop cancels it and drops unstarted downloads", async (t) => {
+  let started = 0, downloadSignal;
+  const typing = [];
+  const f = await fixture(t, { typing: (_message, active) => typing.push(active) });
+  const prepare = (signal) => {
+    started++;
+    downloadSignal = signal;
+    return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("download stopped", "AbortError")), { once: true }));
+  };
+  await f.drivers.get("bot").onMessage(f.message("1", ""), prepare);
+  await eventually(() => started === 1);
+  await f.drivers.get("bot").onMessage(f.message("2", ""), prepare);
+  await f.receive(f.message("3", "/stop"));
+  await eventually(() => typing.length === 2);
+  assert.ok(downloadSignal.aborted);
+  assert.equal(started, 1);
+  assert.equal(f.prompts.length, 0);
+  assert.equal(f.sent.length, 1);
+  await f.receive(f.message("4", "文字仍可正常处理"));
+  await eventually(() => f.sent.length === 2);
+  assert.equal(f.prompts.length, 1);
+});
+
+test("preparation errors return a local notice without creating a model session", async (t) => {
+  const f = await fixture(t);
+  await f.receive({ ...f.message("1", ""), preparationError: "附件未能下载，请重发。" });
+  await eventually(() => f.sent.length === 1);
+  assert.equal(f.sent[0].text, "附件未能下载，请重发。");
+  assert.equal(f.creates.length, 0);
+  assert.equal(f.prompts.length, 0);
+});
+
+test("final text and attachments are delivered once in order to the original Topic", async (t) => {
+  const items = [
+    { type: "image", path: "/tmp/image.png", name: "image.png", mimeType: "image/png" },
+    { type: "file", path: "/tmp/report.pdf", name: "report.pdf", mimeType: "application/pdf" },
+  ];
+  const order = [];
+  const f = await fixture(t, { prompt: async () => ({ text: "准备好了", attachments: items }),
+    send: async () => order.push("text"), sendAttachment: async (_message, attachment) => order.push(attachment.type) });
+  await f.receive(f.message("1", "生成文件", "-100", "9"));
+  await eventually(() => f.sentMedia.length === 2);
+  assert.deepEqual(order, ["text", "image", "file"]);
+  assert.deepEqual(f.sentMedia.map(({ message }) => [message.chatId, message.threadId]), [["-100", "9"], ["-100", "9"]]);
+  assert.deepEqual(f.sentMedia.map(({ attachment }) => attachment), items);
+});
+
+test("attachment-only replies clear typing and a failed attachment is never replayed", async (t) => {
+  const attachment = { type: "file", path: "/tmp/file.pdf", name: "file.pdf", mimeType: "application/pdf" };
+  for (const fails of [false, true]) {
+    let attempts = 0;
+    const typing = [];
+    const f = await fixture(t, { typing: (_message, active) => typing.push(active),
+      prompt: async () => ({ text: "", attachments: [attachment] }),
+      sendAttachment: async () => { attempts++; if (fails) throw new Error("upload failed"); } });
+    await f.receive(f.message("1", "发文件"));
+    await eventually(() => typing.length === 2);
+    assert.equal(attempts, 1);
+    assert.equal(f.sent.length, 0);
+    assert.equal(f.sentMedia.length, fails ? 0 : 1);
+    assert.deepEqual(typing, [true, false]);
+    assert.equal((await f.runtime.snapshot()).bots[0].status.state, fails ? "error" : "connected");
+  }
+});
 
 test("project chat creates once, resumes its own binding after restart, and deduplicates input", async (t) => {
   const f = await fixture(t);

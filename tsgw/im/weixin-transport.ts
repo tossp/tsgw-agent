@@ -57,10 +57,11 @@ interface RequestOptions {
   body?: Record<string, unknown>;
   signal?: AbortSignal;
   timeoutMs?: number;
+  allowEmptyResponse?: boolean;
 }
 
 export async function weixinRequest({
-  fetchImpl, baseUrl, endpoint, token, body, signal, timeoutMs = 15_000,
+  fetchImpl, baseUrl, endpoint, token, body, signal, timeoutMs = 15_000, allowEmptyResponse = false,
 }: RequestOptions): Promise<Record<string, unknown>> {
   if (signal?.aborted) throw weixinAbort();
   const url = new URL(endpoint, weixinUrl(baseUrl));
@@ -97,7 +98,8 @@ export async function weixinRequest({
     }
     let value: unknown;
     try {
-      value = JSON.parse(await response.text(), (key, item, context?: { source?: string }) => {
+      const text = await response.text();
+      value = allowEmptyResponse && !text.trim() ? {} : JSON.parse(text, (key, item, context?: { source?: string }) => {
         // iLink message IDs are uint64; Number rounding would merge distinct messages.
         if (["message_id", "msg_id", "svr_id"].includes(key) && typeof item === "number"
           && context?.source && /^\d+$/.test(context.source)) return context.source;

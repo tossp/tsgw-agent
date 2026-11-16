@@ -23,6 +23,18 @@ export interface ImBot {
   credentials: TelegramCredentials | WeixinCredentials;
 }
 
+export interface ImAttachment {
+  type: "image" | "file";
+  path: string;
+  name: string;
+  mimeType: string;
+}
+
+export interface ImReply {
+  text: string;
+  attachments?: ImAttachment[];
+}
+
 export interface ImInbound {
   id: string;
   /** Native message ID when the receipt key above differs (Telegram update_id). */
@@ -33,6 +45,10 @@ export interface ImInbound {
   isGroup: boolean;
   threadId?: string;
   chatTitle?: string;
+  attachments?: ImAttachment[];
+  quotedText?: string;
+  /** Safe local preparation failure; reply to the sender without invoking the model. */
+  preparationError?: string;
 }
 
 export interface ImDriverStatus {
@@ -44,15 +60,18 @@ export interface ImDriver {
   start(): void;
   stop(): Promise<void>;
   send(message: ImInbound, text: string): Promise<void>;
+  sendAttachment?(message: ImInbound, attachment: ImAttachment, signal?: AbortSignal): Promise<void>;
+  setTyping?(message: ImInbound, active: boolean): void;
 }
 
 export interface ImDriverOptions {
   bot: ImBot;
   checkpoint: Record<string, unknown>;
   saveCheckpoint(checkpoint: Record<string, unknown>): Promise<void>;
-  onMessage(message: ImInbound): Promise<void>;
+  onMessage(message: ImInbound, prepare?: (signal: AbortSignal) => Promise<ImInbound>): Promise<void>;
   onStatus(status: ImDriverStatus): void;
   fetchImpl?: typeof fetch;
+  mediaDirectory?: string;
 }
 
 export interface WeixinLogin {
