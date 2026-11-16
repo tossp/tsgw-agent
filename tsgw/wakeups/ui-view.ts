@@ -2,7 +2,8 @@ import type { Locale } from "@/lib/i18n/types";
 import type { WakeupHealth, WakeupQueryItem, WakeupStatus } from "./types";
 
 const EN = {
-  title: "Wakeups", close: "Close", loading: "Loading…", empty: "No wakeups for this session.",
+  title: "Wakeups", close: "Close", loading: "Loading…", empty: "No wakeups.",
+  clear: "Clear", clearing: "Clearing…", clearFailed: "Could not confirm cleanup. Refresh to check the record.",
   loadMore: "Show more", retry: "Try again", readFailed: "Could not refresh wakeups. Previously loaded records are kept.",
   detailFailed: "Could not read the details.", missing: "This wakeup is no longer available.",
   active: "active", verify: "to verify", more: "+", details: "Details", message: "Handoff message",
@@ -21,7 +22,8 @@ type Key = keyof typeof EN;
 const MESSAGES: Record<Locale, Record<Key, string>> = {
   en: EN,
   "zh-CN": {
-    title: "唤醒", close: "关闭", loading: "正在读取…", empty: "此会话暂无唤醒任务。",
+    title: "唤醒", close: "关闭", loading: "正在读取…", empty: "暂无唤醒任务。",
+    clear: "清理", clearing: "正在清理…", clearFailed: "清理结果未确认，请刷新后查看。",
     loadMore: "显示更多", retry: "重试", readFailed: "唤醒状态刷新失败，保留已读取记录。",
     detailFailed: "详情读取失败。", missing: "此唤醒任务已不可用。",
     active: "未终结", verify: "待核实", more: "+", details: "详情", message: "交接正文",
@@ -37,7 +39,8 @@ const MESSAGES: Record<Locale, Record<Key, string>> = {
     paused: "调度已暂停", storage_error: "存储异常，调度已暂停",
   },
   "zh-TW": {
-    title: "喚醒", close: "關閉", loading: "正在讀取…", empty: "此工作階段暫無喚醒工作。",
+    title: "喚醒", close: "關閉", loading: "正在讀取…", empty: "暫無喚醒工作。",
+    clear: "清理", clearing: "正在清理…", clearFailed: "清理結果未確認，請重新整理後查看。",
     loadMore: "顯示更多", retry: "重試", readFailed: "喚醒狀態重新整理失敗，保留已讀取紀錄。",
     detailFailed: "詳情讀取失敗。", missing: "此喚醒工作已無法使用。",
     active: "未終結", verify: "待核實", more: "+", details: "詳情", message: "交接正文",
@@ -77,9 +80,14 @@ export function showWakeupTrigger(items: WakeupQueryItem[], health?: WakeupHealt
   return items.length > 0 || Boolean(health && health.state !== "ready") || failed;
 }
 
-/** Update facts in place so a refresh never reorders the rows someone is reading. */
-export function mergeWakeupRows(previous: WakeupQueryItem[], incoming: WakeupQueryItem[]): WakeupQueryItem[] {
+/** Matches the API's createdAt/wakeupId ordering, including timestamp ties. */
+export function compareWakeupCreation(a: WakeupQueryItem, b: WakeupQueryItem): number {
+  return a.createdAt.localeCompare(b.createdAt) || a.wakeupId.localeCompare(b.wakeupId);
+}
+
+/** Refresh removes missing rows; paging appends without changing the reading order. */
+export function mergeWakeupRows(previous: WakeupQueryItem[], incoming: WakeupQueryItem[], append = false): WakeupQueryItem[] {
   const updates = new Map(incoming.map(item => [item.wakeupId, item]));
   const seen = new Set(previous.map(item => item.wakeupId));
-  return [...previous.map(item => updates.get(item.wakeupId) ?? item), ...Array.from(updates.values()).filter(item => !seen.has(item.wakeupId))];
+  return [...previous.filter(item => append || updates.has(item.wakeupId)).map(item => updates.get(item.wakeupId) ?? item), ...Array.from(updates.values()).filter(item => !seen.has(item.wakeupId))];
 }

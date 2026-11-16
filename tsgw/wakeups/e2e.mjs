@@ -20,6 +20,14 @@ for (const file of [".env", ".env.local", ".env.development", ".env.development.
 const artifacts = join(root, "test-results/wakeups");
 mkdirSync(artifacts, { recursive: true });
 const agentDir = mkdtempSync(join(tmpdir(), "pi-wakeup-panel-"));
+const stateDirectory = join(agentDir, "integrations", "wakeups");
+mkdirSync(stateDirectory, { recursive: true });
+const httpTasks = ["pending", "run_settled", "cancelled"].map(status => ({
+  wakeupId: `http-${status}`, sourceSessionId: "unrelated-http-source", targetSessionId: "wakeup-panel-main", message: `HTTP fixture ${status}`,
+  status, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", scheduledAt: "2099-01-01T00:00:00.000Z",
+  ...(status === "run_settled" ? { settledAt: "2026-11-01T00:01:00.000Z" } : {}),
+}));
+writeFileSync(join(stateDirectory, "state.json"), JSON.stringify({ version: 1, tasks: httpTasks }));
 const project = join(agentDir, "project");
 const sessionsDir = join(agentDir, "sessions", "fixture");
 mkdirSync(project);
@@ -50,7 +58,7 @@ for (const [id, kind, title] of [[mainId, null, "Wakeup fixture main"], [childId
   writeFileSync(file, text); originals.set(file, text);
 }
 const items = ["pending", "received", "run_settled"].map((status, i) => ({
-  wakeupId: `fixture-${i}`, sourceSessionId: mainId, targetSessionId: mainId, cwd: project,
+  wakeupId: `fixture-${i}`, sourceSessionId: status === "run_settled" ? "unrelated-source" : mainId, targetSessionId: mainId, cwd: project,
   summary: `Handoff ${status}`, scheduledAt: "2099-01-01T00:00:00.000Z", createdAt: timestamp, updatedAt: timestamp,
   status, armed: status === "pending", ...(status === "run_settled" ? { responseEntryIds: [`${mainId}-3`] } : {}),
 }));
@@ -86,11 +94,24 @@ try {
     assert.ok(Date.now() < deadline, "dev server readiness timeout");
     await delay(250);
   }
+  const globalState = await (await fetch(`${base}/api/tsgw/wakeups`)).json();
+  assert.equal(globalState.health.state, "ready");
+  assert.equal(globalState.items.length, 3, "unfiltered HTTP query reads all manifest records");
+  for (const [id, status] of [["http-run_settled", 200], ["http-run_settled", 404], ["http-pending", 409], ["http-cancelled", 200]]) {
+    const response = await fetch(`${base}/api/tsgw/wakeups/${id}`, { method: "DELETE" });
+    assert.equal(response.status, status, `${id}: ${await response.text()}`);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+  }
+  const remaining = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8"));
+  assert.deepEqual(remaining.tasks.map(task => task.wakeupId), ["http-pending"]);
+  console.log("PASS real HTTP global read and terminal cleanup; missing/active records rejected; manifest only");
   browser = await chromium.launch({ headless: true });
   for (const [width, locale, wakeupTitle, agentsTitle] of [[1280, "en", "Wakeups", "Agents"], [320, "en", "Wakeups", "Agents"], [390, "zh-CN", "唤醒", "代理"], [320, "zh-TW", "喚醒", "代理"]]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     await context.addInitScript(value => localStorage.setItem("pi-locale", value), locale);
     const external = [], errors = [], unsafe = [], wakeupRequests = [];
+    const contextItems = items.map(item => ({ ...item }));
+    let statsRequests = 0;
     await context.route("**/*", async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.origin !== base) { external.push(url.origin); return route.abort(); }
@@ -99,11 +120,22 @@ try {
         if (url.pathname.endsWith("/events")) return route.fulfill({ contentType: "text/event-stream", body: 'data: {"type":"connected","isStreaming":false}\n\n' });
         return route.fulfill({ json: { isStreaming: false, isCompacting: false, running: false, awaitingInput: false, subagentsActive: false } });
       }
+      if (url.pathname === "/api/sessions/stats") {
+        statsRequests++;
+        return route.fulfill({ json: { stats: {} } });
+      }
       if (url.pathname.startsWith("/api/tsgw/wakeups")) {
-        wakeupRequests.push({ method: request.method(), path: url.pathname });
+        wakeupRequests.push({ method: request.method(), path: url.pathname, query: url.search });
+        assert.equal(url.searchParams.has("session_id"), false, "panel queries global state");
+        const index = contextItems.findIndex(item => url.pathname.endsWith(`/${item.wakeupId}`));
+        if (request.method() === "DELETE") {
+          assert.equal(contextItems[index]?.status, "run_settled");
+          const [removed] = contextItems.splice(index, 1);
+          return route.fulfill({ json: { wakeupId: removed.wakeupId } });
+        }
         assert.equal(request.method(), "GET");
-        const item = items.find(item => url.pathname.endsWith(`/${item.wakeupId}`));
-        return route.fulfill({ json: item ? { ...wakeups, items: [{ ...item, message: "Synthetic handoff body" }] } : wakeups });
+        const item = contextItems[index];
+        return route.fulfill({ json: { ...wakeups, items: item ? [{ ...item, message: "Synthetic handoff body" }] : contextItems } });
       }
       if (request.method() !== "GET" && url.pathname !== "/api/sessions/stats") {
         // Block unrelated initialization writes too, including preferences and leases.
@@ -116,6 +148,13 @@ try {
     page = await context.newPage();
     page.setDefaultTimeout(30000);
     page.on("pageerror", error => errors.push(error.message));
+    if (width === 1280) {
+      await page.goto(base, { waitUntil: "domcontentloaded" });
+      await page.getByRole("button", { name: new RegExp(`^${wakeupTitle} · 3`) }).waitFor();
+      assert.equal(new URL(page.url()).searchParams.has("session"), false, "global entry is available without selecting a session");
+      await page.getByRole("button", { name: new RegExp(`^${wakeupTitle} · 3`) }).click();
+      await page.getByRole("region", { name: new RegExp(`^${wakeupTitle}`) }).getByText("Handoff run_settled", { exact: true }).waitFor();
+    }
     await page.goto(`${base}/?session=${mainId}`, { waitUntil: "domcontentloaded" });
     await page.getByText(`Answer ${mainId}`, { exact: true }).waitFor();
     const trigger = page.getByRole("button", { name: new RegExp(`^${wakeupTitle} · 3`) });
@@ -128,6 +167,7 @@ try {
     await panel.waitFor();
     await panel.getByText("Handoff run_settled", { exact: true }).waitFor();
     assert.equal(await page.locator("dialog").count(), 0);
+    assert.equal(statsRequests, 0, "opening global wakeups does not request usage statistics");
     const triggerBox = await trigger.boundingBox(), panelBox = await panel.boundingBox();
     assert.ok(panelBox.y >= triggerBox.y + triggerBox.height - 1, "panel opens below the toolbar");
     assert.ok(panelBox.x >= 0 && panelBox.x + panelBox.width <= width + 1, "panel fits the chat/viewport");
@@ -168,10 +208,19 @@ try {
     }
     await panel.waitFor();
     await page.screenshot({ path: join(artifacts, `mutual-${width}-${locale}.png`) });
-    assert.ok(wakeupRequests.length > 0 && wakeupRequests.every(r => r.method === "GET"));
+    const finished = panel.locator('[data-wakeup-id="fixture-2"]');
+    await finished.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(artifacts, `cleanup-ready-${width}-${locale}.png`) });
+    await finished.getByRole("button", { name: locale === "en" ? "Clear" : "清理", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('[data-wakeup-id="fixture-2"]'));
+    await page.getByRole("button", { name: new RegExp(`^${wakeupTitle} · 2`) }).waitFor();
+    assert.equal(await panel.locator("li").count(), 2);
+    assert.equal(wakeupRequests.filter(request => request.method === "DELETE").length, 1);
+    await page.screenshot({ path: join(artifacts, `cleared-${width}-${locale}.png`) });
+    assert.ok(wakeupRequests.length > 0 && wakeupRequests.every(r => ["GET", "DELETE"].includes(r.method)));
     assert.deepEqual(errors, []);
     assert.deepEqual(external, []);
-    assert.ok(!unsafe.some(path => path.includes("/wakeups")), "no wakeup mutation");
+    assert.ok(!unsafe.some(path => path.includes("/wakeups")), "only explicit fixture cleanup mutates wakeups");
     await context.close();
     console.log(`PASS ${width}px ${locale}: actual AppShell, status/count, toggle/Escape, Agents/side rows, More, bounds; intercepted agent I/O`);
   }

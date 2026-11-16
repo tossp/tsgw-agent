@@ -46,11 +46,13 @@ test("counts describe observable activity and unknown outcomes without inventing
   }
 });
 
-test("refresh updates loaded rows in place, retains older pages and appends new records once", () => {
+test("refresh drops deleted rows while paging appends older records without reordering", () => {
   const before = [task("a"), task("b"), task("older")];
   const incoming = [task("new"), task("b", { status: "received" }), task("a", { status: "run_settled" })];
   const merged = mergeWakeupRows(before, incoming);
-  assert.deepEqual(merged.map(item => item.wakeupId), ["a", "b", "older", "new"]);
+  assert.deepEqual(merged.map(item => item.wakeupId), ["a", "b", "new"]);
+  assert.deepEqual(mergeWakeupRows(before, incoming, true).map(item => item.wakeupId), ["a", "b", "older", "new"]);
+  assert.deepEqual(mergeWakeupRows(before, []), []);
   assert.equal(merged[0].status, "run_settled");
   assert.equal(merged[1].status, "received");
   assert.deepEqual(mergeWakeupRows(merged, incoming), merged);
@@ -72,6 +74,16 @@ for (const locale of ["en", "zh-CN", "zh-TW"]) test(`real React row renders safe
   assert.ok(html.includes(wakeupText(locale, "unsaved")));
   assert.ok(!html.includes("SECRET BODY NOT FOR LIST"));
   assert.ok(!html.includes(wakeupText(locale, "armed")));
+});
+
+test("only saved terminal rows offer cleanup, and unavailable ownership disables it", () => {
+  for (const status of ["pending", "dispatching", "submitted", "received", "unknown", "run_settled", "run_aborted", "delivery_failed", "cancelled"]) {
+    const html = renderToStaticMarkup(React.createElement(WakeupRow, { locale: "en", item: task(status, { status }), onClear() {}, clearDisabled: true }));
+    const eligible = ["run_settled", "run_aborted", "delivery_failed", "cancelled"].includes(status);
+    assert.equal(html.includes('disabled=""'), eligible);
+  }
+  const unsaved = renderToStaticMarkup(React.createElement(WakeupRow, { locale: "en", item: task("unsaved", { status: "run_settled", unsaved: true }), onClear() {} }));
+  assert.ok(!unsaved.includes("<button"));
 });
 
 /** Bundle only the actual client component and its existing dependencies, without a Next build/server. */
@@ -133,6 +145,14 @@ async function fixture(browser, bundle, css, { locale = "en", width = 1024, firs
       const f = window.wakeupFixture;
       const url = new URL(input, "https://fixture.invalid");
       f.requests.push({ path: url.pathname, query: url.search, method: options?.method, signal: options?.signal });
+      if (options?.method === "DELETE" && url.pathname.startsWith("/api/tsgw/wakeups/")) {
+        if (f.clearFail) return new Response("Unavailable", { status: 503 });
+        if (f.clearHold) await new Promise(resolve => { f.pendingClear = resolve; });
+        const id = decodeURIComponent(url.pathname.split("/")[4]);
+        for (const page of [f.first, ...Object.values(f.pages)]) page.items = page.items.filter(item => item.wakeupId !== id);
+        delete f.details[id];
+        return new Response(JSON.stringify({ wakeupId: id }), { status: 200 });
+      }
       if (options?.method !== "GET" || !url.pathname.startsWith("/api/tsgw/wakeups")) throw new Error("Unexpected request");
       if (f.hold) return new Promise(resolve => f.pending.push({ resolve, signal: options.signal })); // Deliberately allows stale replies after abort.
       if (f.fail) return new Response("Unavailable", { status: 503 });
@@ -194,8 +214,46 @@ test("isolated browser exercises the production component with no real sessions"
         await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
       } finally { await page.close(); }
     });
+    await t.test("global cleanup persists through refresh, ignores stale reads and retains unconfirmed records", async () => {
+      const done = task("done", { status: "run_settled", sourceSessionId: "unrelated-source", targetSessionId: "unrelated-target" });
+      const initial = [task("active"), done, task("unknown", { status: "unknown" }), task("failed", { status: "delivery_failed" }), task("cancelled", { status: "cancelled" }), task("aborted", { status: "run_aborted" }), task("unsaved", { status: "run_settled", unsaved: true })];
+      const page = await fixture(browser, bundle, css, { first: result(initial) });
+      try {
+        await page.locator(".trigger").click();
+        await page.locator('[data-wakeup-id="done"]').waitFor();
+        assert.equal(await page.getByRole("button", { name: "Clear", exact: true }).count(), 4);
+        assert.ok((await page.evaluate(() => window.wakeupFixture.requests)).every(request => !new URLSearchParams(request.query).has("session_id")));
+        await page.evaluate(() => { window.wakeupFixture.hold = true; });
+        await page.clock.runFor(2500);
+        await page.waitForFunction(() => window.wakeupFixture.pending.length === 1);
+        await page.evaluate(() => { window.wakeupFixture.hold = false; window.wakeupFixture.clearHold = true; });
+        await page.locator('[data-wakeup-id="done"]').getByRole("button", { name: "Clear", exact: true }).click();
+        await page.getByRole("button", { name: "Clearing…", exact: true }).waitFor();
+        await page.evaluate(() => window.renderWakeups({ sessionId: "fixture-session", refreshKey: 1 }));
+        await page.evaluate(() => { window.wakeupFixture.clearHold = false; window.wakeupFixture.pendingClear(); });
+        await page.waitForFunction(() => !document.querySelector('[data-wakeup-id="done"]'));
+        assert.equal(await page.evaluate(() => window.wakeupFixture.pending[0].signal.aborted), true);
+        await page.evaluate(old => window.wakeupFixture.pending[0].resolve(new Response(JSON.stringify(old))), result(initial));
+        await settle(page);
+        await page.clock.runFor(2500);
+        assert.equal(await page.locator('[data-wakeup-id="done"]').count(), 0);
+        await page.evaluate(() => { window.wakeupFixture.clearFail = true; });
+        const failed = page.locator('[data-wakeup-id="failed"]');
+        await failed.getByRole("button", { name: "Clear", exact: true }).click();
+        await page.getByText(/Could not confirm cleanup/).waitFor();
+        assert.equal(await failed.count(), 1);
+        await page.evaluate(() => { window.wakeupFixture.first.items = window.wakeupFixture.first.items.filter(item => item.wakeupId !== "aborted"); });
+        await page.clock.runFor(2500);
+        await page.waitForFunction(() => !document.querySelector('[data-wakeup-id="aborted"]'));
+        assert.equal(await page.locator('[data-wakeup-id="active"]').count(), 1);
+        assert.equal(await page.locator('[data-wakeup-id="unknown"]').count(), 1);
+        const requests = await page.evaluate(() => window.wakeupFixture.requests);
+        assert.equal(requests.filter(request => request.method === "DELETE").length, 2);
+        assert.ok(requests.every(request => request.path.startsWith("/api/tsgw/wakeups")));
+      } finally { await page.close(); }
+    });
     await t.test("host panels are mutually exclusive and the quantity/status remain visible when collapsed", async () => {
-      const page = await fixture(browser, bundle, css, { first: result([task("done", { status: "run_settled" }), task("unknown", { status: "unknown" })], { nextCursor: "older" }) });
+      const page = await fixture(browser, bundle, css, { first: result([task("unknown", { status: "unknown" }), task("done", { status: "run_settled" })], { nextCursor: "older" }) });
       try {
         const trigger = page.locator(".trigger");
         assert.equal(await trigger.getAttribute("aria-label"), "Wakeups · 2+ · 1 to verify !");
@@ -269,13 +327,13 @@ test("isolated browser exercises the production component with no real sessions"
       } finally { await page.close(); }
     });
     await t.test("details are lazy, safe and abort on collapse; paging and refresh preserve reading position", async () => {
-      const items = Array.from({ length: 7 }, (_, i) => task(`row-${i}`));
+      const items = Array.from({ length: 7 }, (_, i) => task(`row-${i}`, { createdAt: new Date(Date.UTC(2026, 10, 16, 2) - i * 1000).toISOString() }));
       const page = await fixture(browser, bundle, css, { first: result(items, { nextCursor: "page & 2" }) });
       try {
         await page.evaluate(({ next, detail }) => {
           window.wakeupFixture.pages["page & 2"] = next;
           window.wakeupFixture.details["row-0"] = detail;
-        }, { next: result([task("older")]), detail: result([task("row-0", { message: '<img src=x onerror="alert(1)">\nFull handoff' })]) });
+        }, { next: result([task("older", { createdAt: "2026-11-15T02:00:00Z" })]), detail: result([task("row-0", { message: '<img src=x onerror="alert(1)">\nFull handoff' })]) });
         await page.getByRole("button", { name: /Wakeups/ }).click();
         await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).waitFor();
         assert.equal(await page.locator(".message").count(), 0);
@@ -305,6 +363,29 @@ test("isolated browser exercises the production component with no real sessions"
         await page.waitForFunction(() => window.wakeupFixture.pending[0].signal.aborted);
       } finally { await page.close(); }
     });
+    await t.test("new records crossing a page boundary keep the oldest loaded row and its open details", async () => {
+      const rows = Array.from({ length: 50 }, (_, i) => task(`page-${i}`, { createdAt: new Date(Date.UTC(2026, 10, 16) - i * 1000).toISOString() }));
+      const page = await fixture(browser, bundle, css, { first: result(rows) });
+      try {
+        await page.evaluate(value => { window.wakeupFixture.details["page-49"] = value; }, result([{ ...rows[49], message: "Keep this detail open" }]));
+        await page.locator(".trigger").click();
+        const oldest = page.locator('[data-wakeup-id="page-49"]');
+        await oldest.locator("summary").click();
+        await oldest.getByText("Keep this detail open").waitFor();
+        const scroll = await page.locator(".body").evaluate(node => node.scrollTop);
+        await page.evaluate(({ first, next }) => {
+          window.wakeupFixture.first = first;
+          window.wakeupFixture.pages["page-48"] = next;
+        }, { first: result([task("newest", { createdAt: "2026-11-16T01:00:00Z" }), ...rows.slice(0, 49)], { nextCursor: "page-48" }), next: result([rows[49]]) });
+        await page.clock.runFor(2500);
+        await page.locator('[data-wakeup-id="newest"]').waitFor();
+        assert.equal(await oldest.count(), 1);
+        assert.equal(await oldest.locator("details").getAttribute("open"), "");
+        assert.equal(await oldest.getByText("Keep this detail open").count(), 1);
+        assert.equal(await page.locator(".body").evaluate(node => node.scrollTop), scroll);
+        assert.equal(await page.evaluate(() => window.wakeupFixture.requests.filter(request => request.path.endsWith("/page-49")).length), 1);
+      } finally { await page.close(); }
+    });
     await t.test("expanded evidence follows list refresh and response links use host entry navigation", async () => {
       const page = await fixture(browser, bundle, css, { first: result([task("facts")]) });
       try {
@@ -330,7 +411,7 @@ test("isolated browser exercises the production component with no real sessions"
         assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
       } finally { await page.close(); }
     });
-    await t.test("aborts and ignores old session/refresh replies; failed refresh retains readable rows", async () => {
+    await t.test("ignores stale refresh replies and keeps global rows when the selected session changes", async () => {
       const page = await fixture(browser, bundle, css);
       try {
         await page.getByRole("button", { name: /Wakeups/ }).waitFor();
@@ -354,11 +435,15 @@ test("isolated browser exercises the production component with no real sessions"
         await page.evaluate(() => { window.wakeupFixture.hold = true; window.wakeupFixture.fail = false; });
         await page.clock.runFor(2500);
         await page.waitForFunction(() => window.wakeupFixture.pending.length === 2);
-        await page.evaluate(() => { window.wakeupFixture.hold = false; window.wakeupFixture.first = { items: [], nextCursor: null, health: { state: "ready", isOwner: true } }; window.renderWakeups({ sessionId: "new-session" }); });
+        await page.evaluate(() => { window.wakeupFixture.hold = false; window.wakeupFixture.first = { items: [], nextCursor: null, health: { state: "ready", isOwner: true } }; window.renderWakeups({ sessionId: "new-session", refreshKey: 2 }); });
         await page.waitForFunction(() => window.wakeupFixture.pending[1].signal.aborted);
         await page.evaluate(old => window.wakeupFixture.pending[1].resolve(new Response(JSON.stringify(old))), result([task("old-session")]));
         await settle(page);
         assert.equal(await page.getByRole("region", { name: /^Wakeups|^唤醒|^喚醒/ }).count(), 0);
+        assert.equal(await page.locator(".trigger").count(), 1);
+        await page.locator(".trigger").click();
+        await page.getByText("No wakeups.", { exact: true }).waitFor();
+        await page.keyboard.press("Escape");
         assert.equal(await page.locator(".trigger").count(), 0);
       } finally { await page.close(); }
     });

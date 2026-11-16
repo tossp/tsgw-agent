@@ -5,6 +5,7 @@ import { wakeupHistory, type WakeupEvent, type WakeupRecord } from "./history";
 import { WakeupStore } from "./store";
 import { acquireWakeupOwnership } from "./ownership";
 import { projectWakeups, validateWakeupQuery } from "./query";
+import { canClearWakeup } from "./cleanup";
 import type { WakeupHealth, WakeupObservation, WakeupQuery, WakeupResult, WakeupTask } from "./types";
 
 export interface WakeupSessionStore {
@@ -118,6 +119,21 @@ export class WakeupRuntime {
     return diagnostics ? { ...wakeup, diagnostics } : wakeup;
   }
 
+  /** Remove only the manifest record; never touch the target session or its audit. */
+  clear(wakeupId: string): { wakeupId: string } {
+    this.assertWritable();
+    const task = this.unsaved.get(wakeupId) ?? this.tasks.get(wakeupId);
+    if (!task) throw new WakeupOperationError("Wakeup not found", { code: "wakeup_not_found" });
+    // Delivery may still save submittedAt after a settled observation has arrived.
+    if (!canClearWakeup(task) || this.submissions.has(wakeupId)) {
+      throw new WakeupOperationError("Wakeup is not ready to be cleared", { code: "wakeup_not_clearable" });
+    }
+    const next = new Map(this.tasks);
+    next.delete(wakeupId);
+    this.saveTasks(next);
+    return { wakeupId };
+  }
+
   async history(sessionId: string) { return wakeupHistory(await this.sessions.read(sessionId), this.list(), sessionId); }
 
   async query(input: WakeupQuery = {}) {
@@ -218,12 +234,14 @@ export class WakeupRuntime {
     for (const submission of this.submissions.values()) submission.controller.abort(new Error(reason));
   }
   private save(task: WakeupTask): void {
+    this.saveTasks(new Map(this.tasks).set(task.wakeupId, task));
+    this.unsaved.delete(task.wakeupId);
+  }
+  private saveTasks(next: Map<string, WakeupTask>): void {
     this.assertWritable();
-    const next = new Map(this.tasks).set(task.wakeupId, task);
     try { this.store?.save([...next.values()]); }
     catch (error) { this.pause("storage_error", errorText(error)); throw error; }
     this.tasks = next;
-    this.unsaved.delete(task.wakeupId);
   }
 
   private async fire(wakeup: Wakeup, deliver: (wakeup: Wakeup, context: WakeupDeliveryContext) => Promise<void>): Promise<void> {

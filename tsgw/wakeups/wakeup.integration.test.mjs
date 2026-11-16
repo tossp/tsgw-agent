@@ -199,6 +199,20 @@ test("all five wakeup tools default to codemode, refuse direct calls and retain 
   });
 });
 
+test("status queries are global by default and session filtering is explicit", { timeout: 20_000 }, async () => {
+  await withFixture(async f => {
+    const source = await f.create(), other = await f.create();
+    const own = await f.runtime.schedule(source.id, { after_seconds: 60, message: "own reminder" });
+    const unrelated = await f.runtime.schedule(other.id, { after_seconds: 60, message: "other reminder" });
+    for (const query of [{}, { status: "pending" }]) {
+      const global = await invoke(source, "query_wakeups", query);
+      assert.deepEqual(new Set(global.items.map(item => item.wakeupId)), new Set([own.wakeupId, unrelated.wakeupId]));
+    }
+    const filtered = await invoke(source, "query_wakeups", { session_id: source.id });
+    assert.deepEqual(filtered.items.map(item => item.wakeupId), [own.wakeupId]);
+  });
+});
+
 test("model-scheduled self wakeup follows the current turn and keeps metadata on the live branch", { timeout: 20_000 }, async () => {
   await withFixture(async (f) => {
     const source = await f.create();

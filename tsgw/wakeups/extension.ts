@@ -109,13 +109,12 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
       }));
       pi.registerTool(defineTool({
         name: "query_wakeups", label: "Query wakeup status", exposure: "codemode",
-        description: "Read persistent wakeup status, observation evidence and scheduler health. Defaults to tasks sent or received by this session; filter by wakeup_id for full message and evidence. Other filters support source, target, cwd, status and pagination. received means notification observed; run_settled is not task success. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
+        description: "Read global persistent wakeup status, observation evidence and scheduler health. Filter explicitly by session_id, source, target, cwd, status or pagination; filter by wakeup_id for full message and evidence. received means notification observed; run_settled is not task success. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
         annotations: { readOnlyHint: true, openWorldHint: false },
         parameters: querySchema, outputSchema: queryResultSchema,
-        async execute(_id, input, signal, _update, ctx) {
+        async execute(_id, input, signal) {
           signal?.throwIfAborted();
-          const filter = input.wakeup_id || input.session_id || input.source_session_id || input.target_session_id || input.cwd;
-          return result(await runtime.query(filter ? input : { ...input, session_id: ctx.sessionManager.getSessionId() }));
+          return result(await runtime.query(input));
         },
       }));
       pi.registerTool(defineTool({

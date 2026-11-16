@@ -19,6 +19,13 @@ export async function readWakeupQuery(input: WakeupQuery = {}): Promise<WakeupQu
   }, new Set());
 }
 
+/** Cleanup is available only through this process's existing writable owner. */
+export function clearWakeupRecord(wakeupId: string): { wakeupId: string } {
+  const runtime = peekWakeupRuntime();
+  if (!runtime) throw new Error("Wakeup scheduler has not initialized in this server process");
+  return runtime.clear(wakeupId);
+}
+
 export function wakeupQueryFromParams(params: URLSearchParams): WakeupQuery {
   const input: Record<string, unknown> = {};
   for (const key of ["wakeup_id", "session_id", "source_session_id", "target_session_id", "cwd", "status", "cursor"] as const) {

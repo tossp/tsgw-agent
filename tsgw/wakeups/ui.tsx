@@ -6,7 +6,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { isPlainActivation, sessionDeepLink } from "@/lib/session-links";
 import type { Locale } from "@/lib/i18n/types";
 import type { WakeupHealth, WakeupQueryItem, WakeupQueryResult } from "./types";
-import { mergeWakeupRows, showWakeupTrigger, wakeupCounts, wakeupStatusText, wakeupText, wakeupTime } from "./ui-view";
+import { canClearWakeup } from "./cleanup";
+import { compareWakeupCreation, mergeWakeupRows, showWakeupTrigger, wakeupCounts, wakeupStatusText, wakeupText, wakeupTime } from "./ui-view";
 import styles from "./ui.module.css";
 
 const POLL_MS = 2500;
@@ -22,26 +23,25 @@ async function readWakeups(url: string, signal: AbortSignal): Promise<WakeupQuer
   return result;
 }
 
-type ListState = { items: WakeupQueryItem[]; health?: WakeupHealth; nextCursor: string | null; loading: boolean; failed: boolean };
+type ListState = { items: WakeupQueryItem[]; health?: WakeupHealth; nextCursor: string | null; loading: boolean; failed: boolean; clearing: string | null; clearFailed: boolean };
 
-function useWakeupList(sessionId: string, refreshKey: string | number | undefined, open: boolean) {
-  const [state, setState] = useState<ListState>({ items: [], nextCursor: null, loading: false, failed: false });
+function useWakeupList(refreshKey: string | number | undefined, open: boolean) {
+  const [state, setState] = useState<ListState>({ items: [], nextCursor: null, loading: false, failed: false, clearing: null, clearFailed: false });
   const snapshot = useRef(state);
   const pageCount = useRef(1);
   const actions = useRef<{ read: (more?: boolean) => void; cancel: () => void } | null>(null);
+  const update = useCallback((patch: Partial<ListState>) => {
+    snapshot.current = { ...snapshot.current, ...patch };
+    setState(snapshot.current);
+  }, []);
 
   useEffect(() => {
     let alive = true;
     let current: AbortController | undefined;
     let busy = false;
     const cancel = () => { current?.abort(); current = undefined; busy = false; };
-    const update = (patch: Partial<ListState>) => {
-      if (!alive) return;
-      snapshot.current = { ...snapshot.current, ...patch };
-      setState(snapshot.current);
-    };
     const read = async (more = false) => {
-      if (busy || (more && !snapshot.current.nextCursor)) return;
+      if (!alive || busy || snapshot.current.clearing || (more && !snapshot.current.nextCursor)) return;
       const controller = new AbortController();
       current = controller;
       busy = true;
@@ -52,20 +52,25 @@ function useWakeupList(sessionId: string, refreshKey: string | number | undefine
         const items: WakeupQueryItem[] = [];
         let cursor = more ? snapshot.current.nextCursor : null;
         let result: WakeupQueryResult;
-        // Refresh all loaded pages, retaining the same rows and open details.
-        const pages = more ? 1 : pageCount.current;
-        for (let page = 0; page < pages; page++) {
-          const query = new URLSearchParams({ session_id: sessionId, limit: "50" });
+        // Cover the previous oldest row even when new tasks push it onto a later page.
+        const oldest = more ? undefined : snapshot.current.items.reduce<WakeupQueryItem | undefined>((oldest, item) =>
+          !oldest || compareWakeupCreation(item, oldest) < 0 ? item : oldest, undefined);
+        let page = 0;
+        do {
+          const query = new URLSearchParams({ limit: "50" });
           if (cursor) query.set("cursor", cursor);
           result = await readWakeups(`/api/tsgw/wakeups?${query}`, controller.signal);
           if (!alive || current !== controller || controller.signal.aborted) return;
           items.push(...result.items);
           cursor = result.nextCursor;
-          if (!cursor) break;
-        }
+          page++;
+          const last = result.items[result.items.length - 1];
+          const covered = !oldest || (last && compareWakeupCreation(last, oldest) <= 0);
+          if (more || !cursor || (page >= pageCount.current && covered)) break;
+        } while (cursor);
         if (!alive || current !== controller || controller.signal.aborted) return;
-        if (more) pageCount.current++;
-        update({ items: mergeWakeupRows(snapshot.current.items, items), nextCursor: cursor, health: result!.health, failed: false });
+        pageCount.current = more ? pageCount.current + 1 : page;
+        update({ items: mergeWakeupRows(snapshot.current.items, items, more), nextCursor: cursor, health: result!.health, failed: false });
       } catch {
         if (alive && current === controller && (!controller.signal.aborted || timedOut)) update({ failed: true });
       } finally {
@@ -76,7 +81,7 @@ function useWakeupList(sessionId: string, refreshKey: string | number | undefine
     actions.current = { read: (more) => { void read(more); }, cancel: () => { cancel(); update({ loading: false }); } };
     void read();
     return () => { alive = false; cancel(); actions.current = null; };
-  }, [sessionId, refreshKey]);
+  }, [refreshKey, update]);
 
   useEffect(() => {
     if (!open) return;
@@ -96,7 +101,25 @@ function useWakeupList(sessionId: string, refreshKey: string | number | undefine
     };
   }, [open, refreshKey]);
 
-  return { ...state, refresh: () => actions.current?.read(), more: () => actions.current?.read(true) };
+  const clear = async (wakeupId: string) => {
+    if (snapshot.current.clearing) return;
+    actions.current?.cancel();
+    update({ clearing: wakeupId, clearFailed: false });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
+    try {
+      const response = await fetch(`/api/tsgw/wakeups/${encodeURIComponent(wakeupId)}`, { method: "DELETE", signal: controller.signal });
+      if (!response.ok) throw new Error("Wakeup cleanup was not confirmed");
+      update({ items: snapshot.current.items.filter(item => item.wakeupId !== wakeupId), nextCursor: null });
+    } catch {
+      update({ clearFailed: true });
+    } finally {
+      clearTimeout(timeout);
+      update({ clearing: null });
+      actions.current?.read();
+    }
+  };
+  return { ...state, refresh: () => actions.current?.read(), more: () => actions.current?.read(true), clear };
 }
 
 function Health({ health, locale }: { health: WakeupHealth; locale: Locale }) {
@@ -110,7 +133,7 @@ function Health({ health, locale }: { health: WakeupHealth; locale: Locale }) {
 }
 
 type WakeupPanelProps = {
-  sessionId: string; refreshKey?: string | number; compact?: boolean;
+  refreshKey?: string | number; compact?: boolean;
   open: boolean; onToggle: () => void; onClose: () => void; panelHost: HTMLElement | null;
   onOpenResponse?: (sessionId: string, entryId: string) => boolean;
 };
@@ -146,8 +169,9 @@ function WakeupDetail({ item: current, locale }: { item: WakeupQueryItem; locale
 }
 
 /** A card's native details element keeps its disclosure and focus across list refreshes. */
-export function WakeupRow({ item, locale, onOpenResponse, onNavigate }: {
+export function WakeupRow({ item, locale, onOpenResponse, onNavigate, onClear, clearing, clearDisabled }: {
   item: WakeupQueryItem; locale: Locale; onOpenResponse?: WakeupPanelProps["onOpenResponse"]; onNavigate?: () => void;
+  onClear?: (wakeupId: string) => void; clearing?: boolean; clearDisabled?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   return <li className={styles.row} data-wakeup-id={item.wakeupId}>
@@ -171,6 +195,7 @@ export function WakeupRow({ item, locale, onOpenResponse, onNavigate }: {
         }
       }}>{wakeupText(locale, "response")} {index + 1}</a>)}
     </div>
+    {onClear && canClearWakeup(item) && <button type="button" disabled={clearDisabled} onClick={() => onClear(item.wakeupId)}>{wakeupText(locale, clearing ? "clearing" : "clear")}</button>}
     <details className={styles.disclosure} onToggle={event => setExpanded(event.currentTarget.open)}>
       <summary>{wakeupText(locale, "details")}</summary>
       {expanded && <WakeupDetail item={item} locale={locale} />}
@@ -178,9 +203,9 @@ export function WakeupRow({ item, locale, onOpenResponse, onNavigate }: {
   </li>;
 }
 
-function WakeupPanel({ sessionId, refreshKey, onOpenResponse, compact, open, onToggle, onClose, panelHost }: WakeupPanelProps) {
+function WakeupPanel({ refreshKey, onOpenResponse, compact, open, onToggle, onClose, panelHost }: WakeupPanelProps) {
   const { locale } = useI18n();
-  const data = useWakeupList(sessionId, refreshKey, open);
+  const data = useWakeupList(refreshKey, open);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -236,15 +261,18 @@ function WakeupPanel({ sessionId, refreshKey, onOpenResponse, compact, open, onT
         {data.health && <Health health={data.health} locale={locale} />}
         <p className={styles.semantics}>{wakeupText(locale, "semantics")}</p>
         {data.failed && <p className={styles.notice} role="status">{wakeupText(locale, "readFailed")} <button type="button" onClick={data.refresh}>{wakeupText(locale, "retry")}</button></p>}
+        {data.clearFailed && <p className={styles.notice} role="status">{wakeupText(locale, "clearFailed")} <button type="button" onClick={data.refresh}>{wakeupText(locale, "retry")}</button></p>}
         {!data.items.length && !data.failed && <p role="status">{wakeupText(locale, data.loading ? "loading" : "empty")}</p>}
-        <ul className={styles.list}>{data.items.map(item => <WakeupRow key={item.wakeupId} item={item} locale={locale} onOpenResponse={onOpenResponse} onNavigate={close} />)}</ul>
-        {data.nextCursor && <button type="button" className={styles.more} disabled={data.loading} onClick={data.more}>{wakeupText(locale, data.loading ? "loading" : "loadMore")}</button>}
+        <ul className={styles.list}>{data.items.map(item => <WakeupRow key={item.wakeupId} item={item} locale={locale} onOpenResponse={onOpenResponse} onNavigate={close}
+          onClear={id => { void data.clear(id); }} clearing={data.clearing === item.wakeupId}
+          clearDisabled={data.clearing !== null || data.health?.state !== "ready" || !data.health.isOwner} />)}</ul>
+        {data.nextCursor && <button type="button" className={styles.more} disabled={data.loading || data.clearing !== null} onClick={data.more}>{wakeupText(locale, data.loading ? "loading" : "loadMore")}</button>}
       </div>
     </section>, panelHost)}
   </>;
 }
 
-/** Mount once in the selected session's toolbar; refreshKey reuses the host's refresh opportunities. */
+/** Global task state stays mounted across selected-session changes. */
 export function WakeupPanelTrigger(props: WakeupPanelProps) {
-  return <WakeupPanel key={props.sessionId} {...props} />;
+  return <WakeupPanel {...props} />;
 }

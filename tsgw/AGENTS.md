@@ -25,7 +25,7 @@
 | [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [当前界面与数据边界](debug/DESIGN.md) |
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |
-| [wakeups](wakeups/AGENTS.md) | `index.ts`：只读会话入口／类型；`server.ts`：工具、runtime、observer、只读查询 | [行为与设计](../docs/tsgw-wakeups-design.md)；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
+| [wakeups](wakeups/AGENTS.md) | `index.ts`：全局状态入口／类型；`server.ts`：工具、runtime、observer、查询与终态清理 | [行为与设计](../docs/tsgw-wakeups-design.md)；[调用技能](wakeups/skills/tsgw-session-wakeup/SKILL.md) |
 | [im](im/AGENTS.md) | `index.ts`：设置面板、来源角标与类型；`server.ts`：进程生命周期与管理 API；`message-data.ts`：纯消息来源数据；`message-source.ts`：宿主事件接入 | [微信与 Telegram](im/README.md) |
 
 ## 接入与上游改动清单

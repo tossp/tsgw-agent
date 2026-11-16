@@ -2516,7 +2516,7 @@ export function AppShell() {
               </svg>
             )}
           </button>
-          {showChat && selectedSession && <WakeupPanelTrigger key={selectedSession.id} sessionId={selectedSession.id} refreshKey={refreshKey} compact={isMobile}
+          <WakeupPanelTrigger refreshKey={refreshKey} compact={isMobile}
             open={activeTopPanel === "wakeups"} panelHost={wakeupPanelHost}
             onToggle={() => { setMobileToolbarMoreOpen(false); toggleTopPanel("wakeups"); }}
             onClose={closeWakeupPanel}
@@ -2525,7 +2525,7 @@ export function AppShell() {
               if (!target) return false;
               handleSelectSession(target, false, entryId);
               return true;
-            }} />}
+            }} />
           {isMobile && (
             <div
               ref={mobileToolbarRef}
