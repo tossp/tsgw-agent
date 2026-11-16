@@ -45,6 +45,7 @@
 | `app/api/agent/new/route.ts` 的 POST / `app/api/agent/[id]/route.ts` 的 POST | 经模块入口采集；保留 source、operation、session 与响应内容。已有会话 POST 的 catch 复用上游最终 status（404 或 500）报告，不能把真实 404 记成 500。 |
 | `lib/rpc-manager.ts` 的 AgentSessionWrapper.emit / constructor | tracer 先于首次通知就绪；原始 emission 在其局部 scope 内采集一次，初始 session_start 的 extension_error 转启动通知并提前 return 前须已采集。重播和多浏览器订阅不重复采集，不迁入逐浏览器 SSE 转发。 |
 | `hooks/useAgentSession.ts` 的 handleSend 新会话 catch | 调用公共 reportCatError；保留发送、恢复、状态及其他 hook 逻辑。 |
+| `tsgw/im/telemetry.ts` 的 `reportImError` | 复用公共 `reportCatError`，仅为 IM 服务端捕获建立原生独立 current/isolation scope 并保留 client / initialScope，避免含凭据的管理请求及聊天上下文附带上报；浏览器只提交静态错误和操作标签，沿用 SDK 默认 scope。全局 CAT 采集策略不变。回归在 IM 模块使用真实 SDK 内存 transport，普通 CAT 采集保持原样。 |
 | `tsgw/agent-tracing/policy.test.mjs` | 从 ../cat-monitoring/server 获取配置，验证 Node 初始化与独立 tracing policy。 |
 | `lib/agent-client.test.mjs` / `lib/agent-event-connection.test.mjs` | 宿主测试留原位；CAT 专属测试和 Sentry setup 在本模块，执行真实宿主代码，连接 fake 仅作夹具。 |
 | `.github/workflows/tsgw-npm.yml` | 归档/上传命令使用本模块同名脚本；保持既有触发、分支守卫、job 依赖及凭据边界。 |

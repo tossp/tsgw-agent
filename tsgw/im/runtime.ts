@@ -1,4 +1,5 @@
 import { abortable } from "./pi-host-run";
+import { reportImError } from "./telemetry";
 import type { ImSessionHost } from "./host-types";
 import type { ImStore } from "./store";
 import type { ImBot, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImSnapshot } from "./types";
@@ -51,7 +52,13 @@ export class ImRuntime {
             if (!controller.signal.aborted && data.bots.some((item) => item.id === bot.id)) data.checkpoints[bot.id] = checkpoint;
           });
         },
-        onStatus: (status) => { if (!controller.signal.aborted) entry.status = status; },
+        onStatus: (status) => {
+          if (controller.signal.aborted) return;
+          entry.status = status;
+          if (status.state === "error") {
+            reportImError("receive", { channel: bot.channel, botId: bot.id }, status.error);
+          }
+        },
         onMessage: (message) => this.accept(entry, message),
       }),
     };
@@ -143,13 +150,21 @@ export class ImRuntime {
     let text: string;
     try {
       text = await respond();
-    } catch {
+    } catch (error) {
+      if (signal.aborted) return;
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        reportImError("process", { channel: entry.bot.channel, botId: entry.bot.id });
+      }
       text = "任务未完成，请在 Web 会话中查看详情；确认项目、模型与连接状态后再试。";
     }
     if (signal.aborted) return;
     try {
       await entry.driver.send(message, text);
-    } catch {
+    } catch (error) {
+      if (signal.aborted) return;
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        reportImError("send", { channel: entry.bot.channel, botId: entry.bot.id });
+      }
       entry.status = { state: "error", error: "回复发送失败，请检查机器人连接状态。" };
     }
   }

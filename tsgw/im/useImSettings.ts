@@ -2,13 +2,26 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ImAction, ImSnapshot, WeixinLoginResult } from "./types";
+import { reportImError } from "./telemetry";
 
 export async function imRequest<T>(signal: AbortSignal, action?: ImAction, cwd?: string): Promise<T> {
-  const response = await fetch(`/api/tsgw/im${cwd === undefined ? "" : `?cwd=${encodeURIComponent(cwd)}`}`, {
-    signal, cache: "no-store",
-    ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action) } : {}),
-  });
-  const data = await response.json() as T & { error?: string };
+  let response: Response;
+  try {
+    response = await fetch(`/api/tsgw/im${cwd === undefined ? "" : `?cwd=${encodeURIComponent(cwd)}`}`, {
+      signal, cache: "no-store",
+      ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action) } : {}),
+    });
+  } catch (error) {
+    if (!signal.aborted) reportImError("settings-request");
+    throw error;
+  }
+  let data: T & { error?: string };
+  try {
+    data = await response.json() as T & { error?: string };
+  } catch (error) {
+    if (!signal.aborted && (response.status < 400 || response.status >= 500)) reportImError("settings-response");
+    throw error;
+  }
   if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
 }

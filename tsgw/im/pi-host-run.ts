@@ -99,7 +99,7 @@ export class PiAnswerCollector {
     }
     if (event.type === "agent_settled" || event.type === "prompt_done") {
       if (event.aborted === true) {
-        this.failure = new Error("Pi 任务已停止。");
+        this.failure = new DOMException("Pi 任务已停止。", "AbortError");
         return;
       }
       this.settled = true;
@@ -113,7 +113,8 @@ export class PiAnswerCollector {
     if (this.failure) throw this.failure;
     if (!idle || !this.owned || !this.settled || this.awaitingChildren) return undefined;
     const answer = this.answer;
-    if (!answer || answer.stopReason === "error" || answer.stopReason === "aborted"
+    if (answer?.stopReason === "aborted") throw new DOMException("Pi 任务已停止。", "AbortError");
+    if (!answer || answer.stopReason === "error"
       || answer.stopReason === "length" || answer.stopReason === "toolUse" || (Array.isArray(answer.content)
         && answer.content.some((block) => record(block)?.type === "toolCall"))) {
       throw new Error("Pi 未产生完整的最终文本回复，请查看 Pi 会话。");

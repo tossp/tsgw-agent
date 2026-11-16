@@ -9,6 +9,7 @@ import { createTelegramDriver, verifyTelegramToken } from "./telegram";
 import { createWeixinDriver } from "./weixin";
 import { createWeixinLogin } from "./weixin-login";
 import { createPiSessionHost } from "./pi-host";
+import { reportImError } from "./telemetry";
 
 const SERVICE_KEY = Symbol.for("pi-web.im.service");
 type ServiceGlobal = typeof globalThis & { [SERVICE_KEY]?: Promise<ImService> };
@@ -35,6 +36,7 @@ export function getImService(): Promise<ImService> {
   const root = globalThis as ServiceGlobal;
   if (!root[SERVICE_KEY]) {
     const pending = createService().catch((error) => {
+      reportImError("initialize");
       if (root[SERVICE_KEY] === pending) delete root[SERVICE_KEY];
       throw error;
     });
@@ -44,13 +46,15 @@ export function getImService(): Promise<ImService> {
 }
 
 export async function handleImGet(request: Request): Promise<Response> {
+  let service: ImService | undefined;
   try {
-    const service = await getImService();
+    service = await getImService();
     const cwd = new URL(request.url).searchParams.get("cwd");
     return Response.json(cwd
       ? { sessions: await service.runtime.host.list(await projectDirectory(cwd)) }
       : await service.runtime.snapshot(), { headers: { "Cache-Control": "no-store" } });
   } catch {
+    if (service) reportImError("settings-read");
     return Response.json({ error: "无法读取 IM 配置或项目会话，请检查配置文件与目录权限。" }, { status: 500 });
   }
 }
@@ -72,6 +76,8 @@ export async function handleImPost(request: Request): Promise<Response> {
     const service = await getImService();
     return Response.json(await service.action(action), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    // Filesystem failures are internal, even though the existing management API returns 400.
+    if (error instanceof Error && "syscall" in error) reportImError("settings-action");
     // Platform drivers return sanitized messages; never serialize request bodies or credentials.
     return Response.json({ error: error instanceof Error ? error.message : "IM 操作失败，请检查配置或网络。" }, { status: 400 });
   }

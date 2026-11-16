@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ImAction, ImBot, ImSnapshot, WeixinCredentials, WeixinLoginResult } from "./types";
 import type { ImRuntime } from "./runtime";
+import { reportImError } from "./telemetry";
 
 export interface ImLoginConnection {
   qrUrl: string;
@@ -141,16 +142,21 @@ export class ImService {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, this.lifetime.signal]);
     signal.throwIfAborted();
-    const connection = await this.dependencies.createWeixinLogin(signal);
-    signal.throwIfAborted();
-    const id = randomUUID();
-    const view: WeixinLoginResult = {
-      id, state: "waiting", qrUrl: connection.qrUrl,
-      qrImage: await this.dependencies.qrImage(connection.qrUrl),
-    };
-    signal.throwIfAborted();
-    this.logins.set(id, { id, name: action.name || "微信", cwd, expiresAt: Date.now() + 5 * 60_000, connection, controller, view });
-    return view;
+    try {
+      const connection = await this.dependencies.createWeixinLogin(signal);
+      signal.throwIfAborted();
+      const id = randomUUID();
+      const view: WeixinLoginResult = {
+        id, state: "waiting", qrUrl: connection.qrUrl,
+        qrImage: await this.dependencies.qrImage(connection.qrUrl),
+      };
+      signal.throwIfAborted();
+      this.logins.set(id, { id, name: action.name || "微信", cwd, expiresAt: Date.now() + 5 * 60_000, connection, controller, view });
+      return view;
+    } catch (error) {
+      if (!signal.aborted) reportImError("login-start", { channel: "weixin" });
+      throw error;
+    }
   }
 
   private async poll(id: string): Promise<WeixinLoginResult> {
@@ -202,6 +208,9 @@ export class ImService {
       });
       attempt.view = { id: attempt.id, state: "connected", botId: id };
     } catch {
+      if (!attempt.controller.signal.aborted && !this.lifetime.signal.aborted) {
+        reportImError("login-complete", { channel: "weixin" });
+      }
       attempt.view = { id: attempt.id, state: "error", error: "微信绑定失败，请重新扫码或检查网络。" };
     }
     return attempt.view;

@@ -17,6 +17,8 @@
 - Telegram 必须先过滤允许用户，允许聊天名单可进一步收紧；群聊只响应明确指向本机器人的消息。微信只接受扫码返回的 `ownerUserId`。
 - 凭据、轮询游标、去重记录和关联写入 agent 目录的 `integrations/im/state.json`，权限 `0600`；单进程持有，不支持多实例共用同一文件。API 返回状态与关联，不返回凭据或 checkpoint。损坏文件不得被默认空配置覆盖。
 - 禁止将 Token、微信 context token、二维码授权票据写入日志、错误或 CAT。`credential-fetch.ts` 仅对本模块凭据请求调用 SDK 原生 `suppressTracing`；当前 Sentry 11.9 的 NodeFetch 同时跳过此请求的 breadcrumbs，不修改全局采集策略。升级时必须用真实 SDK envelope 回归确认，不能仅检查自定义错误文本。
+- 遥测猫通过 `telemetry.ts` 复用 CAT 公共 capture：上报连接/接收入站、任务处理、回复发送、初始化、扫码失败以及设置页网络/JSON 故障；正常停止/取消（含从 Web 停止共享任务的 AbortError）、微信长轮询超时、二维码过期及管理校验 4xx 不报。初始化失败由 service 创建边界上报，GET 不重复捕获同一失败；其他 GET 读取故障和 POST 文件系统故障单独上报（保留原有 HTTP 响应）。任务/发送只报告失败阶段，不附加外部原始异常或聊天正文；接收错误使用驱动已生成的安全状态提示。
+- IM 后台任务可能继承包含 Token 的管理请求上下文。每条服务端 IM 错误使用 Sentry 原生独立 current/isolation scope，复用现有 client 和 `initialScope`（保留 instance / release），标注 `source=im`、`operation`、可选 `channel` / `botId`；不继承请求、聊天上下文和 breadcrumbs，不修改全局 CAT 默认采集、过滤或限流。浏览器沿用 CAT 的标准 scope，仅传固定错误及阶段标签，不附加 action 或响应正文；包括纯文本 401/429 在内的 4xx 不因 JSON 解析失败而上报。连接重试的每次实际失败各自上报，交给遥测猫按异常分组；不另建故障状态或限流器。
 - 长轮询、发送及等待都支持取消；游标只在 runtime 接收入站后推进。发送结果未知时不自动重试；重启恢复连接与关联，不自动重放已经接收的任务。
 
 ## 主体文件
@@ -29,6 +31,7 @@
 - `telegram.ts`：身份核验、授权与群聊路由、长轮询与分段发送。
 - `weixin-login.ts`、`weixin-transport.ts`、`weixin.ts`：扫码状态机、平台传输、主人过滤及 context/cursor 持久化。`weixin-transport.ts` 保留 uint64 JSON 整数精度。
 - `ImSettings.tsx`、`ImBotDetail.tsx`、`useImSettings.ts`、`im-ui.ts`、`im-settings.module.css`：设置、扫码取消和会话关联。沿用 SettingsUi 与 DirectoryPicker，使用原有手机导航上下文。
+- `telemetry.ts`、`telemetry.test.mjs`：IM 专属错误上报 scope 和真实 SDK 内存 envelope 回归，含默认请求采集阴性对照及正常取消/超时不报。
 - `*.test.mjs`、`e2e.mjs`、`source-e2e.mjs`：协议、路由、并发与取消、真实 wrapper/fork、真实 Sentry 内存 transport 回归，以及设置和消息角标界面流程。
 
 ## 模块外接入清单
