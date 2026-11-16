@@ -119,6 +119,22 @@ export class WakeupRuntime {
     return diagnostics ? { ...wakeup, diagnostics } : wakeup;
   }
 
+  async close(wakeupId: string, reason: string) {
+    const closeReason = reason.trim();
+    if (!closeReason) throw new Error("Closing a wakeup requires a non-empty reason");
+    await this.ready();
+    this.assertWritable();
+    const task = this.unsaved.get(wakeupId) ?? this.tasks.get(wakeupId);
+    if (!task) throw new WakeupOperationError("Wakeup not found", { code: "wakeup_not_found" });
+    if (task.status !== "unknown" || task.unsaved || this.submissions.has(wakeupId)) {
+      throw new WakeupOperationError("Only saved unknown wakeups with no active submission can be closed", { code: "wakeup_not_closable" });
+    }
+    const closedAt = new Date().toISOString();
+    this.save({ ...task, status: "closed", closedAt, closeReason, updatedAt: closedAt });
+    const diagnostics = await this.audit(task, "closed", { closeReason });
+    return { wakeupId, status: "closed" as const, closedAt, closeReason, ...(diagnostics ? { diagnostics } : {}) };
+  }
+
   /** Remove only the manifest record; never touch the target session or its audit. */
   clear(wakeupId: string): { wakeupId: string } {
     this.assertWritable();
@@ -154,7 +170,7 @@ export class WakeupRuntime {
 
   observe(value: WakeupObservation): void {
     const task = this.unsaved.get(value.wakeupId) ?? this.tasks.get(value.wakeupId);
-    if (!task || task.status === "cancelled" || task.status === "delivery_failed") return;
+    if (!task || task.status === "cancelled" || task.status === "delivery_failed" || task.status === "closed") return;
     if (value.type === "settled" && task.runId && task.runId !== value.runId) return;
     if (value.type === "uncertain" && task.settledAt) return;
     const next: WakeupTask = { ...task, updatedAt: new Date().toISOString() };
@@ -213,7 +229,7 @@ export class WakeupRuntime {
         if (task.status === "pending") {
           if (Date.parse(task.scheduledAt) <= Date.now()) this.tasks.set(task.wakeupId, { ...task, recoveredAt: new Date().toISOString() });
           this.scheduler.add(task);
-        } else if (!task.settledAt && !["cancelled", "delivery_failed"].includes(task.status)) {
+        } else if (!task.settledAt && !["cancelled", "delivery_failed", "closed"].includes(task.status)) {
           const receipt = await this.sessions.receipt?.(task).catch(() => null);
           this.assertWritable();
           this.save({ ...task, ...(receipt ?? {}), status: "unknown", updatedAt: new Date().toISOString(), error: "Server restarted after dispatch began; not automatically resubmitted" });
@@ -267,16 +283,16 @@ export class WakeupRuntime {
       if (current.receivedAt) return;
       const next: WakeupTask = { ...current, status: "delivery_failed", updatedAt: new Date().toISOString(), error: errorText(error) };
       if (this.health.state === "ready" && this.isOwner()) {
-        try { this.save(next); await this.audit(wakeup, "failed", next.error); }
+        try { this.save(next); await this.audit(wakeup, "failed", { error: next.error }); }
         catch { this.unsaved.set(next.wakeupId, { ...next, status: "unknown", unsaved: true }); }
       } else this.unsaved.set(next.wakeupId, { ...next, status: "unknown", unsaved: true });
     } finally { this.submissions.delete(wakeup.wakeupId); }
   }
 
-  private async audit(wakeup: Wakeup, event: WakeupEvent, error?: string) {
+  private async audit(wakeup: Wakeup, event: WakeupEvent, details?: Pick<WakeupRecord, "error" | "closeReason">) {
     try {
       if (this.store && !this.isOwner()) return [{ code: "wakeup_audit_not_saved", message: "Wakeup ownership was lost; audit not written" }];
-      await this.sessions.append({ ...wakeup, version: 1, event, recordedAt: new Date().toISOString(), ...(error ? { error } : {}) }, () => {
+      await this.sessions.append({ ...wakeup, version: 1, event, recordedAt: new Date().toISOString(), ...details }, () => {
         if (this.store && !this.isOwner()) throw new Error("Wakeup ownership lost before audit append");
       });
       return undefined;

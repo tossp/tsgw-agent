@@ -5,13 +5,14 @@ export const WAKEUP_META_TYPE = "pi-web:wakeup";
 export const WAKEUP_NOTIFICATION_TYPE = "pi-web:wakeup-notification";
 
 /** `submitted` means accepted/queued by the SDK, not persisted or executed. */
-export type WakeupEvent = "created" | "cancelled" | "submitted" | "failed" | "received" | "run_settled" | "run_aborted" | "unknown";
+export type WakeupEvent = "created" | "cancelled" | "submitted" | "failed" | "received" | "run_settled" | "run_aborted" | "unknown" | "closed";
 
 export type WakeupRecord = Wakeup & {
   version: 1;
   event: WakeupEvent;
   recordedAt: string;
   error?: string;
+  closeReason?: string;
 };
 
 export type WakeupHistoryItem = Wakeup & {
@@ -28,14 +29,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function isRecord(value: unknown): value is WakeupRecord {
   if (!isObject(value) || value.version !== 1) return false;
-  if (!["created", "cancelled", "submitted", "failed", "received", "run_settled", "run_aborted", "unknown"].includes(value.event as string)) return false;
+  if (!["created", "cancelled", "submitted", "failed", "received", "run_settled", "run_aborted", "unknown", "closed"].includes(value.event as string)) return false;
   for (const field of ["wakeupId", "sourceSessionId", "targetSessionId"] as const) {
     if (typeof value[field] !== "string" || !value[field].trim()) return false;
   }
   for (const field of ["createdAt", "scheduledAt", "recordedAt"] as const) {
     if (typeof value[field] !== "string" || !Number.isFinite(Date.parse(value[field]))) return false;
   }
-  return typeof value.message === "string" && (value.error === undefined || typeof value.error === "string");
+  return typeof value.message === "string" && (value.error === undefined || typeof value.error === "string")
+    && (value.closeReason === undefined || typeof value.closeReason === "string");
 }
 
 /**
@@ -65,7 +67,7 @@ export function wakeupHistory(
   return [...groups.values()].map((events) => {
     const last = events.reduce((current, event) => {
       // Accepted can be appended after receipt or settlement; keep stronger evidence.
-      const strength = { created: 0, submitted: 1, unknown: 3, received: 3, failed: 4, cancelled: 4, run_settled: 5, run_aborted: 5 };
+      const strength = { created: 0, submitted: 1, unknown: 3, received: 3, failed: 4, cancelled: 4, run_settled: 5, run_aborted: 5, closed: 6 };
       return strength[event.event] >= strength[current.event] ? event : current;
     });
     const isActive = last.event === "created" && last.targetSessionId === sessionId && armed.has(last.wakeupId);

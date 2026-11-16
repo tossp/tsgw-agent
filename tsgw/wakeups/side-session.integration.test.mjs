@@ -127,7 +127,7 @@ function assertRestricted(wrapper) {
 }
 
 async function rejectWakeupCalls(f, wrapper) {
-  const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { session_id: wrapper.sessionId }, {}];
+  const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { wakeup_id: "missing", reason: "verified" }, { wakeup_id: "missing" }];
   f.faux.setResponses([
     (context) => {
       const declared = getCurrentTools(context.messages).map((tool) => tool.name);

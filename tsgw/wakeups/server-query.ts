@@ -31,6 +31,10 @@ export function wakeupQueryFromParams(params: URLSearchParams): WakeupQuery {
   for (const key of ["wakeup_id", "session_id", "source_session_id", "target_session_id", "cwd", "status", "cursor"] as const) {
     if (params.has(key)) input[key] = params.get(key);
   }
+  if (params.has("armed")) {
+    const value = params.get("armed");
+    input.armed = value === "true" ? true : value === "false" ? false : value;
+  }
   if (params.has("limit")) input.limit = Number(params.get("limit"));
   return validateWakeupQuery(input as WakeupQuery);
 }

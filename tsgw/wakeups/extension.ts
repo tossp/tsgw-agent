@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
 import { WakeupOperationError, type WakeupRuntime } from "./runtime";
 
-export const WAKEUP_TOOL_NAMES = ["schedule_wakeup", "list_wakeups", "cancel_wakeup", "list_session_wakeups", "query_wakeups"] as const;
+export const WAKEUP_TOOL_NAMES = ["schedule_wakeup", "query_wakeups", "cancel_wakeup", "close_wakeup", "clear_wakeup"] as const;
 
 const wakeupSchema = Type.Object({
   wakeupId: Type.String(), sourceSessionId: Type.String(), targetSessionId: Type.String(),
@@ -20,8 +20,9 @@ const querySchema = Type.Object({
   source_session_id: Type.Optional(Type.String({ minLength: 1 })), target_session_id: Type.Optional(Type.String({ minLength: 1 })),
   cwd: Type.Optional(Type.String({ minLength: 1 })), status: Type.Optional(Type.Union([
     Type.Literal("pending"), Type.Literal("dispatching"), Type.Literal("submitted"), Type.Literal("received"),
-    Type.Literal("run_settled"), Type.Literal("run_aborted"), Type.Literal("delivery_failed"), Type.Literal("cancelled"), Type.Literal("unknown"),
+    Type.Literal("run_settled"), Type.Literal("run_aborted"), Type.Literal("delivery_failed"), Type.Literal("cancelled"), Type.Literal("unknown"), Type.Literal("closed"),
   ])),
+  armed: Type.Optional(Type.Boolean({ description: "Filter by timers actually armed in this server process; false includes tasks not scheduled here." })),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), cursor: Type.Optional(Type.String({ minLength: 1 })),
 });
 const queryResultSchema = Type.Object({
@@ -32,18 +33,12 @@ const queryResultSchema = Type.Object({
     responseEntryIds: Type.Optional(Type.Array(Type.String())),
     dispatchingAt: Type.Optional(Type.String()), submittedAt: Type.Optional(Type.String()), receivedAt: Type.Optional(Type.String()),
     settledAt: Type.Optional(Type.String()), cancelledAt: Type.Optional(Type.String()), recoveredAt: Type.Optional(Type.String()),
+    closedAt: Type.Optional(Type.String()), closeReason: Type.Optional(Type.String()),
     aborted: Type.Optional(Type.Boolean()), error: Type.Optional(Type.String()), unsaved: Type.Optional(Type.Boolean()),
   })])),
   nextCursor: Type.Union([Type.String(), Type.Null()]),
   health: Type.Object({ state: Type.String(), isOwner: Type.Boolean(), reason: Type.Optional(Type.String()) }),
 });
-const eventSchema = Type.Intersect([wakeupSchema, Type.Object({
-  version: Type.Literal(1), event: Type.Union(["created", "cancelled", "submitted", "failed", "received", "run_settled", "run_aborted", "unknown"].map((value) => Type.Literal(value))),
-  recordedAt: Type.String(), error: Type.Optional(Type.String()),
-})]);
-const historySchema = Type.Intersect([wakeupSchema, Type.Object({
-  status: Type.String(), active: Type.Boolean(), events: Type.Array(eventSchema),
-})]);
 
 function result(value: unknown) {
   const text = JSON.stringify(value);
@@ -85,13 +80,6 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
         },
       }));
       pi.registerTool(defineTool({
-        name: "list_wakeups", label: "List pending wakeups", exposure: "codemode",
-        description: "Compatibility query: list only timers actually armed in this server process, as an array including message. An empty result does not prove no persistent tasks: the scheduler may be starting, paused or owned elsewhere. Prefer query_wakeups for durable status and health. Does not start a model.",
-        annotations: { readOnlyHint: true, openWorldHint: false },
-        parameters: Type.Object({}), outputSchema: Type.Array(wakeupSchema),
-        async execute() { return result(runtime.list()); },
-      }));
-      pi.registerTool(defineTool({
         name: "cancel_wakeup", label: "Cancel wakeup", exposure: "codemode",
         description: "Cancel a pending wakeup by its UUIDv7 ID. Does not stop a session or retract an already submitted message. Refuses an ID no longer pending in this server process.",
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -109,7 +97,7 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
       }));
       pi.registerTool(defineTool({
         name: "query_wakeups", label: "Query wakeup status", exposure: "codemode",
-        description: "Read global persistent wakeup status, observation evidence and scheduler health. Filter explicitly by session_id, source, target, cwd, status or pagination; filter by wakeup_id for full message and evidence. received means notification observed; run_settled is not task success. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
+        description: "Read the authoritative global wakeup status, observation evidence and scheduler health. Filter explicitly by session_id, source, target, cwd, status, armed or pagination; armed=true lists only timers actually armed in this process. Filter by wakeup_id for full message and evidence. received means notification observed; run_settled is not task success. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
         annotations: { readOnlyHint: true, openWorldHint: false },
         parameters: querySchema, outputSchema: queryResultSchema,
         async execute(_id, input, signal) {
@@ -118,14 +106,41 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
         },
       }));
       pi.registerTool(defineTool({
-        name: "list_session_wakeups", label: "Read session wakeup history", exposure: "codemode",
-        description: "Read all wakeup metadata in a session's JSONL, across all branches, without starting the session or changing its file. Reports history separately from current in-memory activity. inactive means no pending timer here, not proof of cancellation or delivery. submitted means accepted/queued, not model task completion. Fork-inherited records do not schedule wakeups for the fork.",
-        annotations: { readOnlyHint: true, openWorldHint: false },
-        parameters: Type.Object({ session_id: Type.String({ minLength: 1, description: "Session ID whose file to inspect." }) }),
-        outputSchema: Type.Array(historySchema),
+        name: "close_wakeup", label: "Close uncertain wakeup", exposure: "codemode",
+        description: "Close a saved unknown wakeup after investigating its target session and outcome. Requires a reason describing the findings and disposition. Preserves delivery evidence; does not certify success, stop a running session, retract a message or retry delivery. Use schedule_wakeup separately for any authorized follow-up.",
+        promptSnippet: "Close an investigated uncertain wakeup with a reason",
+        promptGuidelines: ["Query the wakeup and investigate the target session before closing it. Record what was verified and how remaining work will be handled; closing is not proof of task success."],
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+        executionMode: "sequential",
+        parameters: Type.Object({ wakeup_id: Type.String({ minLength: 1 }), reason: Type.String({ minLength: 1, description: "Investigation findings and disposition, including any separately arranged follow-up." }) }),
+        outputSchema: Type.Union([Type.Object({
+          wakeupId: Type.String(), status: Type.Literal("closed"), closedAt: Type.String(), closeReason: Type.String(),
+          diagnostics: Type.Optional(Type.Array(Type.Object({ code: Type.String(), message: Type.String() }))),
+        }), operationErrorSchema]),
         async execute(_id, input, signal) {
           signal?.throwIfAborted();
-          return result(await runtime.history(input.session_id));
+          try { return result(await runtime.close(input.wakeup_id, input.reason)); }
+          catch (error) {
+            if (error instanceof WakeupOperationError) return { ...result(error.details), isError: true };
+            throw error;
+          }
+        },
+      }));
+      pi.registerTool(defineTool({
+        name: "clear_wakeup", label: "Clear ended wakeup record", exposure: "codemode",
+        description: "Remove one saved ended or explicitly closed wakeup from the persistent status list. Allowed statuses: run_settled, run_aborted, delivery_failed, cancelled, closed. Refuses pending, delivering, received, unknown or unsaved records. Preserves sessions, messages, responses and audit history; does not stop or retry work.",
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+        executionMode: "sequential",
+        parameters: Type.Object({ wakeup_id: Type.String({ minLength: 1 }) }),
+        outputSchema: Type.Union([Type.Object({ wakeupId: Type.String() }), operationErrorSchema]),
+        async execute(_id, input, signal) {
+          signal?.throwIfAborted();
+          await runtime.ready();
+          try { return result(runtime.clear(input.wakeup_id)); }
+          catch (error) {
+            if (error instanceof WakeupOperationError) return { ...result(error.details), isError: true };
+            throw error;
+          }
         },
       }));
     },

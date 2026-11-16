@@ -125,8 +125,9 @@ async function invoke(target, name, args) {
   return JSON.parse(textOf(result).split("Output:\n")[1]);
 }
 
-test("all five wakeup tools default to codemode, refuse direct calls and retain structured nested results", { timeout: 20_000 }, async () => {
+test("all wakeup tools default to codemode, refuse direct calls and retain structured nested results", { timeout: 20_000 }, async () => {
   const outcomes = [];
+  let runtime;
   const script = (pi) => pi.registerTool({
     name: "script", label: "script", description: "Exercise nested tool dispatch", parameters: Type.Object({}),
     async execute(_id, _args, _signal, _update, ctx) {
@@ -136,20 +137,34 @@ test("all five wakeup tools default to codemode, refuse direct calls and retain 
         return outcome.result.structuredContent;
       };
       const timer = await run("schedule_wakeup", { after_seconds: 60, message: "nested reminder" });
-      const pending = await run("list_wakeups", {});
+      const pending = await run("query_wakeups", { session_id: timer.targetSessionId, armed: true });
       const cancelled = await run("cancel_wakeup", { wakeup_id: timer.wakeupId });
-      const history = await run("list_session_wakeups", { session_id: timer.targetSessionId });
-      const queried = await run("query_wakeups", { session_id: timer.targetSessionId, wakeup_id: timer.wakeupId });
-      assert.deepEqual(pending, [timer]);
+      const history = await runtime.history(timer.targetSessionId);
+      const queried = await run("query_wakeups", { session_id: timer.targetSessionId, wakeup_id: timer.wakeupId, armed: false });
+      assert.deepEqual(pending.items.map(item => item.wakeupId), [timer.wakeupId]);
+      assert.equal(pending.items[0].armed, true);
       assert.deepEqual(cancelled, timer);
       assert.equal(history[0].status, "cancelled");
       assert.deepEqual(history[0].events.map((event) => event.event), ["created", "cancelled"]);
       assert.equal(queried.items[0].wakeupId, timer.wakeupId);
       assert.equal(queried.items[0].status, "cancelled");
+      const rejected = await ctx.executeTool("close_wakeup", { wakeup_id: timer.wakeupId, reason: "already cancelled" });
+      assert.equal(rejected.isError, true);
+      assert.equal(rejected.result.structuredContent.code, "wakeup_not_closable");
+      const uncertain = await runtime.schedule(ctx.sessionManager.getSessionId(), { after_seconds: 0.001, message: "investigate before closing" });
+      await eventually(async () => (await runtime.query({ wakeup_id: uncertain.wakeupId })).items[0]?.status === "submitted");
+      runtime.observe({ type: "uncertain", wakeupId: uncertain.wakeupId, at: new Date().toISOString(), reason: "fixture lost observation" });
+      const closed = await run("close_wakeup", { wakeup_id: uncertain.wakeupId, reason: "Verified target; no further work needed" });
+      assert.equal(closed.status, "closed");
+      assert.equal(closed.closeReason, "Verified target; no further work needed");
+      assert.equal((await run("query_wakeups", { wakeup_id: uncertain.wakeupId })).items[0].status, "closed");
+      assert.deepEqual(await run("clear_wakeup", { wakeup_id: uncertain.wakeupId }), { wakeupId: uncertain.wakeupId });
+      assert.deepEqual(await run("clear_wakeup", { wakeup_id: timer.wakeupId }), { wakeupId: timer.wakeupId });
       return { content: [{ type: "text", text: "script done" }], details: undefined };
     },
   });
   await withFixture(async (f) => {
+    runtime = f.runtime;
     const source = await f.create({ extensions: [script] });
     const session = source.wrapper.inner;
     for (const name of WAKEUP_TOOL_NAMES) {
@@ -157,7 +172,13 @@ test("all five wakeup tools default to codemode, refuse direct calls and retain 
       assert.ok(session.getCallableToolNames().includes(name), name);
       assert.equal(session.getAllTools().find((tool) => tool.name === name).exposure, "codemode", name);
     }
-    const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { session_id: source.id }, {}];
+    assert.deepEqual(WAKEUP_TOOL_NAMES, ["schedule_wakeup", "query_wakeups", "cancel_wakeup", "close_wakeup", "clear_wakeup"]);
+    const removed = ["list_wakeups", "list_session_wakeups"];
+    for (const name of removed) {
+      assert.equal(session.getAllTools().some(tool => tool.name === name), false, name);
+      assert.equal(session.getCallableToolNames().includes(name), false, name);
+    }
+    const args = [{ after_seconds: 60, message: "must not schedule" }, {}, { wakeup_id: "missing" }, { wakeup_id: "missing", reason: "verified" }, { wakeup_id: "missing" }];
     source.faux.setResponses([
       fauxAssistantMessage(WAKEUP_TOOL_NAMES.map((name, i) => fauxToolCall(name, args[i])), { stopReason: "toolUse" }), answer(),
     ]);
@@ -173,8 +194,8 @@ test("all five wakeup tools default to codemode, refuse direct calls and retain 
     assert.equal(timer.targetSessionId, source.id);
     assert.ok(Date.now() < Date.parse(timer.scheduledAt), "the model finished before the timer was due");
     assert.equal(records(source.manager)[0].data.event, "created");
-    assert.deepEqual(await invoke(source, "list_wakeups", {}), [timer]);
-    assert.equal((await invoke(source, "list_session_wakeups", { session_id: source.id }))[0].active, true);
+    assert.deepEqual((await invoke(source, "query_wakeups", { armed: true })).items.map(item => item.wakeupId), [timer.wakeupId]);
+    assert.equal((await f.runtime.history(source.id))[0].active, true);
     assert.equal((await invoke(source, "query_wakeups", { wakeup_id: timer.wakeupId })).items[0].wakeupId, timer.wakeupId);
     assert.deepEqual(await invoke(source, "cancel_wakeup", { wakeup_id: timer.wakeupId }), timer);
     let declared;
@@ -187,15 +208,32 @@ test("all five wakeup tools default to codemode, refuse direct calls and retain 
     for (const name of WAKEUP_TOOL_NAMES) assert.equal(declaredNames.includes(name), false, name);
     const codemode = declared.find((tool) => tool.name === "codemode");
     for (const name of WAKEUP_TOOL_NAMES) assert.ok(codemode.description.includes(name), name);
+    for (const name of removed) assert.equal(codemode.description.includes(name), false, name);
     assert.ok(codemode.description.includes("do not sleep or poll"), "schedule guidance must reach codemode");
-    assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "list_wakeups", "cancel_wakeup", "list_session_wakeups", "query_wakeups"]);
+    assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "query_wakeups", "cancel_wakeup", "query_wakeups", "close_wakeup", "query_wakeups", "clear_wakeup", "clear_wakeup"]);
     for (const item of outcomes) {
       assert.equal(item.isError, false, item.name);
       assert.deepEqual(item.result.structuredContent, item.result.details);
       assert.deepEqual(JSON.parse(textOf(item.result)), item.result.structuredContent);
     }
+    source.faux.setResponses([call("codemode", { code: `
+      const rows = [];
+      for (const name of ${JSON.stringify(removed)}) {
+        let rejected = false;
+        try { await tools[name]({ session_id: ${JSON.stringify(source.id)} }); } catch { rejected = true; }
+        rows.push({ name, listed: ALL_TOOLS.some(tool => tool.name === name),
+          found: (await searchTools(name)).some(tool => tool.name === name),
+          described: (await describeTool(name)) !== undefined, rejected });
+      }
+      return rows;
+    ` }), answer()]);
+    await session.prompt("Verify removed tools cannot be discovered or called");
+    const discovery = session.agent.state.messages.findLast(message => message.role === "toolResult" && message.toolName === "codemode");
+    assert.equal(discovery.isError, false, textOf(discovery));
+    assert.deepEqual(JSON.parse(textOf(discovery).split("Output:\n")[1]), removed.map(name => ({ name, listed: false, found: false, described: false, rejected: true })));
     assert.deepEqual(f.runtime.list(), []);
-    assert.equal(notifications(source.manager).length, 0);
+    // The delayed follow-up was accepted while the script ran, then consumed after it returned.
+    assert.equal(notifications(source.manager).length, 1);
   });
 });
 
@@ -331,8 +369,8 @@ test("cancel and runtime rebuild never replay timers; history reads preserve byt
     assert.deepEqual(f.runtime.list(), []);
     await f.runtime.schedule(source.id, { session_id: target.id, after_seconds: 0.15, message: "lost on restart" });
     const before = await readFile(target.file), mtime = (await stat(target.file)).mtimeMs;
-    const fromTool = await invoke(source, "list_session_wakeups", { session_id: target.id });
-    assert.deepEqual(fromTool.map((item) => [item.status, item.active]), [["cancelled", false], ["created", true]]);
+    const fromHistory = await f.runtime.history(target.id);
+    assert.deepEqual(fromHistory.map((item) => [item.status, item.active]), [["cancelled", false], ["created", true]]);
     assert.deepEqual(await readFile(target.file), before);
     assert.equal((await stat(target.file)).mtimeMs, mtime);
     assert.deepEqual(f.reopened, []);

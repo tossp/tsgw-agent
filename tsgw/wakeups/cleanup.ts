@@ -1,7 +1,7 @@
 import type { WakeupTask } from "./types";
 
-/** Only durable, conclusive terminal records can be removed from the manifest. */
+/** Only durable terminal or explicitly closed records can be removed. */
 export function canClearWakeup(task: Pick<WakeupTask, "status" | "unsaved">): boolean {
   return !task.unsaved && (task.status === "run_settled" || task.status === "run_aborted"
-    || task.status === "delivery_failed" || task.status === "cancelled");
+    || task.status === "delivery_failed" || task.status === "cancelled" || task.status === "closed");
 }

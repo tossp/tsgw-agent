@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { statSync } from "node:fs";
+import { isOrdinarySession as ordinary, listSessionCatalog, projectSessions, sessionDirectoryKey as directoryKey } from "../session-management";
 import type { AgentSessionWrapper } from "../../lib/rpc-manager";
 import type { SessionInfo } from "../../lib/types";
 import type { ImSessionHost } from "./host-types";
@@ -23,10 +23,7 @@ export interface PiHostAccess {
 }
 
 const defaultAccess: PiHostAccess = {
-  async list() {
-    const [reader, rpc] = await Promise.all([import("../../lib/session-reader"), import("../../lib/rpc-manager")]);
-    return reader.mergeSessionLists(await reader.listAllSessions(), rpc.getRpcSessionInfos({ includeTransient: true }));
-  },
+  list: listSessionCatalog,
   async get(id) { return (await import("../../lib/rpc-manager")).getRpcSession(id); },
   async start(id, file, cwd) {
     return (await import("../../lib/rpc-manager")).startRpcSession(id, file, cwd,
@@ -40,16 +37,6 @@ const defaultAccess: PiHostAccess = {
     return registerImMessageSource((wrapper as AgentSessionWrapper).inner.sessionManager, source);
   },
 };
-
-function directoryKey(cwd: string): string {
-  let path = resolve(cwd);
-  try { path = realpathSync(path); } catch { /* Deleted directories still have readable sessions. */ }
-  return process.platform === "win32" ? path.toLowerCase() : path;
-}
-
-function ordinary(session: SessionInfo): boolean {
-  return !session.detailsPending && session.relation?.kind !== "subagent" && session.relation?.kind !== "side";
-}
 
 // Only IM submissions are serialized here. Wrapper/SDK retain ownership of the actual session.
 const QUEUES_KEY = Symbol.for("pi-web.im.host-session-queues");
@@ -79,8 +66,7 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
 
   return {
     async list(cwd) {
-      const key = directoryKey(cwd);
-      return (await access.list()).filter((session) => ordinary(session) && directoryKey(session.cwd) === key)
+      return projectSessions(await access.list(), cwd)
         .map((session) => ({ id: session.id, title: session.name || session.firstMessage || session.id, cwd: session.cwd }));
     },
     async exists(id, cwd) { return Boolean(await find(id, cwd)); },

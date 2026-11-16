@@ -313,6 +313,87 @@ test("queries remain available while scheduler initialization waits for ownershi
   await starting.ready();
 });
 
+test("closing investigated uncertainty preserves evidence, audit and closure across restart, then permits cleanup", async t => {
+  const f = fixture(t);
+  f.restart();
+  const task = await f.schedule();
+  await f.tick(60_000);
+  const at = new Date().toISOString();
+  f.runtime.observe({ type: "received", wakeupId: task.wakeupId, at, notificationEntryId: "notice", responseEntryIds: ["response"] });
+  f.runtime.observe({ type: "uncertain", wakeupId: task.wakeupId, at, reason: "observation interrupted" });
+  const reason = "Checked target response; remaining work handled separately";
+  const closed = await f.runtime.close(task.wakeupId, `  ${reason}  `);
+  assert.deepEqual(closed, { wakeupId: task.wakeupId, status: "closed", closedAt: at, closeReason: reason });
+  for (const type of ["received", "settled", "uncertain"]) f.runtime.observe({ type, wakeupId: task.wakeupId, at });
+  f.runtime.stopSession(task.targetSessionId);
+  let item = (await f.runtime.query({ wakeup_id: task.wakeupId, status: "closed" })).items[0];
+  assert.equal(item.status, "closed");
+  assert.equal(item.error, "observation interrupted");
+  assert.equal(item.receivedAt, at);
+  assert.equal(item.notificationEntryId, "notice");
+  assert.deepEqual(item.responseEntryIds, ["response"]);
+  assert.equal(item.settledAt, undefined, "closure must not invent run completion");
+  assert.equal(f.audit.at(-1).event, "closed");
+  assert.equal(f.audit.at(-1).closeReason, reason);
+  await f.restart().ready();
+  await f.tick(60_000);
+  item = (await f.runtime.query({ wakeup_id: task.wakeupId })).items[0];
+  assert.equal(item.status, "closed");
+  assert.equal(item.closeReason, reason);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.runtime.list(), []);
+  const auditBefore = [...f.audit];
+  assert.deepEqual(f.runtime.clear(task.wakeupId), { wakeupId: task.wakeupId });
+  assert.deepEqual(f.audit, auditBefore);
+  await f.restart().ready();
+  assert.deepEqual((await f.runtime.query()).items, []);
+});
+
+test("close rejects missing IDs, blank reasons and non-unknown states without modifying disk", async t => {
+  const f = fixture(t);
+  f.restart();
+  const task = await f.schedule();
+  const before = readFileSync(f.stateFile, "utf8");
+  await assert.rejects(f.runtime.close("missing", "checked"), error => error.details.code === "wakeup_not_found");
+  await assert.rejects(f.runtime.close(task.wakeupId, "  "), /non-empty reason/);
+  await assert.rejects(f.runtime.close(task.wakeupId, "checked"), error => error.details.code === "wakeup_not_closable");
+  assert.equal(readFileSync(f.stateFile, "utf8"), before);
+  await f.tick(60_000);
+  await assert.rejects(f.runtime.close(task.wakeupId, "checked"), error => error.details.code === "wakeup_not_closable");
+  f.runtime.observe({ type: "uncertain", wakeupId: task.wakeupId, at: new Date().toISOString() });
+  await f.runtime.close(task.wakeupId, "checked");
+  await assert.rejects(f.runtime.close(task.wakeupId, "overwrite"), error => error.details.code === "wakeup_not_closable");
+});
+
+test("failed close persistence retains unknown state and pauses scheduling", async t => {
+  const f = fixture(t);
+  f.restart();
+  const task = await f.schedule();
+  await f.tick(60_000);
+  f.runtime.observe({ type: "uncertain", wakeupId: task.wakeupId, at: new Date().toISOString() });
+  const before = readFileSync(f.stateFile, "utf8");
+  f.failWrites();
+  await assert.rejects(f.runtime.close(task.wakeupId, "checked"), /injected state write failure/);
+  const query = await f.runtime.query({ wakeup_id: task.wakeupId });
+  assert.equal(query.health.state, "storage_error");
+  assert.equal(query.items[0].status, "unknown");
+  assert.equal(query.items[0].closedAt, undefined);
+  assert.equal(readFileSync(f.stateFile, "utf8"), before);
+});
+
+test("close retains its durable result when the audit mirror fails", async t => {
+  const f = fixture(t, { failAudit: true });
+  f.restart();
+  const task = await f.schedule();
+  await f.tick(60_000);
+  f.runtime.observe({ type: "uncertain", wakeupId: task.wakeupId, at: new Date().toISOString() });
+  const result = await f.runtime.close(task.wakeupId, "verified despite unavailable audit");
+  assert.equal(result.status, "closed");
+  assert.equal(result.diagnostics[0].code, "wakeup_audit_not_saved");
+  await f.restart().ready();
+  assert.equal((await f.runtime.query({ wakeup_id: task.wakeupId })).items[0].status, "closed");
+});
+
 test("read-only instance can inspect durable tasks but refuses scheduling and cancellation", async t => {
   const f = fixture(t);
   f.restart();
@@ -329,4 +410,6 @@ test("read-only instance can inspect durable tasks but refuses scheduling and ca
   assert.equal(result.items[0].armed, false);
   await assert.rejects(readOnly.schedule("source", { after_seconds: 1, message: "task" }), /another owner/);
   await assert.rejects(readOnly.cancel(task.wakeupId), /another owner/);
+  await assert.rejects(readOnly.close(task.wakeupId, "checked"), /another owner/);
+  assert.throws(() => readOnly.clear(task.wakeupId), /another owner/);
 });

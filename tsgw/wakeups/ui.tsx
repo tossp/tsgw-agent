@@ -161,9 +161,10 @@ function WakeupDetail({ item: current, locale }: { item: WakeupQueryItem; locale
     <h4>{wakeupText(locale, "message")}</h4>
     <p className={styles.message}>{item.message ?? wakeupText(locale, "missing")}</p>
     <dl className={styles.facts}>
-      {([ ["created", item.createdAt], ["received", item.receivedAt], ["settled", item.settledAt] ] as const).map(([label, at]) => at &&
+      {([ ["created", item.createdAt], ["received", item.receivedAt], ["settled", item.settledAt], ["closedAt", item.closedAt] ] as const).map(([label, at]) => at &&
         <div key={label}><dt>{wakeupText(locale, label)}</dt><dd><time dateTime={at}>{wakeupTime(locale, at)}</time></dd></div>)}
     </dl>
+    {item.closeReason && <p className={styles.notice}>{wakeupText(locale, "closeReason")}: {item.closeReason}</p>}
     {item.error && <p className={styles.notice}>{item.error}</p>}
   </div>;
 }

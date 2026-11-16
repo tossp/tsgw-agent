@@ -1,6 +1,6 @@
 # Tool selection and built-in extensions
 
-TSGW wakeup behavior, host integration and upgrade rules are maintained in [the module rules](../../tsgw/wakeups/AGENTS.md); calling guidance is in [the bundled skill](../../tsgw/wakeups/skills/tsgw-session-wakeup/SKILL.md).
+TSGW wakeup behavior, host integration and upgrade rules are maintained in [the module rules](../../tsgw/wakeups/AGENTS.md); calling guidance is in [the bundled skill](../../tsgw/wakeups/skills/tsgw-session-wakeup/SKILL.md). Session lookup, reading, renaming and archiving live in [session management](../../tsgw/session-management/AGENTS.md), with [their own skill](../../tsgw/session-management/skills/tsgw-session-management/SKILL.md). Both modules expose their tools through codemode.
 
 ## New session tool preset
 Tool names are passed at session creation (`POST /api/agent/new` → `toolNames[]`) and persisted in versioned `pi-web:tool-selection` custom entries (ADR 0002). No entry, or a later `cleared: true` one, means no pin: the session follows pi's `defaultTools`, as the `configured` preset ("From Settings", the Built-in tools row of Settings › General) does by sending no `toolNames`. An empty array is Chat only, resolved before services are created: no extensions/skills/prompts/themes, and the ordered contents of Pi's discovered context files replace Pi's base prompt. Crossing the Chat-only boundary or clearing a pin rebuilds the wrapper; changing between nonempty presets updates it in place.

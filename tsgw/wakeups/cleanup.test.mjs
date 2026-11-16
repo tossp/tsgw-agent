@@ -16,7 +16,7 @@ const { clearWakeupRecord } = await jiti.import("./server-query.ts");
 const { DELETE: remove, GET: detail } = await jiti.import("../../app/api/tsgw/wakeups/[wakeupId]/route.ts");
 const runtimeKey = Symbol.for("pi-web.wakeupRuntime");
 const flush = () => new Promise(resolve => setImmediate(resolve));
-const terminalStatuses = ["run_settled", "run_aborted", "delivery_failed", "cancelled"];
+const terminalStatuses = ["run_settled", "run_aborted", "delivery_failed", "cancelled", "closed"];
 const task = (wakeupId, status = "cancelled") => ({
   wakeupId, sourceSessionId: "source", targetSessionId: "target", message: "handoff",
   createdAt: "2026-11-15T00:00:00.000Z", updatedAt: "2026-11-15T00:00:00.000Z",

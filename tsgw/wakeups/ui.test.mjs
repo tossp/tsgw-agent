@@ -34,7 +34,7 @@ test("entry is absent for an unused healthy session and present for terminal rec
 });
 
 test("counts describe observable activity and unknown outcomes without inventing task success", () => {
-  const statuses = ["pending", "dispatching", "submitted", "received", "run_settled", "run_aborted", "delivery_failed", "cancelled", "unknown"];
+  const statuses = ["pending", "dispatching", "submitted", "received", "run_settled", "run_aborted", "delivery_failed", "cancelled", "unknown", "closed"];
   assert.deepEqual(wakeupCounts(statuses.map((status, i) => task(String(i), { status }))), { active: 4, unknown: 1 });
   for (const locale of ["en", "zh-CN", "zh-TW"]) {
     const labels = statuses.map(status => wakeupStatusText(locale, status));
@@ -77,9 +77,9 @@ for (const locale of ["en", "zh-CN", "zh-TW"]) test(`real React row renders safe
 });
 
 test("only saved terminal rows offer cleanup, and unavailable ownership disables it", () => {
-  for (const status of ["pending", "dispatching", "submitted", "received", "unknown", "run_settled", "run_aborted", "delivery_failed", "cancelled"]) {
+  for (const status of ["pending", "dispatching", "submitted", "received", "unknown", "run_settled", "run_aborted", "delivery_failed", "cancelled", "closed"]) {
     const html = renderToStaticMarkup(React.createElement(WakeupRow, { locale: "en", item: task(status, { status }), onClear() {}, clearDisabled: true }));
-    const eligible = ["run_settled", "run_aborted", "delivery_failed", "cancelled"].includes(status);
+    const eligible = ["run_settled", "run_aborted", "delivery_failed", "cancelled", "closed"].includes(status);
     assert.equal(html.includes('disabled=""'), eligible);
   }
   const unsaved = renderToStaticMarkup(React.createElement(WakeupRow, { locale: "en", item: task("unsaved", { status: "run_settled", unsaved: true }), onClear() {} }));

@@ -1,6 +1,6 @@
 ---
 name: tsgw-session-wakeup
-description: 需要延后继续、自我提醒、按项目新建会话并交接，或查询、取消一次性唤醒时使用。
+description: 需要延后继续、自我提醒、按项目新建会话并交接，或查询、取消、关闭待核实唤醒或清理结束记录时使用。
 license: MIT
 compatibility: 需要提供本次操作所需 wakeup 工具的 TSGW 宿主及 codemode。
 ---
@@ -20,8 +20,9 @@ if (!declaration) throw new Error("本次所需工具不可用：schedule_wakeup
 text(declaration);
 ```
 
-- 五个唤醒工具默认经 codemode 调用，默认不出现在模型原始工具声明中；可用 `searchTools`／`describeTool` 发现后嵌套调用。不以是否同时直接声明判断可用性。
+- 五个唤醒工具为 `schedule_wakeup`、`query_wakeups`、`cancel_wakeup`、`close_wakeup`、`clear_wakeup`，默认经 codemode 调用，默认不出现在模型原始工具声明中；可用 `searchTools`／`describeTool` 发现后嵌套调用。不以是否同时直接声明判断可用性。
 - 本次所需工具缺失、声明不可读或 codemode 不可用时，报告具体问题并停止当前操作。不因无关工具缺失而阻断，也不安装、启用、重载、部署、改配置或换服务兜底。
+- 需要查找目标会话、核对项目目录或读取目标内容时，按需读取宿主提供的 `tsgw-session-management` 技能，按其实际工具声明查询和读取。先确认技能和所需工具在当前宿主可用，不因本技能提到它们就认定已安装或部署；目标和证据已核实则直接继续。
 - 明确目标、时间、交接内容与已有授权。不传目标时唤醒当前会话；`session_id` 必须是核实过的现有普通会话 ID；`cwd` 指核实过的现存绝对项目目录，立即为本次交接创建普通新会话。两者互斥；`title` 仅用于 cwd 新目标。不得猜 ID、按项目显示名猜路径或自动创建项目目录。
 - 拒绝子代理目标；需恢复子代理时唤醒其普通父会话。普通 fork 和侧聊不是子代理，但侧聊自己的工具 allow-list 仍然生效。
 - `after_seconds` 为正数，与 `at` 二选一；`at` 必须是未来 ISO 8601 时间并带 Z 或数值时区。将相对日期换成明确日期；时区有实质歧义先确认，不默认主机时区。
@@ -82,7 +83,7 @@ text(await tools.schedule_wakeup({
 
 ## 查询状态
 
-优先发现并读取 `query_wakeups`。无过滤默认读取同一状态清单中的全局记录；支持 ID、显式会话、来源、目标、项目、状态及分页。返回固定 `{ items, nextCursor, health }`。普通列表不返回完整正文；按 ID 详情会含正文和证据，输出时仍只选任务所需字段：
+统一使用 `query_wakeups` 作为唤醒管理状态权威。无过滤默认读取同一状态清单中的全局记录；支持 ID、显式会话、来源、目标、项目、状态、`armed` 布尔过滤及分页，所有条件先组合筛选再分页。返回固定 `{ items, nextCursor, health }`。普通列表不返回完整正文；按 ID 详情会含正文和证据，输出时仍只选任务所需字段：
 
 ```js
 const state = await tools.query_wakeups({
@@ -104,12 +105,39 @@ text({
 | run_settled／run_aborted | 通知所在运行结束／中断，不证明每条要求完成或副作用撤销。 |
 | delivery_failed／cancelled | 投递在确认接受前失败／尚未触发的取消已保存。 |
 | unknown | 结果不明，需要核实；不能当作失败、安全重投或已撤回。 |
+| closed | 已经核实处置并关闭记录，不代表任务成功或运行已停止；关闭时间和处理说明可查询。 |
 
 - health 为 starting／read_only／paused／storage_error 时同时报告原因；磁盘 pending 不等于 timer 实际挂起。`unsaved` 是本进程观察、尚未保存，不是持久化确认。
-- `list_wakeups({})` 保留原数组及 message，只列本实例实际 armed timer；空数组不能证明持久化无任务。若使用它，先在 codemode 内按已知 ID 筛选，再输出必要字段，不把其他会话的正文带入上下文。
-- `list_session_wakeups({ session_id })` 是旧审计只读查询，历史写在目标会话、涵盖全部分支；inactive 不证明取消、成功或失败。fork 继承的原目标记录不是新任务。它不代替新状态查询，也不恢复计时器。
+- `query_wakeups({ armed: true })` 只列本实例实际挂起的计时器；`armed: false` 列未在本实例挂起的记录，不传则不过滤。可叠加会话、状态等条件并使用 `nextCursor` 翻页；空列表不能证明持久化无任务，须同时看过滤条件与 health。
+- 会话中的审计历史保留作证据，不替代状态清单，也不恢复计时器；fork 继承的原目标记录不是新任务。需要核对目标消息、响应或历史时按需使用 `tsgw-session-management` 技能。
 - UI 在全局工具栏提供唤醒入口，无需选中会话；读取状态文件中的全局记录，可查看状态、原始响应与来源／目标会话。查询不启动模型、不延长租期，不通过打开目标 SSE 来观察。
-- 已保存的运行结束／中断、投递失败和已取消记录可在界面点击清理；只删除状态清单记录，会话、消息和审计历史不变，也不从审计重新导入。未结束、待核实或尚未保存的记录不可清理。
+- 已保存的运行结束／中断、投递失败、已取消及已关闭记录可在界面点击清理，也可按用户授权调用 `clear_wakeup`；只删除状态清单记录，会话、消息和审计历史不变，也不从审计重新导入。未结束、待核实或尚未保存的记录不可清理。
+
+## 核实后关闭与清理
+
+收到处理待核实任务的要求后，先用 `query_wakeups({ wakeup_id })` 读取正文、异常原因与证据，再按需读取 `tsgw-session-management` 技能，只读检查目标会话和实际执行结果。按核实结论决定后续工作，不因 unknown 假定原任务未执行。
+
+发现并读取 `close_wakeup` 声明后，用实际 ID 和非空处理说明关闭：
+
+```js
+text(await tools.close_wakeup({
+  wakeup_id: "<实际 wakeupId>",
+  reason: "<核实了哪些证据、已确认结果、剩余工作如何处理>"
+}));
+```
+
+- 只接受已保存、当前为 unknown 且无投递收尾的记录；其他状态或存储不可写时拒绝。状态变为 closed，保存 closedAt／closeReason，并保留原异常和投递证据。
+- 关闭不认定业务成功，不中止会话、撤回消息或重投。需要补充执行时，在已有授权内另用 `schedule_wakeup` 安排，并在说明中记录实际后续任务 ID；安排结果不明先查询，不盲目重排。
+- 关闭成功但审计镜像失败时返回 diagnostics，持久化的关闭仍然有效。关闭结果未知时先查询状态，不能宣称已经关闭。
+
+发现并读取 `clear_wakeup` 声明后，可按用户授权逐条清理已结束记录：
+
+```js
+text(await tools.clear_wakeup({ wakeup_id: "<实际 wakeupId>" }));
+```
+
+- 复用界面清理规则：只接受已保存的 run_settled／run_aborted／delivery_failed／cancelled／closed；尚在投递收尾、未结束、unknown 或 unsaved 拒绝。
+- 清理只删除状态清单记录，保留会话、消息、响应和审计。它不自动关闭 unknown，也不停止或重复执行任务。清理结果未知时按 ID 查询，不盲目重试。
 
 ## 取消与异常
 
@@ -124,4 +152,4 @@ text(await tools.cancel_wakeup({ wakeup_id: "<实际 wakeupId>" }));
 - 共享清单只有一个调度所有者，其他实例只读。不要擅自重启或改配置争抢所有权；按实际健康报告阻塞。
 - 创建／取消调用结果不明，先按实际 ID、目标、时间查询，不盲目重复。`session_created_wakeup_not_scheduled` 表示会话已建、唤醒未安排，应复用返回的 targetSessionId；`cancellationConfirmed: false` 不能声称已取消。审计失败 diagnostics 不撤销已确认生效的安排或取消。
 - 只在工具成功返回后说“已安排”，报告实际 wakeupId、targetSessionId 和 scheduledAt 对应的明确日期时间及其时区。区分已安排、接受、收到、运行结束与业务完成；不以查询成功冒充真实触发验收。
-- 不自建周期任务、自我续排或自动重投。终态和交接正文不自动清理，仅由用户显式点击清理状态记录；发布、部署、真实升级／迁移／重启仍按已有授权边界处理。
+- 不自建周期任务、自我续排或自动重投。终态和交接正文不自动清理，由用户显式点击或 AI 按用户授权调用 `clear_wakeup` 清理状态记录；发布、部署、真实升级／迁移／重启仍按已有授权边界处理。

@@ -63,6 +63,15 @@ function assertSkill(f, path) {
   assert.ok(f.session.systemPrompt.includes("tsgw-session-wakeup"));
   assert.ok(f.session.systemPrompt.includes(path));
   assert.ok(!f.session.systemPrompt.includes(skillBody), "advertise the skill without eagerly injecting its body");
+  const names = ["schedule_wakeup", "query_wakeups", "cancel_wakeup", "close_wakeup", "clear_wakeup"];
+  const tools = f.session.getAllTools().filter(tool => tool.name.endsWith("_wakeup") || tool.name.endsWith("_wakeups"));
+  assert.deepEqual(tools.map(tool => tool.name).sort(), names.sort());
+  for (const tool of tools) {
+    assert.equal(tool.exposure, "codemode");
+    assert.ok(skillBody.includes(`\`${tool.name}\``), `${tool.name} must have calling guidance`);
+  }
+  for (const name of ["list_wakeups", "list_session_wakeups"]) assert.equal(skillBody.includes(name), false);
+  assert.ok(skillBody.includes("tsgw-session-management"), "target lookup should refer to the session management skill");
 }
 
 test("SDK discovers the bundled skill, expands its body on demand and avoids duplicates on reload", async t => {

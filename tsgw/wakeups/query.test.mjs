@@ -10,7 +10,8 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url, { alias: { "@": fileURLToPath(new URL("../../", import.meta.url)) } });
 const { WakeupStore } = await jiti.import("./store.ts");
 const { getWakeupStateFile } = await jiti.import("./host.ts");
-const { readWakeupQuery } = await jiti.import("./server-query.ts");
+const { readWakeupQuery, wakeupQueryFromParams } = await jiti.import("./server-query.ts");
+const { projectWakeups, validateWakeupQuery } = await jiti.import("./query.ts");
 const { GET: list } = await jiti.import("../../app/api/tsgw/wakeups/route.ts");
 const { GET: detail } = await jiti.import("../../app/api/tsgw/wakeups/[wakeupId]/route.ts");
 const runtimeKey = Symbol.for("pi-web.wakeupRuntime");
@@ -38,6 +39,36 @@ function fixture(t, tasks) {
 
 const request = params => new Request(`http://localhost/api/tsgw/wakeups?${new URLSearchParams(params)}`);
 
+test("armed filters combine with all status filters before pagination, including false and details", () => {
+  const tasks = [task("a"), task("b"), task("c"), task("d"), task("e", { status: "cancelled" }),
+    task("f", { sourceSessionId: "elsewhere" }), task("g", { targetSessionId: "elsewhere" }), task("h", { cwd: "/elsewhere" })];
+  const armed = new Set(["a", "c", "f", "g", "h"]), health = { state: "ready", isOwner: true };
+  const filters = { session_id: "source", source_session_id: "source", target_session_id: "target", cwd: "/project", status: "pending", limit: 1 };
+  for (const [flag, expected] of [[true, ["c", "a"]], [false, ["d", "b"]]]) {
+    const query = validateWakeupQuery({ ...filters, armed: flag });
+    assert.deepEqual(wakeupQueryFromParams(new URLSearchParams(query)), query);
+    const first = projectWakeups(tasks, query, health, armed);
+    assert.deepEqual(first.items.map(item => item.wakeupId), [expected[0]]);
+    assert.equal(first.items[0].armed, flag);
+    assert.equal(first.items[0].message, undefined);
+    assert.equal(first.nextCursor, expected[0]);
+    const second = projectWakeups(tasks, { ...query, cursor: first.nextCursor }, health, armed);
+    assert.deepEqual(second.items.map(item => item.wakeupId), [expected[1]]);
+    assert.equal(second.nextCursor, null);
+    const detail = projectWakeups(tasks, { ...query, wakeup_id: expected[1] }, health, armed);
+    assert.equal(detail.items[0].message, tasks[0].message);
+    assert.deepEqual(projectWakeups(tasks, { ...query, wakeup_id: expected[1], armed: !flag }, health, armed).items, []);
+    assert.throws(() => projectWakeups(tasks, { ...query, cursor: flag ? "d" : "c" }, health, armed), /cursor/);
+  }
+  assert.equal(projectWakeups(tasks, filters, health, armed).items[0].wakeupId, "d");
+});
+
+test("shared validation rejects non-boolean armed values", () => {
+  for (const armed of ["true", "false", "", 0, 1, null, [], {}]) {
+    assert.throws(() => validateWakeupQuery({ armed }), /Invalid armed filter/);
+  }
+});
+
 test("source/target/project/status filters and pagination are read-only and omit full bodies", async t => {
   const f = fixture(t, [task("a"), task("b", { status: "cancelled" }), task("c", { sourceSessionId: "another", targetSessionId: "elsewhere", cwd: "/elsewhere" })]);
   const before = readFileSync(f.stateFile), beforeStat = statSync(f.stateFile);
@@ -53,8 +84,11 @@ test("source/target/project/status filters and pagination are read-only and omit
   const second = await (await list(request({ session_id: "source", limit: "1", cursor: first.nextCursor }))).json();
   assert.deepEqual(second.items.map(item => item.wakeupId), ["a"]);
   assert.equal(second.nextCursor, null);
-  const filtered = await (await list(request({ target_session_id: "target", cwd: "/project", status: "pending" }))).json();
+  const filtered = await (await list(request({ target_session_id: "target", cwd: "/project", status: "pending", armed: "false" }))).json();
   assert.deepEqual(filtered.items.map(item => item.wakeupId), ["a"]);
+  const armed = await (await list(request({ armed: "true" }))).json();
+  assert.deepEqual(armed.items, []);
+  assert.equal(armed.health.state, "read_only");
   assert.deepEqual(readFileSync(f.stateFile), before);
   assert.equal(statSync(f.stateFile).mtimeMs, beforeStat.mtimeMs);
   assert.equal(existsSync(join(dirname(f.stateFile), "owner")), false);
@@ -75,7 +109,7 @@ test("task detail returns its body without returning unrelated handoffs", async 
 test("invalid filters and cursor return client errors, not a false storage failure", async t => {
   const f = fixture(t, [task("a")]);
   const before = readFileSync(f.stateFile);
-  for (const params of [{ limit: "0" }, { limit: "NaN" }, { limit: "101" }, { status: "not-a-status" }, { session_id: "" }, { cursor: "not-present" }]) {
+  for (const params of [{ limit: "0" }, { limit: "NaN" }, { limit: "101" }, { status: "not-a-status" }, { session_id: "" }, { cursor: "not-present" }, ...["", "yes", "0", "1", "TRUE", "null"].map(armed => ({ armed }))]) {
     const response = await list(request(params));
     assert.equal(response.status, 400, JSON.stringify(params));
     assert.equal(typeof (await response.json()).error, "string");

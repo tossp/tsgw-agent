@@ -7,7 +7,7 @@
 主体、样式和测试在本目录。浏览器公共入口为 `index.ts`（设置面板、来源角标与类型），Node 初始化和路由入口为 `server.ts`；会话来源的纯数据入口为 `message-data.ts`，宿主事件接入为 `message-source.ts`。客户端通过 `@/tsgw/im` 引用；Node 会话读写代码以相对路径引用这些公共入口，兼容现有不带 Next alias 的 Jiti/SDK 测试。浏览器入口不能导出 Node 模块。
 
 - 机器人绑定项目目录；`[botId, chatId, threadId]` 为持久关联键。只恢复已关联会话；没有有效关联时新建，不猜测最近会话。不同聊天不能自动合并。
-- Pi 宿主复用 `startRpcSession`、wrapper.send/onEvent 和 session-reader，不另建 SDK 会话管理器，不独立打开活跃会话文件。会话清单只读，排除子代理与侧聊，保留项目中的普通 fork。
+- Pi 宿主复用 `startRpcSession`、wrapper.send/onEvent 和 session-reader，不另建 SDK 会话管理器，不独立打开活跃会话文件。会话清单与项目/普通类型筛选复用 [session-management](../session-management/AGENTS.md) 的 Node 公共入口；保持只读，排除子代理与侧聊，保留项目中的普通 fork。
 - 等待 Web 当前任务结束再提交 IM。每次提交带唯一入站标记，订阅先于提交；仅返回归属明确的最终 assistant 文本，子代理仍活跃时继续等待。扩展移除标记或其他 Web 输入混入时提示用户查看 Web，不发送混合内容。
 - 每次已接收的 IM 用户消息写入 `pi-web:im-source` custom entry，`version: 1`、`messageEntryId` 与 `source` 记录本次 requestId、channel、botId/botName、chatId/threadId、senderId 和平台 messageId；不写平台凭据，不进入模型上下文，不把整条会话标成某渠道。实时及历史只为对应 user 消息投影 `imSource`，移除本模块内部请求前缀；原 SDK 消息对象保持不变。
 - SDK 当前先广播 `message_end` 再同步 appendMessage；宿主订阅安排微任务，在同一 manager 的真实 user entry 写入后追加 Meta。升级 SDK 必须用真实 wrapper 集成测试核对顺序、entryId 关联及原生消息对象。历史先从完整 entries 建索引，再分页；fork 保留原消息来源，新 Web 输入不会继承来源。

@@ -23,7 +23,7 @@
 | `ui.tsx`、`ui-view.ts`、`ui.module.css` | 全局面板、单条清理、按需详情、三语文案和响应式样式。 |
 | `*.test.mjs` | 模块实现、SDK/宿主集成、UI、资源和存储验证。 |
 
-关键契约：状态清单 `getAgentDir()/integrations/wakeups/state.json` 是恢复权威；状态写入失败暂停调度；只恢复 pending，逾期 pending 补投一次，dispatching 及后续不自动重投。owner 丢失时停止写入和新发送。通知 received 与所在运行 settled 不代表业务成功；SDK `clearQueue()` 无逐条 custom 消息 ID，Stop/Recall 只能记录不确定。目标必须是普通会话；取消不会删除已创建的空会话。五个唤醒工具默认 `exposure: "codemode"`：默认请求不声明它们，经 codemode 发现并可嵌套调用；上游侧聊工具 allow-list 排除全部五个。细节见设计文档，避免在本规则重复维护完整状态说明。
+关键契约：状态清单 `getAgentDir()/integrations/wakeups/state.json` 是恢复权威；状态写入失败暂停调度；只恢复 pending，逾期 pending 补投一次，dispatching 及后续不自动重投。owner 丢失时停止写入和新发送。通知 received 与所在运行 settled 不代表业务成功；SDK `clearQueue()` 无逐条 custom 消息 ID，Stop/Recall 只能记录不确定。`close_wakeup` 仅关闭已保存且无投递收尾的 unknown，保留证据、关闭时间与处理说明；closed 不因重启或迟到观察重开。`clear_wakeup` 复用界面的单条终态清理。目标必须是普通会话；取消不会删除已创建的空会话。五个唤醒工具默认 `exposure: "codemode"`：默认请求不声明它们，经 codemode 发现并可嵌套调用；上游侧聊工具 allow-list 排除全部五个。管理状态统一以 `query_wakeups` 为准，支持组合 `armed` 布尔过滤；内部 `runtime.list()` 与 `history()` 保留计时器和审计职责，不注册为工具。细节见设计文档，避免在本规则重复维护完整状态说明。
 
 ## 模块外接入清单
 
@@ -75,4 +75,4 @@ node tsgw/wakeups/e2e.mjs
 WAKEUP_STORE_BENCHMARK=1 node --experimental-strip-types --test tsgw/wakeups/store.performance.test.mjs
 ```
 
-验证应覆盖持久化故障与暂停、owner 竞争和失锁、未知不重投、目标删除不重建、SDK 通知与运行观察、Stop/MCP/admission、普通项目目标创建、只读 API 与健康分页、仅状态清单的终态清理及重启不复活、技能打包以及 UI。测试仅使用临时 agentDir、项目、faux provider 和隔离浏览器；不得向真实模型发送请求或操作真实 wakeup 状态。真实升级、pending 迁移、服务重启、发布和部署均按各自授权边界处理。
+验证应覆盖持久化故障与暂停、owner 竞争和失锁、未知不重投、核实关闭及清理工具、closed 重启与迟到观察不重开、目标删除不重建、SDK 通知与运行观察、Stop/MCP/admission、普通项目目标创建、只读 API 与健康分页、仅状态清单的终态清理及重启不复活、技能打包以及 UI。测试仅使用临时 agentDir、项目、faux provider 和隔离浏览器；不得向真实模型发送请求或操作真实 wakeup 状态。真实升级、pending 迁移、服务重启、发布和部署均按各自授权边界处理。

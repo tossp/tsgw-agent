@@ -3,6 +3,7 @@ import { createAgentSessionServices, getAgentDir, initTheme, SessionManager, Set
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime, peekWakeupRuntime, createWakeupObserver } from "../tsgw/wakeups/server";
+import { createSessionManagementExtension } from "../tsgw/session-management";
 import { withLiveImMessageSource } from "../tsgw/im/message-source";
 import { IM_MESSAGE_SOURCE_TYPE, missingImForkSources } from "../tsgw/im/message-data";
 import { existsSync, realpathSync, writeFileSync } from "fs";
@@ -3681,6 +3682,7 @@ export async function startRpcSession(
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
               createWakeupExtension(initializeWakeups()),
+              createSessionManagementExtension(),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,

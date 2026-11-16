@@ -5,13 +5,13 @@ import type { WakeupStatus, WakeupTask } from "./types";
 
 const statuses = new Set<WakeupStatus>([
   "pending", "dispatching", "submitted", "received", "run_settled",
-  "run_aborted", "delivery_failed", "cancelled", "unknown",
+  "run_aborted", "delivery_failed", "cancelled", "unknown", "closed",
 ]);
 const requiredStrings = ["wakeupId", "sourceSessionId", "targetSessionId", "message"] as const;
 const requiredDates = ["createdAt", "scheduledAt", "updatedAt"] as const;
-const optionalStrings = ["cwd", "runId", "notificationEntryId", "branchLeafId", "error"] as const;
+const optionalStrings = ["cwd", "runId", "notificationEntryId", "branchLeafId", "error", "closeReason"] as const;
 const optionalDates = [
-  "dispatchingAt", "submittedAt", "receivedAt", "settledAt", "cancelledAt", "recoveredAt",
+  "dispatchingAt", "submittedAt", "receivedAt", "settledAt", "cancelledAt", "recoveredAt", "closedAt",
 ] as const;
 const keys = new Set<string>([
   ...requiredStrings, ...requiredDates, ...optionalStrings, ...optionalDates,

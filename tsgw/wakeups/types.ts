@@ -1,6 +1,6 @@
 import type { Wakeup } from "./scheduler";
 
-export type WakeupStatus = "pending" | "dispatching" | "submitted" | "received" | "run_settled" | "run_aborted" | "delivery_failed" | "cancelled" | "unknown";
+export type WakeupStatus = "pending" | "dispatching" | "submitted" | "received" | "run_settled" | "run_aborted" | "delivery_failed" | "cancelled" | "unknown" | "closed";
 export interface WakeupTask extends Wakeup {
   cwd?: string;
   status: WakeupStatus;
@@ -10,6 +10,8 @@ export interface WakeupTask extends Wakeup {
   receivedAt?: string;
   settledAt?: string;
   cancelledAt?: string;
+  closedAt?: string;
+  closeReason?: string;
   recoveredAt?: string;
   runId?: string;
   notificationEntryId?: string;
@@ -33,6 +35,7 @@ export interface WakeupQuery {
   target_session_id?: string;
   cwd?: string;
   status?: WakeupStatus;
+  armed?: boolean;
   limit?: number;
   cursor?: string;
 }
