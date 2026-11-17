@@ -5,6 +5,7 @@ import type { ImAction, ImSnapshot, WeixinLoginResult } from "./types";
 import { reportImError } from "./telemetry";
 
 export async function imRequest<T>(signal: AbortSignal, action?: ImAction, cwd?: string): Promise<T> {
+  const request = action?.action ?? (cwd === undefined ? "status" : "sessions");
   let response: Response;
   try {
     response = await fetch(`/api/tsgw/im${cwd === undefined ? "" : `?cwd=${encodeURIComponent(cwd)}`}`, {
@@ -12,18 +13,39 @@ export async function imRequest<T>(signal: AbortSignal, action?: ImAction, cwd?:
       ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(action) } : {}),
     });
   } catch (error) {
-    if (!signal.aborted) reportImError("settings-request");
+    if (!signal.aborted) reportRequestFailure("settings-request", error, request);
     throw error;
   }
   let data: T & { error?: string };
   try {
     data = await response.json() as T & { error?: string };
   } catch (error) {
-    if (!signal.aborted && (response.status < 400 || response.status >= 500)) reportImError("settings-response");
+    if (!signal.aborted && (response.status < 400 || response.status >= 500)) {
+      reportRequestFailure("settings-response", error, request, response);
+    }
     throw error;
   }
   if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
+}
+
+function reportRequestFailure(
+  operation: "settings-request" | "settings-response",
+  error: unknown,
+  request: "status" | "sessions" | ImAction["action"],
+  response?: Response,
+): void {
+  // Error messages, causes and custom names can contain credentials or response bodies.
+  let errorType = "non-error";
+  if (error instanceof TypeError) errorType = "TypeError";
+  else if (error instanceof SyntaxError) errorType = "SyntaxError";
+  else if (error instanceof DOMException) errorType = "DOMException";
+  else if (error instanceof Error) errorType = "Error";
+  reportImError(operation, {
+    request, method: request === "status" || request === "sessions" ? "GET" : "POST",
+    responseReceived: response !== undefined, ...(response ? { status: response.status } : {}), errorType,
+    online: typeof navigator === "undefined" ? undefined : navigator.onLine,
+  });
 }
 
 export function useImSettings() {

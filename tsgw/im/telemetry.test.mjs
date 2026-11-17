@@ -218,30 +218,61 @@ test("QR creation and image generation failures are captured while project valid
   }
 });
 
-test("settings network and JSON failures are captured; cancellations and 4xx responses stay quiet", async (t) => {
+test("settings failures distinguish request purpose and response receipt without exposing payloads; reporting boundaries stay unchanged", async (t) => {
   const action = { action: "add-telegram", token: "private-token", name: "TG", cwd: "/work", allowedUserIds: ["1"], allowedChatIds: [] };
   const scope = new AbortController();
-  const network = new Error("private-token private-response-body");
+  let online = false;
+  t.mock.getter(globalThis, "navigator", () => ({ onLine: online }));
+  const network = new TypeError("private-token private-response-body", { cause: new Error("private-cause") });
+  network.name = "private-error-name";
   const mock = t.mock.method(globalThis, "fetch", async () => { throw network; });
+  for (const [input, cwd, request, method] of [
+    [undefined, undefined, "status", "GET"],
+    [undefined, "/private-project/path", "sessions", "GET"],
+    [action, undefined, "add-telegram", "POST"],
+    [{ action: "poll-weixin", loginId: "private-qr-ticket" }, undefined, "poll-weixin", "POST"],
+  ]) {
+    envelopes.length = 0;
+    await assert.rejects(imRequest(scope.signal, input, cwd), (error) => error === network);
+    const all = await flush();
+    assert.equal(all.length, 1);
+    assert.deepEqual(all[0].tags, {
+      instance: "test-host", source: "im", operation: "settings-request",
+      request, method, responseReceived: false, errorType: "TypeError", online: false,
+    });
+    for (const secret of ["private-token", "private-response-body", "private-cause", "private-error-name", "private-qr-ticket", "/private-project/path"]) {
+      assert.ok(!JSON.stringify(all).includes(secret));
+    }
+  }
+  online = true;
+  for (const status of [200, 500]) {
+    envelopes.length = 0;
+    const invalidJson = new SyntaxError("private-response-body");
+    mock.mock.mockImplementation(async () => ({ ok: status < 400, status, json: async () => { throw invalidJson; } }));
+    await assert.rejects(imRequest(scope.signal, action), (error) => error === invalidJson);
+    const all = await flush();
+    assert.equal(all.length, 1);
+    assert.deepEqual(all[0].tags, {
+      instance: "test-host", source: "im", operation: "settings-response",
+      request: "add-telegram", method: "POST", responseReceived: true, status, errorType: "SyntaxError", online: true,
+    });
+    assert.ok(!JSON.stringify(all).includes("private-response-body"));
+  }
   envelopes.length = 0;
-  await assert.rejects(imRequest(scope.signal, action), (error) => error === network);
-  assert.equal((await flush())[0].tags.operation, "settings-request");
-  envelopes.length = 0;
-  mock.mock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => { throw network; } }));
-  await assert.rejects(imRequest(scope.signal, action));
-  assert.equal((await flush())[0].tags.operation, "settings-response");
-  assert.ok(!JSON.stringify(events()).includes("private-token"));
-  envelopes.length = 0;
-  mock.mock.mockImplementation(async () => ({ ok: false, status: 400, json: async () => ({ error: "validation" }) }));
-  await assert.rejects(imRequest(scope.signal, action), /validation/);
+  for (const status of [400, 500]) {
+    mock.mock.mockImplementation(async () => ({ ok: false, status, json: async () => ({ error: "server-reported failure" }) }));
+    await assert.rejects(imRequest(scope.signal, action), /server-reported failure/);
+  }
   for (const status of [401, 429]) {
     mock.mock.mockImplementation(async () => ({ ok: false, status, json: async () => { throw new SyntaxError("plain text response"); } }));
     await assert.rejects(imRequest(scope.signal, action));
   }
+  mock.mock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({ bots: [], conversations: [] }) }));
+  assert.deepEqual(await imRequest(scope.signal), { bots: [], conversations: [] });
   assert.equal((await flush()).length, 0);
   scope.abort();
   mock.mock.mockImplementation(async () => { throw network; });
-  await assert.rejects(imRequest(scope.signal, action));
+  await assert.rejects(imRequest(scope.signal, action), (error) => error === network);
   assert.equal((await flush()).length, 0);
 });
 
