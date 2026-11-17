@@ -241,7 +241,7 @@ export class ImRuntime {
     const prompt = [message.text || "请处理附件。", message.quotedText && `以下是引用内容，供理解本次消息：\n${message.quotedText}`].filter(Boolean).join("\n\n");
     const reply = await this.host.prompt(conversation.sessionId!, prompt, signal, {
       channel: bot.channel, botId: bot.id, botName: bot.name,
-      chatId: message.chatId, senderId: message.senderId, messageId: message.messageId ?? message.id,
+      chatId: message.chatId, senderId: message.senderId, messageId: message.messageId ?? message.id, isGroup: message.isGroup,
       ...(message.threadId === undefined ? {} : { threadId: message.threadId }),
     }, message.attachments, { attachments: typeof driver.sendAttachment === "function" });
     signal.throwIfAborted();

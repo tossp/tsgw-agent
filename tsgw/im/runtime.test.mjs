@@ -216,7 +216,7 @@ test("project chat creates once, resumes its own binding after restart, and dedu
   assert.equal(f.prompts[0].text, "hello");
   assert.deepEqual(f.prompts[0].replyCapabilities, { attachments: true });
   assert.deepEqual(f.prompts[0].source, {
-    channel: "telegram", botId: "bot", botName: "TG", chatId: "42", senderId: "42", messageId: "native-123",
+    channel: "telegram", botId: "bot", botName: "TG", chatId: "42", senderId: "42", messageId: "native-123", isGroup: false,
   });
   const snapshot = await f.runtime.snapshot();
   assert.equal(snapshot.conversations[0].cwd, f.directory);
@@ -249,6 +249,9 @@ test("private chats, group Topics and bot instances have independent bindings", 
   await eventually(() => f.sent.length === 4);
   assert.equal(new Set(f.prompts.map((call) => call.id)).size, 4);
   assert.equal((await f.runtime.snapshot()).conversations.length, 4);
+  assert.deepEqual(f.prompts.map(({ source }) => [source.isGroup, source.threadId]), [
+    [false, undefined], [true, "10"], [true, "20"], [false, undefined],
+  ]);
 });
 
 test("WeChat and Telegram sharing one Pi session reply only to their own original chat and Topic", async (t) => {

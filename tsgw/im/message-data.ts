@@ -8,6 +8,7 @@ export interface ImMessageSource {
   botName: string;
   chatId: string;
   threadId?: string;
+  isGroup?: boolean;
   senderId: string;
   messageId: string;
 }
@@ -35,6 +36,7 @@ export function readImMessageSource(value: unknown): ImMessageSourceRecord | und
     if (typeof source[field] !== "string" || !source[field]) return;
   }
   if (source.threadId !== undefined && typeof source.threadId !== "string") return;
+  if (source.isGroup !== undefined && typeof source.isGroup !== "boolean") return;
   return {
     version: 1, messageEntryId: data.messageEntryId,
     source: {
@@ -43,6 +45,7 @@ export function readImMessageSource(value: unknown): ImMessageSourceRecord | und
       chatId: source.chatId as string, senderId: source.senderId as string,
       messageId: source.messageId as string,
       ...(source.threadId === undefined ? {} : { threadId: source.threadId as string }),
+      ...(source.isGroup === undefined ? {} : { isGroup: source.isGroup as boolean }),
     },
   };
 }

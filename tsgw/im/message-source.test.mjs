@@ -7,7 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { registerImMessageSource, withLiveImMessageSource } = await jiti.import("./message-source.ts");
+const { installImRequestContextProjection, registerImMessageSource, withLiveImMessageSource } = await jiti.import("./message-source.ts");
 const { IM_MESSAGE_SOURCE_TYPE, imMessageSources, readImMessageSource, withImMessageSource } = await jiti.import("./message-data.ts");
 const source = {
   requestId: "10000000-0000-0000-0000-000000000001", channel: "telegram", botId: "bot-one",
@@ -90,13 +90,44 @@ test("two channels and managers keep independent source registrations and dispos
   removeSecond();
 });
 
+test("request projection preserves other transforms and tracks the latest input through custom continuations and disposal", async (t) => {
+  const manager = await managerFor(t);
+  const head = { role: "system", content: "existing extension instructions", timestamp: Date.now() };
+  const messages = [head, message()];
+  const agent = { transformContext: async (input) => input.map((item) => item.role === "user" ? { ...item, content: "extension-trimmed user" } : item) };
+  installImRequestContextProjection({ agent, sessionManager: manager });
+  const project = (input = messages) => agent.transformContext(input);
+  const parse = (result) => JSON.parse(/<im_request_context>\s*([\s\S]*?)\s*<\/im_request_context>/.exec(result[0].content)[1]);
+  const release = registerImMessageSource(manager, { ...source, isGroup: true });
+  t.after(release);
+  const result = await project();
+  assert.ok(result[0].content.startsWith(head.content));
+  assert.deepEqual(parse(result), { channel: "telegram", conversation: "topic", replyCapabilities: { text: true, attachments: false } });
+  assert.equal(result[1].content, "extension-trimmed user", "the existing context extension keeps control of the user projection");
+  assert.ok(!result[0].content.includes(source.chatId));
+  assert.ok(!result[0].content.includes(source.botName));
+  assert.equal(head.content, "existing extension instructions", "the canonical prompt is never mutated");
+  const continuation = { role: "custom", customType: "subagent-notification", content: "child finished", timestamp: Date.now() };
+  assert.deepEqual(parse(await project([...messages, continuation])), parse(result));
+  release();
+  assert.equal((await project())[0], head);
+  assert.equal((await project([...messages, continuation]))[0], head);
+  const releaseGroup = registerImMessageSource(manager, { ...source, threadId: undefined, isGroup: true }, { attachments: true });
+  t.after(releaseGroup);
+  assert.deepEqual(parse(await project()), { channel: "telegram", conversation: "group", replyCapabilities: { text: true, attachments: true } });
+  assert.equal((await project([...messages, { role: "user", content: "new Web task" }, continuation]))[0], head,
+    "a later Web input prevents an older request from claiming custom continuations");
+});
+
 test("persisted source validation projects only documented routing fields and hides only its matching prefix", () => {
   const data = { version: 1, messageEntryId: "entry", source: { ...source, token: "must-not-leave-file" } };
   assert.deepEqual(readImMessageSource(data).source, source);
   for (const invalid of [null, [], {}, { ...data, version: 2 }, { ...data, source: { ...source, channel: "unknown" } },
-    { ...data, source: { ...source, requestId: undefined } }, { ...data, source: { ...source, threadId: 7 } }]) {
+    { ...data, source: { ...source, requestId: undefined } }, { ...data, source: { ...source, threadId: 7 } },
+    { ...data, source: { ...source, isGroup: "false" } }]) {
     assert.equal(readImMessageSource(invalid), undefined);
   }
+  assert.equal(readImMessageSource({ ...data, source: { ...source, isGroup: false } }).source.isGroup, false);
   assert.equal(withImMessageSource({ role: "user", content: "untouched Web text" }, source).content, "untouched Web text");
   const assistant = { role: "assistant", content: "answer" };
   assert.equal(withImMessageSource(assistant, source), assistant);

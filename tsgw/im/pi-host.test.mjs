@@ -21,6 +21,7 @@ function fixture(rows = [row("main")]) {
   const calls = [];
   const starts = [];
   const sources = [];
+  const capabilities = [];
   let running = false;
   let alive = true;
   let onSend = () => null;
@@ -37,7 +38,7 @@ function fixture(rows = [row("main")]) {
     resolvePath: async () => "/session.jsonl",
     allowRoot: async () => {},
     invalidateList: async () => {},
-    registerSource(_wrapper, source) { sources.push(source); return () => sources.splice(sources.indexOf(source), 1); },
+    registerSource(_wrapper, source, replyCapabilities) { sources.push(source); capabilities.push(replyCapabilities); return () => sources.splice(sources.indexOf(source), 1); },
   };
   const emit = (event) => { for (const fn of listeners) fn(event); };
   const begin = () => {
@@ -55,7 +56,7 @@ function fixture(rows = [row("main")]) {
     running = false;
     emit({ type: "prompt_done" });
   };
-  return { access, wrapper, listeners, calls, starts, sources, emit, begin, finish,
+  return { access, wrapper, listeners, calls, starts, sources, capabilities, emit, begin, finish,
     host: createPiSessionHost(access), setRunning: (value) => { running = value; },
     setAlive: (value) => { alive = value; }, setSend: (fn) => { onSend = fn; } };
 }
@@ -369,7 +370,8 @@ test("host waits for Web before reading images, submits original images, and kee
   assert.deepEqual(f.calls[0].images, [{ type: "image", data: media.data, mimeType: "image/png" }]);
   assert.ok(f.calls[0].message.includes(media.file.path));
   assert.ok(!f.calls[0].message.includes("never embed document contents"));
-  assert.match(f.calls[0].message, /最终答复.*本地 Markdown/);
+  assert.doesNotMatch(f.calls[0].message, /附件交付约定/);
+  assert.deepEqual(f.capabilities[0], mediaReplies);
   assert.ok(!JSON.stringify(f.sources).includes(media.data));
   assert.ok(!JSON.stringify(f.sources).includes(media.image.path));
   f.emit(assistant(fileLink(media.file), "toolUse"));

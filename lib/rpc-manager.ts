@@ -4,7 +4,7 @@ import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@e
 import { randomUUID } from "crypto";
 import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime, peekWakeupRuntime, createWakeupObserver } from "../tsgw/wakeups/server";
 import { createSessionManagementExtension } from "../tsgw/session-management";
-import { withLiveImMessageSource } from "../tsgw/im/message-source";
+import { installImRequestContextProjection, withLiveImMessageSource } from "../tsgw/im/message-source";
 import { IM_MESSAGE_SOURCE_TYPE, missingImForkSources } from "../tsgw/im/message-data";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
@@ -3797,6 +3797,7 @@ export async function startRpcSession(
         ? subagentToolOptions(subagentResources)
         : toolsOption !== undefined ? { tools: toolsOption } : {}),
     });
+    if (!subagentResources) installImRequestContextProjection(inner);
 
     // A pinned selection replaces only the coding tools of the SDK's initial loadout, which
     // already holds the extension tools pi activates on registration and whatever

@@ -7,7 +7,8 @@ import type { ImSessionHost } from "./host-types";
 import { abortable, sendPiPrompt, waitForPiIdle } from "./pi-host-run";
 import { registerImMessageSource } from "./message-source";
 import type { ImMessageSource } from "./message-data";
-import { collectImReply, preparePiAttachments, IM_MEDIA_PROMPT } from "./pi-media";
+import { collectImReply, preparePiAttachments } from "./pi-media";
+import type { ImReplyCapabilities } from "./types";
 
 type Wrapper = Pick<AgentSessionWrapper, "send" | "onEvent" | "isAlive" | "isRunning">;
 
@@ -19,7 +20,7 @@ export interface PiHostAccess {
   resolvePath(id: string): Promise<string | null>;
   allowRoot(cwd: string): Promise<void>;
   invalidateList(): Promise<void>;
-  registerSource(wrapper: Wrapper, source: ImMessageSource): () => void;
+  registerSource(wrapper: Wrapper, source: ImMessageSource, replyCapabilities?: ImReplyCapabilities): () => void;
 }
 
 const defaultAccess: PiHostAccess = {
@@ -32,9 +33,9 @@ const defaultAccess: PiHostAccess = {
   async resolvePath(id) { return (await import("../../lib/session-reader")).resolveSessionPath(id); },
   async allowRoot(cwd) { (await import("../../lib/file-access")).allowFileRoot(cwd); },
   async invalidateList() { (await import("../../lib/session-reader")).invalidateSessionListCache(); },
-  registerSource(wrapper, source) {
+  registerSource(wrapper, source, replyCapabilities) {
     // defaultAccess returns real wrappers; scripted tests use the narrow I/O seam.
-    return registerImMessageSource((wrapper as AgentSessionWrapper).inner.sessionManager, source);
+    return registerImMessageSource((wrapper as AgentSessionWrapper).inner.sessionManager, source, replyCapabilities);
   },
 };
 
@@ -106,12 +107,11 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
           text += `\n\n${media.links}`;
           await waitForPiIdle(wrapper, signal);
         }
-        if (replyCapabilities?.attachments) text += `\n\n${IM_MEDIA_PROMPT}`;
         // The marker belongs to this submission, even when two chats send identical text.
         // Prefixing also prevents IM text from executing extension slash commands.
         const requestId = randomUUID();
         const marker = `[IM request ${requestId}]`;
-        const releaseSource = source ? access.registerSource(wrapper, { ...source, requestId }) : () => {};
+        const releaseSource = source ? access.registerSource(wrapper, { ...source, requestId }, replyCapabilities) : () => {};
         try {
           const answer = await sendPiPrompt(wrapper, `${marker}\n${text}`, marker, signal, media?.images);
           return replyCapabilities?.attachments

@@ -15,6 +15,12 @@ function reply(response, text) {
   response.end("data: [DONE]\n\n");
 }
 
+function requestContext(request) {
+  const system = request.messages.filter((message) => message.role === "system").map((message) => message.content).join("\n");
+  const context = /<im_request_context>\s*([\s\S]*?)\s*<\/im_request_context>/.exec(system);
+  return context ? JSON.parse(context[1]) : undefined;
+}
+
 async function until(check) {
   const end = Date.now() + 5_000;
   while (!check()) {
@@ -55,7 +61,7 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   }));
   const jiti = createJiti(import.meta.url, { interopDefault: true });
   const { createPiSessionHost } = await jiti.import("./pi-host.ts");
-  const { getRpcSession } = await jiti.import("../../lib/rpc-manager.ts");
+  const { getRpcSession, startRpcSession } = await jiti.import("../../lib/rpc-manager.ts");
   const { buildSessionContext } = await jiti.import("../../lib/session-reader.ts");
   const { IM_MESSAGE_SOURCE_TYPE } = await jiti.import("./message-data.ts");
   const host = createPiSessionHost();
@@ -70,13 +76,16 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   assert.ok((await host.list(directory)).some((session) => session.id === id));
   await wrapper.send({ type: "prompt", message: "web-first" });
   await until(() => typeof finishWeb === "function");
-  const telegram = { channel: "telegram", botId: "tg", botName: "private IM bot", chatId: "-100123", threadId: "7", senderId: "42", messageId: "101" };
+  const telegram = { channel: "telegram", botId: "tg", botName: "private IM bot", chatId: "-100123", threadId: "7", isGroup: true, senderId: "42", messageId: "101" };
   const answer = host.prompt(id, "im-second", new AbortController().signal, telegram);
   assert.equal(requests.length, 1);
   finishWeb();
   assert.equal(await answer, "IM RESULT");
   assert.equal(requests.length, 2);
   assert.match(JSON.stringify(requests[1].messages), /im-second/);
+  assert.equal(requestContext(requests[0]), undefined);
+  assert.deepEqual(requestContext(requests[1]), { channel: "telegram", conversation: "topic", replyCapabilities: { text: true, attachments: false } });
+  assert.equal(requests[1].messages.filter((message) => message.role === "user").at(-1).content.includes("附件交付约定"), false);
   assert.equal(wrapper.inner.messages.filter((message) => message.role === "user").length, 2);
   const answers = wrapper.inner.messages.filter((message) => message.role === "assistant");
   assert.equal(answers.length, 2);
@@ -88,8 +97,10 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   assert.equal(liveUsers[1].content[0].text, "im-second");
   assert.ok(!JSON.stringify(requests[1].messages).includes(telegram.botName), "route metadata stays out of provider messages");
 
-  const weixin = { ...telegram, channel: "weixin", botId: "wx", chatId: "wx-user", threadId: undefined, messageId: "102" };
+  const weixin = { ...telegram, channel: "weixin", botId: "wx", chatId: "wx-user", threadId: undefined, isGroup: false, messageId: "102" };
   assert.deepEqual(await host.prompt(id, "im-second", new AbortController().signal, weixin, undefined, { attachments: true }), { text: "IM RESULT" });
+  assert.deepEqual(requestContext(requests[2]), { channel: "weixin", conversation: "private", replyCapabilities: { text: true, attachments: true } });
+  assert.equal(liveUsers[2].content[0].text, "im-second", "Web user text has no injected delivery instructions");
   assert.equal(liveUsers[2].imSource.channel, "weixin");
   const entries = (await readFile(wrapper.sessionFile, "utf8")).trim().split("\n").map(JSON.parse);
   const metadata = entries.filter((entry) => entry.customType === IM_MESSAGE_SOURCE_TYPE);
@@ -134,4 +145,18 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   const { isFilePathReferencedByEntries } = await jiti.import("../../lib/session-file-references-core.ts");
   assert.equal(isFilePathReferencedByEntries(imagePath, refreshedEntries), true);
   assert.equal(isFilePathReferencedByEntries(filePath, refreshedEntries), true);
+  assert.ok(!JSON.stringify(refreshedEntries.filter((entry) => entry.type === "message")).includes("<im_request_context>"),
+    "request-only instructions are not recorded as user or system history");
+  await wrapper.send({ type: "prompt", message: "web-after-im" });
+  await until(() => requests.length === 5 && !wrapper.isRunning());
+  assert.equal(requestContext(requests[4]), undefined, "a later Web request does not inherit the IM context");
+
+  const chatOnly = await startRpcSession("__new__im-context-chat-only", "", directory, { toolNames: [] });
+  t.after(() => chatOnly.session.shutdown());
+  await host.prompt(chatOnly.realSessionId, "chat-only IM", new AbortController().signal, weixin, undefined, { attachments: true });
+  assert.deepEqual(requestContext(requests[5]), { channel: "weixin", conversation: "private", replyCapabilities: { text: true, attachments: true } });
+  assert.equal(requests[5].tools?.length ?? 0, 0, "the IM context does not enable tools in Chat-only");
+  await chatOnly.session.send({ type: "prompt", message: "chat-only Web" });
+  await until(() => requests.length === 7 && !chatOnly.session.isRunning());
+  assert.equal(requestContext(requests[6]), undefined, "Chat-only restores its original exact prompt for Web");
 });
