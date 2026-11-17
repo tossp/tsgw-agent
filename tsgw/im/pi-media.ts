@@ -59,13 +59,13 @@ export async function preparePiAttachments(
   return { links: `附件（本地文件）：\n${links.join("\n")}`, images };
 }
 
-export const WEIXIN_MEDIA_PROMPT = "微信附件交付约定：需要交付图片或文件时，请在最终答复中写明确的本地 Markdown 图片或文件链接，优先使用绝对路径。仅最终答复显式引用的附件会发送到本次聊天，无需调用额外发送工具，不会自动广播。";
+export const IM_MEDIA_PROMPT = "附件交付约定：需要交付图片或文件时，请在最终答复中写明确的本地 Markdown 图片或文件链接，优先使用绝对路径。仅最终答复显式引用的附件会发送到本次聊天，无需调用额外发送工具，不会自动广播。";
 
 type Replacement = { start: number; end: number; text: string };
 const referenceKey = (identifier: string) => identifier.replace(/\s+/g, " ").toUpperCase();
 
 /** Called only on the collector's owned final answer; never inspect tools or history. */
-export async function collectWeixinReply(text: string, cwd: string, signal: AbortSignal): Promise<ImReply> {
+export async function collectImReply(text: string, cwd: string, signal: AbortSignal): Promise<ImReply> {
   signal.throwIfAborted();
   const tree = parser.parse(text);
   const definitions = new Map<string, Definition>();
@@ -114,7 +114,7 @@ export async function collectWeixinReply(text: string, cwd: string, signal: Abor
       canonical = await realpath(path);
     } catch (error) {
       signal.throwIfAborted();
-      // A missing/unreadable local destination must not become a path leaked to Weixin.
+      // A missing/unreadable local destination must not become a path leaked to IM.
       const code = (error as NodeJS.ErrnoException).code;
       if (!code || !["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP"].includes(code)) throw error;
       replace(node, "[附件不可用，请在 Pi 会话中查看]");

@@ -8,7 +8,8 @@ const errors = [];
 const actions = [];
 const cwd = "/tmp/im-browser-project";
 const bot = { id: "tg-test", channel: "telegram", name: "Test Telegram", cwd, enabled: true,
-  allowedUserIds: ["42"], allowedChatIds: [], username: "test_bot", status: { state: "connected" } };
+  allowedUserIds: ["42"], allowedChatIds: [], username: "test_bot", status: { state: "connected" },
+  deliveryError: "Reply delivery failed" };
 const conversation = { key: '["tg-test","-100","7"]', botId: bot.id, chatId: "-100", threadId: "7",
   title: "Test group", sessionId: "old", cwd, updatedAt: new Date().toISOString() };
 const snapshot = { bots: [bot], conversations: [conversation] };
@@ -45,6 +46,8 @@ try {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Messaging", exact: true }).click();
   await page.getByRole("button", { name: /Test Telegram/ }).click();
+  await page.getByRole("alert").filter({ hasText: bot.deliveryError }).waitFor();
+  await page.getByRole("status").filter({ hasText: "Connected · Telegram" }).waitFor();
   await page.getByLabel("Linked Pi session").selectOption("existing");
   await page.waitForFunction(() => document.querySelector("select")?.value === "existing");
   assert.ok(actions.some((action) => action.action === "bind" && action.sessionId === "existing"));
@@ -69,7 +72,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log("IM browser checks passed: Telegram config, Topic binding, stop, WeChat QR cancellation, mobile layout.");
+  console.log("IM browser checks passed: independent delivery error, Telegram config, Topic binding, stop, WeChat QR cancellation, mobile layout.");
 } catch (error) {
   if (page) {
     await page.screenshot({ path: "/tmp/pi-im-e2e-failure.png" });

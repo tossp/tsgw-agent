@@ -2,7 +2,7 @@ import { abortable } from "./pi-host-run";
 import { reportImError } from "./telemetry";
 import type { ImSessionHost } from "./host-types";
 import type { ImStore } from "./store";
-import type { ImBot, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImReply, ImSnapshot } from "./types";
+import type { ImBot, ImBotView, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImReply, ImSnapshot } from "./types";
 
 export type ImDriverFactory = (options: ImDriverOptions) => ImDriver;
 interface RunningBot {
@@ -10,6 +10,7 @@ interface RunningBot {
   driver: ImDriver;
   controller: AbortController;
   status: ImDriverStatus;
+  deliveryError?: string;
 }
 
 export function conversationKey(botId: string, message: Pick<ImInbound, "chatId" | "threadId">): string {
@@ -26,6 +27,7 @@ export class ImRuntime {
     readonly store: ImStore,
     readonly host: ImSessionHost,
     private factories: Record<ImBot["channel"], ImDriverFactory>,
+    private describeBot: (bot: ImBot) => Pick<ImBotView, "username"> = () => ({}),
   ) {}
 
   async start(): Promise<void> {
@@ -80,8 +82,9 @@ export class ImRuntime {
     return {
       bots: state.bots.map(({ credentials, ...bot }) => ({
         ...bot,
-        ...(bot.channel === "telegram" && "username" in credentials ? { username: credentials.username } : {}),
+        ...this.describeBot({ ...bot, credentials }),
         status: this.running.get(bot.id)?.status ?? { state: "stopped" },
+        deliveryError: this.running.get(bot.id)?.deliveryError,
       })),
       conversations: Object.values(state.conversations).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     };
@@ -137,7 +140,7 @@ export class ImRuntime {
           await this.deliver(entry, message, async () => {
             const input = prepare ? await abortable(prepare(signal), signal) : message;
             signal.throwIfAborted();
-            return abortable(this.process(entry.bot, key, input, signal), signal);
+            return abortable(this.process(entry, key, input, signal), signal);
           }, signal);
         } finally {
           if (this.active.get(key) === controller) this.active.delete(key);
@@ -176,12 +179,11 @@ export class ImRuntime {
           await sendAttachment(message, attachment, signal);
         }
       }
+      entry.deliveryError = undefined;
     } catch (error) {
-      if (signal.aborted) return;
-      if (!(error instanceof Error && error.name === "AbortError")) {
-        reportImError("send", { channel: entry.bot.channel, botId: entry.bot.id });
-      }
-      entry.status = { state: "error", error: "回复发送失败，请检查机器人连接状态。" };
+      if (signal.aborted || error instanceof Error && error.name === "AbortError") return;
+      reportImError("send", { channel: entry.bot.channel, botId: entry.bot.id });
+      entry.deliveryError = "回复发送失败，请检查机器人连接状态。";
     }
   }
 
@@ -193,7 +195,8 @@ export class ImRuntime {
     return "已请求停止当前会话。";
   }
 
-  private async process(bot: ImBot, key: string, message: ImInbound, signal: AbortSignal): Promise<string | ImReply> {
+  private async process(entry: RunningBot, key: string, message: ImInbound, signal: AbortSignal): Promise<string | ImReply> {
+    const { bot, driver } = entry;
     if (message.preparationError) return message.preparationError;
     const text = message.text.trim();
     const [command, argument] = text.split(/\s+/, 2);
@@ -235,12 +238,12 @@ export class ImRuntime {
       conversation = { ...conversation, sessionId: id };
     }
     signal.throwIfAborted();
-    const prompt = [message.text || "请处理附件。", message.quotedText && `以下是微信引用内容，供理解本次消息：\n${message.quotedText}`].filter(Boolean).join("\n\n");
+    const prompt = [message.text || "请处理附件。", message.quotedText && `以下是引用内容，供理解本次消息：\n${message.quotedText}`].filter(Boolean).join("\n\n");
     const reply = await this.host.prompt(conversation.sessionId!, prompt, signal, {
       channel: bot.channel, botId: bot.id, botName: bot.name,
       chatId: message.chatId, senderId: message.senderId, messageId: message.messageId ?? message.id,
       ...(message.threadId === undefined ? {} : { threadId: message.threadId }),
-    }, message.attachments);
+    }, message.attachments, { attachments: typeof driver.sendAttachment === "function" });
     signal.throwIfAborted();
     await this.store.update((state) => {
       signal.throwIfAborted();

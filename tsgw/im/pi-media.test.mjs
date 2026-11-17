@@ -6,7 +6,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { collectWeixinReply, preparePiAttachments } = await jiti.import("./pi-media.ts");
+const { collectImReply, preparePiAttachments } = await jiti.import("./pi-media.ts");
 const { MAX_ATTACHED_IMAGE_BYTES, MAX_ATTACHED_IMAGES } = await jiti.import("../../lib/image-attachments.ts");
 const { isFilePathReferencedByEntries } = await jiti.import("../../lib/session-file-references-core.ts");
 const { resolveLocalFileHref } = await jiti.import("../../lib/file-links.ts");
@@ -67,7 +67,7 @@ test("outbound Markdown handles temp paths, spaces, reference links, suffixes, f
     `[picture]: <${href(image.path)}>`,
     "[remote](https://example.test/report.txt)",
   ].join("\n\n");
-  const result = await collectWeixinReply(text, directory, signal());
+  const result = await collectImReply(text, directory, signal());
   assert.deepEqual(result.attachments.map((attachment) => attachment.path), [image.path, file.path]);
   assert.equal(result.attachments[0].type, "image");
   assert.equal(result.attachments[1].type, "file");
@@ -92,7 +92,7 @@ test("bare paths, code, HTML, remote URLs and unused references are never attach
     `<img src="${image.path}">`,
     `[unused]: <${href(image.path)}>`,
   ].join("\n\n");
-  const result = await collectWeixinReply(text, directory, signal());
+  const result = await collectImReply(text, directory, signal());
   assert.equal(result.attachments, undefined);
   for (const preserved of [image.path, `\`${example}\``, `\`\`\`markdown\n${example}\n\`\`\``, `    ${example}`,
     "[remote](https://example.test/a.png)", `<img src="${image.path}">`]) assert.ok(result.text.includes(preserved));
@@ -103,7 +103,7 @@ test("missing files and directory links report unavailable without exposing dest
   const { directory } = await fixture(t);
   const folder = join(directory, "folder");
   await mkdir(folder);
-  const result = await collectWeixinReply(
+  const result = await collectImReply(
     `[missing](<${href(join(directory, "missing.png"))}>) [dir][d]\n\n[d]: <${href(folder)}>`, directory, signal());
   assert.equal(result.attachments, undefined);
   assert.match(result.text, /附件不可用/);
@@ -112,7 +112,7 @@ test("missing files and directory links report unavailable without exposing dest
 
 test("a local linked image inside a remote link is replaced without breaking the remote link", async (t) => {
   const { directory, image } = await fixture(t);
-  const result = await collectWeixinReply(`[![image](<${href(image.path)}>)](https://example.test)`, directory, signal());
+  const result = await collectImReply(`[![image](<${href(image.path)}>)](https://example.test)`, directory, signal());
   assert.equal(result.attachments.length, 1);
   assert.ok(result.text.includes("https://example.test"));
   assert.ok(!result.text.includes(directory));
@@ -121,5 +121,5 @@ test("a local linked image inside a remote link is replaced without breaking the
 test("outbound cancellation rejects instead of returning attachments", async (t) => {
   const { directory, file } = await fixture(t);
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(collectWeixinReply(`[file](<${href(file.path)}>)`, directory, controller.signal), { name: "AbortError" });
+  await assert.rejects(collectImReply(`[file](<${href(file.path)}>)`, directory, controller.signal), { name: "AbortError" });
 });

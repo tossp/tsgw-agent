@@ -89,7 +89,7 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
   assert.ok(!JSON.stringify(requests[1].messages).includes(telegram.botName), "route metadata stays out of provider messages");
 
   const weixin = { ...telegram, channel: "weixin", botId: "wx", chatId: "wx-user", threadId: undefined, messageId: "102" };
-  assert.deepEqual(await host.prompt(id, "im-second", new AbortController().signal, weixin), { text: "IM RESULT" });
+  assert.deepEqual(await host.prompt(id, "im-second", new AbortController().signal, weixin, undefined, { attachments: true }), { text: "IM RESULT" });
   assert.equal(liveUsers[2].imSource.channel, "weixin");
   const entries = (await readFile(wrapper.sessionFile, "utf8")).trim().split("\n").map(JSON.parse);
   const metadata = entries.filter((entry) => entry.customType === IM_MESSAGE_SOURCE_TYPE);
@@ -114,7 +114,7 @@ test("real Pi wrapper preserves project binding and attributes only the IM reply
     { ...weixin, messageId: "103" }, [
       { type: "image", path: imagePath, name: "图 (1).png", mimeType: "image/png" },
       { type: "file", path: filePath, name: "report (1).txt", mimeType: "text/plain" },
-    ]);
+    ], { attachments: true });
   assert.deepEqual(delivery.attachments.map((attachment) => attachment.path), [filePath, imagePath]);
   assert.ok(!delivery.text.includes(mediaDirectory));
   assert.equal(wrapper.inner.messages.filter((message) => message.role === "assistant").at(-1).content[0].text, mediaAnswer,

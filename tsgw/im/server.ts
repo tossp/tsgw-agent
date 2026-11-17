@@ -6,6 +6,7 @@ import { ImRuntime } from "./runtime";
 import { ImService, projectDirectory } from "./service";
 import { parseImAction } from "./actions";
 import { createTelegramDriver, verifyTelegramToken } from "./telegram";
+import { describeTelegramBot } from "./telegram-setup";
 import { createWeixinDriver } from "./weixin";
 import { createWeixinLogin } from "./weixin-login";
 import { createPiSessionHost } from "./pi-host";
@@ -19,7 +20,7 @@ async function createService(): Promise<ImService> {
   const runtime = new ImRuntime(store, createPiSessionHost(), {
     telegram: createTelegramDriver,
     weixin: createWeixinDriver,
-  });
+  }, describeTelegramBot);
   const service = new ImService(runtime, {
     verifyTelegram: (token) => verifyTelegramToken(token),
     createWeixinLogin: (signal) => createWeixinLogin({ signal }),

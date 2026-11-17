@@ -30,6 +30,10 @@ export interface ImAttachment {
   mimeType: string;
 }
 
+export interface ImReplyCapabilities {
+  attachments: boolean;
+}
+
 export interface ImReply {
   text: string;
   attachments?: ImAttachment[];
@@ -95,6 +99,7 @@ export interface ImConversation {
 
 export interface ImBotView extends Omit<ImBot, "credentials"> {
   status: ImDriverStatus;
+  deliveryError?: string;
   username?: string;
 }
 

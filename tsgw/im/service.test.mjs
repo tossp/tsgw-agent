@@ -9,6 +9,7 @@ const jiti = createJiti(import.meta.url);
 const { ImStore } = await jiti.import("./store.ts");
 const { ImRuntime } = await jiti.import("./runtime.ts");
 const { ImService } = await jiti.import("./service.ts");
+const { describeTelegramBot } = await jiti.import("./telegram-setup.ts");
 
 function deferred() {
   let resolve;
@@ -29,7 +30,8 @@ async function fixture(t, overrides = {}, driverHooks = {}) {
       async send() {},
     };
   };
-  const runtime = new ImRuntime(store, { async exists() { return false; } }, { telegram: factory, weixin: factory });
+  const runtime = new ImRuntime(store, { async exists() { return false; } }, { telegram: factory, weixin: factory },
+    describeTelegramBot);
   let loginSignal;
   const dependencies = {
     async verifyTelegram() { return { username: "test_bot" }; },
@@ -59,6 +61,21 @@ test("Telegram validates project and owner before verification, rejects duplicat
   assert.ok(!JSON.stringify(snapshot).includes("tg-secret"));
   await assert.rejects(f.service.action({ ...action, allowedUserIds: ["42"] }), /已经添加/);
   assert.equal((await f.store.read()).bots.length, 1);
+  const update = { ...action, action: "update-bot", botId: snapshot.bots[0].id, enabled: false };
+  await assert.rejects(f.service.action(update), /至少/);
+  assert.equal(f.active.size, 1, "invalid access changes must not stop the bot");
+  const project = await mkdtemp(join(f.directory, "project-"));
+  await f.store.update((state) => {
+    state.conversations.key = { botId: update.botId, cwd: f.directory, sessionId: "retained-pi-session" };
+  });
+  const stopped = await f.service.action({ ...update, cwd: project, allowedUserIds: ["43"], allowedChatIds: ["chat"] });
+  assert.equal((await f.store.read()).conversations.key.cwd, project);
+  assert.equal((await f.store.read()).conversations.key.sessionId, null);
+  assert.deepEqual(stopped.bots[0].allowedUserIds, ["43"]);
+  assert.deepEqual(stopped.bots[0].allowedChatIds, ["chat"]);
+  assert.equal(stopped.bots[0].status.state, "stopped");
+  assert.equal(stopped.bots[0].username, "test_bot");
+  assert.ok(!JSON.stringify(stopped).includes("tg-secret"));
 });
 
 test("WeChat confirmation installs one bot with project and owner, concurrent polls coalesce", async (t) => {
@@ -114,15 +131,21 @@ test("cancellation is refused after credentials commit while the old driver is s
   }, {
     async stop() { if (hold) { hold = false; stopping.resolve(); await release.promise; } },
   });
-  await f.store.update((state) => state.bots.push({
-    id: "b", channel: "weixin", name: "WX", cwd: f.directory, enabled: true,
-    allowedUserIds: ["owner"], allowedChatIds: [], credentials,
-  }));
+  await f.store.update((state) => {
+    state.bots.push({
+      id: "b", channel: "weixin", name: "WX", cwd: f.directory, enabled: true,
+      allowedUserIds: ["owner"], allowedChatIds: [], credentials,
+    });
+    state.conversations.key = { botId: "b", cwd: f.directory, sessionId: "retained-pi-session" };
+  });
   await f.runtime.start();
-  const login = await f.service.action({ action: "login-weixin", name: "WX", cwd: f.directory });
+  const login = await f.service.action({ action: "login-weixin", name: "Replacement WX", cwd: tmpdir() });
   const pending = f.service.action({ action: "poll-weixin", loginId: login.id });
   await stopping.promise;
   const committed = (await f.store.read()).bots[0];
+  assert.equal(committed.cwd, f.directory);
+  assert.equal(committed.name, "WX");
+  assert.equal((await f.store.read()).conversations.key.sessionId, "retained-pi-session");
   assert.equal(committed.enabled, true);
   assert.equal(committed.credentials.token, "rotated");
   await assert.rejects(f.service.action({ action: "cancel-weixin", loginId: login.id }),

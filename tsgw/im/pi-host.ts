@@ -7,7 +7,7 @@ import type { ImSessionHost } from "./host-types";
 import { abortable, sendPiPrompt, waitForPiIdle } from "./pi-host-run";
 import { registerImMessageSource } from "./message-source";
 import type { ImMessageSource } from "./message-data";
-import { collectWeixinReply, preparePiAttachments, WEIXIN_MEDIA_PROMPT } from "./pi-media";
+import { collectImReply, preparePiAttachments, IM_MEDIA_PROMPT } from "./pi-media";
 
 type Wrapper = Pick<AgentSessionWrapper, "send" | "onEvent" | "isAlive" | "isRunning">;
 
@@ -83,7 +83,7 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
       await access.invalidateList();
       return started.realSessionId;
     },
-    async prompt(id, text, signal, source, attachments) {
+    async prompt(id, text, signal, source, attachments, replyCapabilities) {
       return inSession(id, signal, async () => {
         const info = await abortable(find(id), signal);
         if (!info) throw new Error("Pi 普通会话不存在或不可用，请重新绑定。");
@@ -106,7 +106,7 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
           text += `\n\n${media.links}`;
           await waitForPiIdle(wrapper, signal);
         }
-        if (source?.channel === "weixin") text += `\n\n${WEIXIN_MEDIA_PROMPT}`;
+        if (replyCapabilities?.attachments) text += `\n\n${IM_MEDIA_PROMPT}`;
         // The marker belongs to this submission, even when two chats send identical text.
         // Prefixing also prevents IM text from executing extension slash commands.
         const requestId = randomUUID();
@@ -114,8 +114,8 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
         const releaseSource = source ? access.registerSource(wrapper, { ...source, requestId }) : () => {};
         try {
           const answer = await sendPiPrompt(wrapper, `${marker}\n${text}`, marker, signal, media?.images);
-          return source?.channel === "weixin"
-            ? await abortable(collectWeixinReply(answer, info.cwd, signal), signal) : answer;
+          return replyCapabilities?.attachments
+            ? await abortable(collectImReply(answer, info.cwd, signal), signal) : answer;
         } finally {
           releaseSource();
         }

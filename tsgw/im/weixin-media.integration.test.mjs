@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url);
 const { createWeixinDriver } = await jiti.import("./weixin.ts");
 const { ImRuntime } = await jiti.import("./runtime.ts");
 const { ImStore } = await jiti.import("./store.ts");
-const { collectWeixinReply } = await jiti.import("./pi-media.ts");
+const { collectImReply } = await jiti.import("./pi-media.ts");
 const key = Buffer.from("00112233445566778899aabbccddeeff", "hex");
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXYAAAAASUVORK5CYII=", "base64");
 const document = Buffer.from("微信文件测试：原始字节保持不变\n");
@@ -80,11 +80,11 @@ async function fixture(t, options = {}) {
   const host = {
     async list() { return []; }, async exists(id) { return id === "session"; }, async create() { return "session"; },
     async stop(id) { stopped.push(id); },
-    async prompt(id, text, signal, source, attachments) {
-      prompts.push({ id, text, source, attachments });
+    async prompt(id, text, signal, source, attachments, replyCapabilities) {
+      prompts.push({ id, text, source, attachments, replyCapabilities });
       for (const attachment of attachments) assert.deepEqual(await readFile(attachment.path), attachment.type === "image" ? image : document);
       const final = "已完成\n" + attachments.map((attachment) => `[${attachment.name}](<${encodeURI(attachment.path)}>)`).join("\n");
-      return collectWeixinReply(final, directory, signal);
+      return collectImReply(final, directory, signal);
     },
   };
   const runtime = new ImRuntime(store, host, {
@@ -101,6 +101,7 @@ test("real runtime and Weixin driver decrypt inbound media, retain quote/transcr
   const f = await fixture(t);
   await until(() => f.sent.length === 3);
   assert.equal(f.prompts.length, 1);
+  assert.deepEqual(f.prompts[0].replyCapabilities, { attachments: true });
   assert.equal(f.prompts[0].source.messageId, incoming.message_id);
   assert.equal(f.prompts[0].source.channel, "weixin");
   assert.match(f.prompts[0].text, /语音补充要求/);

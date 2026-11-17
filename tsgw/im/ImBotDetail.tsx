@@ -99,6 +99,7 @@ export function ImBotDetail({ bot, conversations, copy, busy, act, onRemoved }: 
     <ConfigDetailTitle>{bot.name}</ConfigDetailTitle>
     <div role="status" className={styles.status}>{copy[bot.status.state]} · {bot.channel === "weixin" ? copy.weixin : copy.telegram}{bot.username ? ` · @${bot.username}` : ""}</div>
     {bot.status.error && <ConfigNotice><span role="alert">{bot.status.error}</span></ConfigNotice>}
+    {bot.deliveryError && <ConfigNotice><span role="alert">{bot.deliveryError}</span></ConfigNotice>}
     <fieldset className={styles.fields} disabled={busy}>
       <ImTextField label={copy.name} value={name} onChange={setName} />
       <ImTextField label={copy.cwd} value={cwd} onChange={setCwd} />

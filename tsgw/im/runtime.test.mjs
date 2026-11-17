@@ -35,7 +35,7 @@ async function fixture(t, options = {}) {
       sessions.set(id, cwd);
       return id;
     },
-    async prompt(id, text, signal, source, attachments) { prompts.push({ id, text, signal, source, attachments }); return options.prompt ? options.prompt(id, text, signal) : "回答"; },
+    async prompt(id, text, signal, source, attachments, replyCapabilities) { prompts.push({ id, text, signal, source, attachments, replyCapabilities }); return options.prompt ? options.prompt(id, text, signal) : "回答"; },
     async stop(id) { stopped.push(id); options.stop?.(); },
   };
   const drivers = new Map();
@@ -127,7 +127,7 @@ test("file-only input and separate quote context reach the same session and sour
   await f.receive({ ...f.message("file-1", ""), attachments: [attachment], quotedText: "/stop 是此前的引用，不是当前命令" });
   await eventually(() => f.sent.length === 1);
   assert.match(f.prompts[0].text, /请处理附件/);
-  assert.match(f.prompts[0].text, /微信引用内容/);
+  assert.match(f.prompts[0].text, /引用内容/);
   assert.match(f.prompts[0].text, /\/stop 是此前/);
   assert.deepEqual(f.prompts[0].attachments, [attachment]);
   assert.equal(f.prompts[0].source.messageId, "file-1");
@@ -181,21 +181,29 @@ test("final text and attachments are delivered once in order to the original Top
   assert.deepEqual(f.sentMedia.map(({ attachment }) => attachment), items);
 });
 
-test("attachment-only replies clear typing and a failed attachment is never replayed", async (t) => {
+test("attachment-only delivery errors leave connection state intact and clear after a new successful request", async (t) => {
   const attachment = { type: "file", path: "/tmp/file.pdf", name: "file.pdf", mimeType: "application/pdf" };
   for (const fails of [false, true]) {
     let attempts = 0;
     const typing = [];
     const f = await fixture(t, { typing: (_message, active) => typing.push(active),
       prompt: async () => ({ text: "", attachments: [attachment] }),
-      sendAttachment: async () => { attempts++; if (fails) throw new Error("upload failed"); } });
+      sendAttachment: async () => { attempts++; if (fails && attempts === 1) throw new Error("upload failed"); } });
     await f.receive(f.message("1", "发文件"));
     await eventually(() => typing.length === 2);
     assert.equal(attempts, 1);
     assert.equal(f.sent.length, 0);
     assert.equal(f.sentMedia.length, fails ? 0 : 1);
     assert.deepEqual(typing, [true, false]);
-    assert.equal((await f.runtime.snapshot()).bots[0].status.state, fails ? "error" : "connected");
+    const view = (await f.runtime.snapshot()).bots[0];
+    assert.equal(view.status.state, "connected");
+    assert.equal(Boolean(view.deliveryError), fails);
+    if (fails) {
+      await f.receive(f.message("2", "重新发送文件"));
+      await eventually(() => f.sentMedia.length === 1);
+      assert.equal(attempts, 2);
+      assert.equal((await f.runtime.snapshot()).bots[0].deliveryError, undefined);
+    }
   }
 });
 
@@ -206,6 +214,7 @@ test("project chat creates once, resumes its own binding after restart, and dedu
   await f.receive(f.message("1", "hello"));
   assert.equal(f.prompts.length, 1);
   assert.equal(f.prompts[0].text, "hello");
+  assert.deepEqual(f.prompts[0].replyCapabilities, { attachments: true });
   assert.deepEqual(f.prompts[0].source, {
     channel: "telegram", botId: "bot", botName: "TG", chatId: "42", senderId: "42", messageId: "native-123",
   });
@@ -224,6 +233,7 @@ test("project chat creates once, resumes its own binding after restart, and dedu
   await f.receive(f.message("2", "continue"));
   await eventually(() => f.prompts.length === 2);
   assert.equal(f.prompts[1].id, "new-0");
+  assert.deepEqual(f.prompts[1].replyCapabilities, { attachments: false });
   assert.equal(f.creates.length, 1);
   assert.equal((await stat(f.file)).mode & 0o777, 0o600);
 });

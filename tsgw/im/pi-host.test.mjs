@@ -354,12 +354,13 @@ async function untilCalls(f, count) {
   assert.equal(f.calls.length, count);
 }
 const weixin = { ...inputSource, channel: "weixin" };
+const mediaReplies = { attachments: true };
 const fileLink = (file) => `[file](<${encodeURI(file.path)}>)`;
 
 test("host waits for Web before reading images, submits original images, and keeps media out of source metadata", async (t) => {
   const media = await mediaFixture(t);
   const f = fixture(); f.begin(); f.setRunning(true);
-  const answer = f.host.prompt("main", "same text", signal(), weixin, [media.image, media.file]);
+  const answer = f.host.prompt("main", "same text", signal(), weixin, [media.image, media.file], mediaReplies);
   await tick();
   assert.equal(f.calls.length, 0);
   await media.write();
@@ -378,11 +379,11 @@ test("host waits for Web before reading images, submits original images, and kee
   assert.equal(f.sources.length, 0);
 });
 
-test("same text from different chats returns only each owned final answer's attachments; Telegram stays text", async (t) => {
+test("owned final attachments depend on delivery capability; text-only deliveries preserve original links", async (t) => {
   const media = await mediaFixture(t); await media.write();
   const f = fixture(); f.begin();
-  const a = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "A" });
-  const b = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "B" });
+  const a = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "A" }, undefined, mediaReplies);
+  const b = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "B" }, undefined, mediaReplies);
   await untilCalls(f, 1);
   assert.equal(f.sources[0].chatId, "A");
   f.finish(fileLink(media.image));
@@ -395,19 +396,27 @@ test("same text from different chats returns only each owned final answer's atta
   await untilCalls(f, 3);
   f.finish(fileLink(media.file));
   assert.equal(await tg, fileLink(media.file));
-  assert.ok(!f.calls[2].message.includes("微信附件交付约定"));
+  assert.doesNotMatch(f.calls[2].message, /最终答复.*本地 Markdown/);
+  const capable = f.host.prompt("main", "same", signal(), inputSource, undefined, mediaReplies);
+  await untilCalls(f, 4);
+  f.finish(fileLink(media.image));
+  assert.deepEqual((await capable).attachments.map((item) => item.path), [media.image.path]);
+  const textOnly = f.host.prompt("main", "same", signal(), weixin, undefined, { attachments: false });
+  await untilCalls(f, 5);
+  f.finish(fileLink(media.file));
+  assert.equal(await textOnly, fileLink(media.file));
 });
 
 test("stopped media requests reject and late file events cannot be delivered to the next chat", async (t) => {
   const media = await mediaFixture(t); await media.write();
   const f = fixture(); f.begin();
   const controller = new AbortController();
-  const pending = f.host.prompt("main", "cancelled", controller.signal, weixin, [media.image]);
+  const pending = f.host.prompt("main", "cancelled", controller.signal, weixin, [media.image], mediaReplies);
   const rejected = assert.rejects(pending, { name: "AbortError" });
   await untilCalls(f, 1);
   controller.abort(); await rejected;
   assert.equal(f.listeners.size, 0);
-  const next = f.host.prompt("main", "next", signal(), { ...weixin, chatId: "next" });
+  const next = f.host.prompt("main", "next", signal(), { ...weixin, chatId: "next" }, undefined, mediaReplies);
   await tick();
   assert.equal(f.calls.length, 1);
   f.finish(fileLink(media.file));
@@ -420,7 +429,7 @@ test("stopped media requests reject and late file events cannot be delivered to 
 test("invalid media rejects before dispatch or source registration", async (t) => {
   const media = await mediaFixture(t);
   const f = fixture(); f.begin();
-  await assert.rejects(f.host.prompt("main", "input", signal(), weixin, [media.image]), { code: "ENOENT" });
+  await assert.rejects(f.host.prompt("main", "input", signal(), weixin, [media.image], mediaReplies), { code: "ENOENT" });
   assert.equal(f.calls.length, 0);
   assert.equal(f.sources.length, 0);
 });

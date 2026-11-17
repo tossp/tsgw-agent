@@ -15,9 +15,9 @@ const { ConfigDetailNavigationContext, ConfigSplitView } = await jiti.import("..
 const { imCopy } = await jiti.import("./im-ui.ts");
 const noop = () => {};
 
-function renderImFixture(detailOpen) {
+function renderImFixture(detailOpen, deliveryError) {
   const bot = { id: "bot", channel: "telegram", name: "Example bot", cwd: "/work/project",
-    enabled: true, allowedUserIds: ["123"], allowedChatIds: [], status: { state: "connected" } };
+    enabled: true, allowedUserIds: ["123"], allowedChatIds: [], status: { state: "connected" }, deliveryError };
   const conversation = { key: "conversation", botId: bot.id, chatId: "-100123", title: "Example conversation",
     sessionId: "associated-session", cwd: bot.cwd };
   return renderToStaticMarkup(h(ConfigDetailNavigationContext.Provider,
@@ -40,4 +40,7 @@ test("bot details show an explicit current association and new-session choice wi
   assert.doesNotMatch(html, /type="password"|Bot Token|credentials/);
   assert.match(html, /data-pane="detail"/);
   assert.match(renderImFixture(false), /data-pane="list"/);
+  const failedDelivery = renderImFixture(true, "Delivery failed");
+  assert.match(failedDelivery, /role="alert">Delivery failed/);
+  assert.ok(failedDelivery.includes(imCopy("en").connected));
 });
