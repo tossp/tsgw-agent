@@ -5,7 +5,7 @@ import { wakeupHistory, type WakeupEvent, type WakeupRecord } from "./history";
 import { WakeupStore } from "./store";
 import { acquireWakeupOwnership } from "./ownership";
 import { projectWakeups, validateWakeupQuery } from "./query";
-import { canClearWakeup } from "./cleanup";
+import { canAutoClearWakeup, canClearWakeup } from "./cleanup";
 import type { WakeupHealth, WakeupObservation, WakeupQuery, WakeupResult, WakeupTask } from "./types";
 
 export interface WakeupSessionStore {
@@ -116,6 +116,7 @@ export class WakeupRuntime {
     }
     const wakeup = this.scheduler.cancel(wakeupId)!;
     const diagnostics = await this.audit(wakeup, "cancelled");
+    this.clearEnded(wakeupId);
     return diagnostics ? { ...wakeup, diagnostics } : wakeup;
   }
 
@@ -132,6 +133,7 @@ export class WakeupRuntime {
     const closedAt = new Date().toISOString();
     this.save({ ...task, status: "closed", closedAt, closeReason, updatedAt: closedAt });
     const diagnostics = await this.audit(task, "closed", { closeReason });
+    this.clearEnded(wakeupId);
     return { wakeupId, status: "closed" as const, closedAt, closeReason, ...(diagnostics ? { diagnostics } : {}) };
   }
 
@@ -198,6 +200,7 @@ export class WakeupRuntime {
     try {
       this.save(next);
       void this.audit(next, value.type === "received" ? "received" : value.type === "settled" ? next.status as WakeupEvent : "unknown");
+      this.clearEnded(next.wakeupId);
     } catch {
       this.unsaved.set(next.wakeupId, { ...next, unsaved: true });
     }
@@ -225,7 +228,10 @@ export class WakeupRuntime {
       const tasks = this.store!.read();
       this.tasks = new Map(tasks.map(task => [task.wakeupId, task]));
       this.health = { state: "ready", isOwner: true };
-      for (const task of tasks) {
+      if (tasks.some(canAutoClearWakeup)) {
+        this.saveTasks(new Map(tasks.filter(task => !canAutoClearWakeup(task)).map(task => [task.wakeupId, task])));
+      }
+      for (const task of this.tasks.values()) {
         if (task.status === "pending") {
           if (Date.parse(task.scheduledAt) <= Date.now()) this.tasks.set(task.wakeupId, { ...task, recoveredAt: new Date().toISOString() });
           this.scheduler.add(task);
@@ -249,6 +255,14 @@ export class WakeupRuntime {
     this.scheduler.dispose();
     for (const submission of this.submissions.values()) submission.controller.abort(new Error(reason));
   }
+  private clearEnded(wakeupId: string): void {
+    const task = this.unsaved.get(wakeupId) ?? this.tasks.get(wakeupId);
+    if (!task || !canAutoClearWakeup(task) || this.submissions.has(wakeupId)
+      || this.health.state !== "ready" || !this.isOwner()) return;
+    try { this.clear(wakeupId); }
+    catch { /* A failed manifest save retains the record and pauses scheduling. */ }
+  }
+
   private save(task: WakeupTask): void {
     this.saveTasks(new Map(this.tasks).set(task.wakeupId, task));
     this.unsaved.delete(task.wakeupId);
@@ -286,7 +300,10 @@ export class WakeupRuntime {
         try { this.save(next); await this.audit(wakeup, "failed", { error: next.error }); }
         catch { this.unsaved.set(next.wakeupId, { ...next, status: "unknown", unsaved: true }); }
       } else this.unsaved.set(next.wakeupId, { ...next, status: "unknown", unsaved: true });
-    } finally { this.submissions.delete(wakeup.wakeupId); }
+    } finally {
+      this.submissions.delete(wakeup.wakeupId);
+      this.clearEnded(wakeup.wakeupId);
+    }
   }
 
   private async audit(wakeup: Wakeup, event: WakeupEvent, details?: Pick<WakeupRecord, "error" | "closeReason">) {

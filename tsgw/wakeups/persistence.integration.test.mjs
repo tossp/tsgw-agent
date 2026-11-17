@@ -116,7 +116,8 @@ async function fixture(t) {
 test("project schedule persists before any model initialization, then records real notification/run evidence", { timeout: 15000 }, async t => {
   const f = await fixture(t);
   const originalSource = await readFile(f.sourceFile);
-  f.faux.setResponses([answer("target handled handoff")]);
+  const held = f.hold();
+  f.faux.setResponses([held.response]);
   const task = await f.runtime.schedule(f.sourceId, { cwd: f.targetCwd, title: "Target handoff", after_seconds: 0.08, message: "Read target project rules" });
   assert.equal(f.modelInitializations, 0);
   const targetFile = await f.resolve(task.targetSessionId);
@@ -126,19 +127,26 @@ test("project schedule persists before any model initialization, then records re
   assert.equal(initial.getCwd(), f.targetCwd);
   assert.equal(initial.getSessionName(), "Target handoff");
   assert.equal(initial.getEntries().some(entry => entry.type === "message" || entry.type === "custom_message"), false);
-  await eventually(async () => (await f.item(task.wakeupId)).status === "run_settled");
+  await eventually(async () => (await f.item(task.wakeupId))?.status === "received");
   const result = await f.item(task.wakeupId), target = f.getSession(task.targetSessionId);
   assert.equal(f.modelInitializations, 1);
   assert.equal(f.faux.state.callCount, 1);
   assert.ok(target.inner.systemPrompt.includes("TARGET_PROJECT_RULE_9371"));
   assert.equal(target.inner.systemPrompt.includes("SOURCE_PROJECT_RULE_4826"), false);
-  assert.ok(result.submittedAt && result.receivedAt && result.settledAt && result.runId);
+  assert.ok(result.submittedAt && result.receivedAt && result.runId);
   assert.ok(result.notificationEntryId && result.branchLeafId);
+  held.release();
+  await eventually(async () => !(await f.item(task.wakeupId)));
+  await eventually(async () => (await f.runtime.history(task.targetSessionId))[0]?.status === "run_settled");
   const entries = target.inner.sessionManager.getEntries();
   assert.ok(entries.some(entry => entry.id === result.notificationEntryId && entry.type === "custom_message"));
-  assert.ok(result.responseEntryIds.length > 0);
-  assert.ok(result.responseEntryIds.every(id => entries.some(entry => entry.id === id && entry.type === "message" && entry.message.role === "assistant")));
+  assert.ok(entries.some(entry => entry.type === "message" && entry.message.role === "assistant"));
+  const settled = entries.find(entry => entry.type === "custom" && entry.data?.event === "run_settled").data;
+  assert.ok(settled.settledAt && settled.runId);
+  assert.ok(settled.responseEntryIds.length > 0);
+  assert.ok(settled.responseEntryIds.every(id => entries.some(entry => entry.id === id && entry.type === "message" && entry.message.role === "assistant")));
   assert.deepEqual(await readFile(f.sourceFile), originalSource);
+  assert.deepEqual(JSON.parse(await readFile(f.stateFile, "utf8")).tasks, []);
 });
 
 test("real model codemode calls can create by cwd and query status; cancellation keeps the unstarted target", { timeout: 15000 }, async t => {
@@ -159,7 +167,8 @@ test("real model codemode calls can create by cwd and query status; cancellation
   assert.equal(f.modelInitializations, 1, "only the source has an agent runtime");
   assert.equal(f.getSession(task.targetSessionId), undefined);
   await f.runtime.cancel(task.wakeupId);
-  assert.equal((await f.item(task.wakeupId)).status, "cancelled");
+  assert.equal(await f.item(task.wakeupId), undefined);
+  assert.equal((await f.runtime.history(task.targetSessionId))[0].status, "cancelled");
   assert.equal(existsSync(targetFile), true);
   assert.equal(SessionManager.open(targetFile).getSessionName(), "Scheduled from model");
 });
@@ -170,15 +179,18 @@ test("persistent host restores an overdue pending target and never replays its s
   f.runtime.dispose();
   await delay(100);
   assert.equal(f.modelInitializations, 0);
-  f.faux.setResponses([answer("resumed")]);
+  const held = f.hold();
+  f.faux.setResponses([held.response]);
   await f.restart();
-  await eventually(async () => (await f.item(task.wakeupId)).status === "run_settled");
+  await eventually(async () => (await f.item(task.wakeupId))?.status === "received");
   assert.ok((await f.item(task.wakeupId)).recoveredAt);
+  held.release();
+  await eventually(async () => !(await f.item(task.wakeupId)));
   assert.equal(f.faux.state.callCount, 1);
   await f.restart();
   await delay(80);
   assert.equal(f.faux.state.callCount, 1);
-  assert.equal((await f.item(task.wakeupId)).status, "run_settled");
+  assert.equal(await f.item(task.wakeupId), undefined);
 });
 
 test("Stop on a real busy target leaves a cleared notification unknown and never resubmits it", { timeout: 15000 }, async t => {

@@ -22,10 +22,10 @@ mkdirSync(artifacts, { recursive: true });
 const agentDir = mkdtempSync(join(tmpdir(), "pi-wakeup-panel-"));
 const stateDirectory = join(agentDir, "integrations", "wakeups");
 mkdirSync(stateDirectory, { recursive: true });
-const httpTasks = ["pending", "run_settled", "cancelled"].map(status => ({
+const httpTasks = ["pending", "run_settled", "cancelled", "closed", "run_aborted", "delivery_failed", "unknown"].map(status => ({
   wakeupId: `http-${status}`, sourceSessionId: "unrelated-http-source", targetSessionId: "wakeup-panel-main", message: `HTTP fixture ${status}`,
   status, createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", scheduledAt: "2099-01-01T00:00:00.000Z",
-  ...(status === "run_settled" ? { settledAt: "2026-11-01T00:01:00.000Z" } : {}),
+  ...(["run_settled", "run_aborted"].includes(status) ? { settledAt: "2026-11-01T00:01:00.000Z" } : {}),
 }));
 writeFileSync(join(stateDirectory, "state.json"), JSON.stringify({ version: 1, tasks: httpTasks }));
 const project = join(agentDir, "project");
@@ -96,15 +96,15 @@ try {
   }
   const globalState = await (await fetch(`${base}/api/tsgw/wakeups`)).json();
   assert.equal(globalState.health.state, "ready");
-  assert.equal(globalState.items.length, 3, "unfiltered HTTP query reads all manifest records");
-  for (const [id, status] of [["http-run_settled", 200], ["http-run_settled", 404], ["http-pending", 409], ["http-cancelled", 200]]) {
+  assert.deepEqual(globalState.items.map(task => task.wakeupId).sort(), ["http-delivery_failed", "http-pending", "http-run_aborted", "http-unknown"], "owner clears normal terminal records and preserves exceptions");
+  for (const [id, status] of [["http-run_settled", 404], ["http-pending", 409], ["http-cancelled", 404], ["http-closed", 404], ["http-unknown", 409], ["http-run_aborted", 200], ["http-delivery_failed", 200]]) {
     const response = await fetch(`${base}/api/tsgw/wakeups/${id}`, { method: "DELETE" });
     assert.equal(response.status, status, `${id}: ${await response.text()}`);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
   }
   const remaining = JSON.parse(readFileSync(join(stateDirectory, "state.json"), "utf8"));
-  assert.deepEqual(remaining.tasks.map(task => task.wakeupId), ["http-pending"]);
-  console.log("PASS real HTTP global read and terminal cleanup; missing/active records rejected; manifest only");
+  assert.deepEqual(remaining.tasks.map(task => task.wakeupId), ["http-pending", "http-unknown"]);
+  console.log("PASS real HTTP automatic cleanup keeps exceptions visible; failures/interruptions allow manual cleanup; active/unknown rejected; manifest only");
   browser = await chromium.launch({ headless: true });
   for (const [width, locale, wakeupTitle, agentsTitle] of [[1280, "en", "Wakeups", "Agents"], [320, "en", "Wakeups", "Agents"], [390, "zh-CN", "唤醒", "代理"], [320, "zh-TW", "喚醒", "代理"]]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });

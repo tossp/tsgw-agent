@@ -66,7 +66,7 @@ function fixture(t, tasks = [], options = {}) {
     // Audit/receipt paths catch errors, so also detect calls whose failure was swallowed.
     assert.deepEqual(sessionCalls, [], "cleanup must not access session storage");
   });
-  return { directory, stateFile, disk, restart, failWrites: () => { failWrite = true; }, lose: () => lost() };
+  return { directory, stateFile, disk, restart, failWrites: (enabled = true) => { failWrite = enabled; }, lose: () => lost() };
 }
 
 const request = id => new Request(`http://localhost/api/tsgw/wakeups/${id}`, { method: "DELETE" });
@@ -86,25 +86,97 @@ test("clearability permits only saved conclusive terminal states", () => {
   }
 });
 
-test("DELETE removes one terminal manifest record, never touches sessions, and survives restart and late observations", async t => {
-  const f = fixture(t, [...terminalStatuses.map(status => task(status, status)), task("keep")]);
+test("startup clears completion/cancellation/closure, preserves failures and interruptions, and never touches sessions", async t => {
+  const f = fixture(t, [...terminalStatuses.map(status => task(status, status)), task("keep", "pending")]);
   const sessionFile = join(f.directory, "target.jsonl");
   // The old audit remains on disk and must never rebuild cleared manifest tasks.
   writeFileSync(sessionFile, JSON.stringify({ type: "custom", customType: "pi-web:wakeup", data: task("cancelled") }) + "\n");
   const sessionBefore = readFileSync(sessionFile), sessionStat = statSync(sessionFile);
   let runtime = await f.restart();
-  for (const status of terminalStatuses) {
-    assert.deepEqual(await expectStatus(status, 200), { wakeupId: status });
+  for (const status of ["run_settled", "cancelled", "closed"]) {
+    await expectStatus(status, 404);
     runtime.observe({ type: "settled", wakeupId: status, at: new Date().toISOString() });
     assert.equal((await runtime.query({ wakeup_id: status })).items.length, 0);
   }
-  assert.deepEqual(f.disk.read().map(item => item.wakeupId), ["keep"]);
+  assert.deepEqual(f.disk.read().map(item => item.wakeupId), ["run_aborted", "delivery_failed", "keep"]);
+  runtime = await f.restart();
+  assert.deepEqual((await runtime.query()).items.map(item => item.wakeupId).sort(), ["delivery_failed", "keep", "run_aborted"]);
+  for (const status of ["run_aborted", "delivery_failed"]) {
+    assert.equal((await runtime.query({ wakeup_id: status })).items[0].status, status);
+    assert.deepEqual(await expectStatus(status, 200), { wakeupId: status });
+  }
   runtime = await f.restart();
   assert.deepEqual((await runtime.query()).items.map(item => item.wakeupId), ["keep"]);
   assert.deepEqual(readFileSync(sessionFile), sessionBefore);
   assert.equal(statSync(sessionFile).mtimeMs, sessionStat.mtimeMs);
   await expectStatus("cancelled", 404);
   assert.throws(() => clearWakeupRecord("missing"), error => error.details.code === "wakeup_not_found");
+});
+
+for (const aborted of [false, true]) test(`settlement (aborted=${aborted}) ${aborted ? "retains the interruption" : "automatically clears completion"} and preserves audit`, async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.UTC(2026, 10, 15) });
+  const audit = [];
+  const f = fixture(t, [], {
+    sessions: { async assertTarget() {}, async append(record) { audit.push(record); } }, async deliver() {},
+  });
+  let runtime = await f.restart();
+  const scheduled = await runtime.schedule("source", { after_seconds: 60, message: "handoff" });
+  t.mock.timers.tick(60_000);
+  await flush();
+  const at = new Date().toISOString();
+  runtime.observe({ type: "received", wakeupId: scheduled.wakeupId, at, runId: "run", notificationEntryId: "notice" });
+  assert.equal(f.disk.read()[0].status, "received");
+  runtime.observe({ type: "settled", wakeupId: scheduled.wakeupId, at, runId: "run", aborted, responseEntryIds: ["answer"] });
+  if (aborted) {
+    assert.equal((await runtime.query()).items[0].status, "run_aborted");
+    assert.equal(f.disk.read()[0].status, "run_aborted");
+  } else {
+    assert.deepEqual((await runtime.query()).items, []);
+    assert.deepEqual(f.disk.read(), []);
+  }
+  const settled = audit.find(record => record.event === (aborted ? "run_aborted" : "run_settled"));
+  assert.equal(settled.notificationEntryId, "notice");
+  assert.deepEqual(settled.responseEntryIds, ["answer"]);
+  runtime = await f.restart();
+  runtime.observe({ type: "received", wakeupId: scheduled.wakeupId, at, runId: "run" });
+  if (aborted) {
+    assert.equal((await runtime.query()).items[0].status, "run_aborted");
+    await expectStatus(scheduled.wakeupId, 200);
+  }
+  assert.deepEqual((await runtime.query()).items, []);
+});
+
+test("automatic cleanup failure retains the saved settlement, pauses, then recovers on restart", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.UTC(2026, 10, 15) });
+  const f = fixture(t, [], {
+    sessions: { async assertTarget() {}, async append(record) { if (record.event === "run_settled") f.failWrites(); } },
+    async deliver() {},
+  });
+  let runtime = await f.restart();
+  const scheduled = await runtime.schedule("source", { after_seconds: 60, message: "handoff" });
+  t.mock.timers.tick(60_000);
+  await flush();
+  runtime.observe({ type: "settled", wakeupId: scheduled.wakeupId, at: new Date().toISOString() });
+  const result = await runtime.query();
+  assert.equal(result.health.state, "storage_error");
+  assert.equal(result.items[0].status, "run_settled");
+  assert.equal(result.items[0].unsaved, undefined);
+  assert.equal(f.disk.read()[0].status, "run_settled");
+  f.failWrites(false);
+  runtime = await f.restart();
+  assert.equal((await runtime.query()).health.state, "ready");
+  assert.deepEqual(f.disk.read(), []);
+});
+
+test("startup cleanup failure keeps existing records and arms no pending timers", async t => {
+  const f = fixture(t, [task("done", "run_settled"), task("pending", "pending")]);
+  f.failWrites();
+  const runtime = await f.restart();
+  const result = await runtime.query();
+  assert.equal(result.health.state, "storage_error");
+  assert.equal(result.items.length, 2);
+  assert.ok(result.items.every(item => !item.armed));
+  assert.equal(f.disk.read().length, 2);
 });
 
 test("DELETE rejects pending and restored unknown tasks without changing the manifest", async t => {
@@ -144,9 +216,10 @@ test("settled observations cannot clear a task while delivery still has a pendin
   await expectStatus(scheduled.wakeupId, 409);
   release();
   await flush();
-  assert.ok(f.disk.read()[0].submittedAt);
-  await expectStatus(scheduled.wakeupId, 200);
   assert.deepEqual(f.disk.read(), []);
+  await expectStatus(scheduled.wakeupId, 404);
+  runtime.observe({ type: "received", wakeupId: scheduled.wakeupId, at, runId: "run" });
+  assert.deepEqual((await runtime.query()).items, []);
 });
 
 test("DELETE rejects an accepted submitted task until a terminal observation arrives", async t => {
@@ -159,16 +232,35 @@ test("DELETE rejects an accepted submitted task until a terminal observation arr
   assert.equal(f.disk.read()[0].status, "submitted");
   await expectStatus(scheduled.wakeupId, 409);
   runtime.observe({ type: "settled", wakeupId: scheduled.wakeupId, at: new Date().toISOString(), aborted: true });
+  assert.equal((await runtime.query()).items[0].status, "run_aborted");
   await expectStatus(scheduled.wakeupId, 200);
 });
 
-test("failed delete retains disk and memory, pauses timers, and rejects subsequent writes", async t => {
-  const f = fixture(t, [task("terminal"), task("pending", "pending")]);
+test("manual DELETE remains compatible while a cancellation audit is still finishing", async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const f = fixture(t, [task("terminal", "pending")], {
+    sessions: { async append(record) { if (record.event === "cancelled") await gate; } },
+  });
   const runtime = await f.restart();
-  const before = readFileSync(f.stateFile);
-  assert.equal(runtime.list().length, 1);
-  f.failWrites();
-  await expectStatus("terminal", 503);
+  const cancelling = runtime.cancel("terminal");
+  await flush();
+  assert.equal(f.disk.read()[0].status, "cancelled");
+  assert.deepEqual(await expectStatus("terminal", 200), { wakeupId: "terminal" });
+  release();
+  await cancelling;
+  assert.deepEqual(f.disk.read(), []);
+});
+
+test("failed cancellation cleanup retains the terminal record, pauses timers, and rejects subsequent writes", async t => {
+  let before;
+  const f = fixture(t, [task("terminal", "pending"), task("pending", "pending")], {
+    sessions: { async append() { before = readFileSync(f.stateFile); f.failWrites(); } },
+  });
+  const runtime = await f.restart();
+  assert.equal(runtime.list().length, 2);
+  await runtime.cancel("terminal");
   const result = await runtime.query({ wakeup_id: "terminal" });
   assert.equal(result.health.state, "storage_error");
   assert.equal(result.items[0].status, "cancelled");

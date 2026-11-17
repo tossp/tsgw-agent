@@ -146,20 +146,19 @@ test("all wakeup tools default to codemode, refuse direct calls and retain struc
       assert.deepEqual(cancelled, timer);
       assert.equal(history[0].status, "cancelled");
       assert.deepEqual(history[0].events.map((event) => event.event), ["created", "cancelled"]);
-      assert.equal(queried.items[0].wakeupId, timer.wakeupId);
-      assert.equal(queried.items[0].status, "cancelled");
+      assert.deepEqual(queried.items, []);
       const rejected = await ctx.executeTool("close_wakeup", { wakeup_id: timer.wakeupId, reason: "already cancelled" });
       assert.equal(rejected.isError, true);
-      assert.equal(rejected.result.structuredContent.code, "wakeup_not_closable");
+      assert.equal(rejected.result.structuredContent.code, "wakeup_not_found");
       const uncertain = await runtime.schedule(ctx.sessionManager.getSessionId(), { after_seconds: 0.001, message: "investigate before closing" });
       await eventually(async () => (await runtime.query({ wakeup_id: uncertain.wakeupId })).items[0]?.status === "submitted");
       runtime.observe({ type: "uncertain", wakeupId: uncertain.wakeupId, at: new Date().toISOString(), reason: "fixture lost observation" });
       const closed = await run("close_wakeup", { wakeup_id: uncertain.wakeupId, reason: "Verified target; no further work needed" });
       assert.equal(closed.status, "closed");
       assert.equal(closed.closeReason, "Verified target; no further work needed");
-      assert.equal((await run("query_wakeups", { wakeup_id: uncertain.wakeupId })).items[0].status, "closed");
-      assert.deepEqual(await run("clear_wakeup", { wakeup_id: uncertain.wakeupId }), { wakeupId: uncertain.wakeupId });
-      assert.deepEqual(await run("clear_wakeup", { wakeup_id: timer.wakeupId }), { wakeupId: timer.wakeupId });
+      assert.deepEqual((await run("query_wakeups", { wakeup_id: uncertain.wakeupId })).items, []);
+      assert.equal((await run("clear_wakeup", { wakeup_id: uncertain.wakeupId })).code, "wakeup_not_found");
+      assert.equal((await run("clear_wakeup", { wakeup_id: timer.wakeupId })).code, "wakeup_not_found");
       return { content: [{ type: "text", text: "script done" }], details: undefined };
     },
   });
@@ -212,7 +211,7 @@ test("all wakeup tools default to codemode, refuse direct calls and retain struc
     assert.ok(codemode.description.includes("do not sleep or poll"), "schedule guidance must reach codemode");
     assert.deepEqual(outcomes.map((item) => item.name), ["schedule_wakeup", "query_wakeups", "cancel_wakeup", "query_wakeups", "close_wakeup", "query_wakeups", "clear_wakeup", "clear_wakeup"]);
     for (const item of outcomes) {
-      assert.equal(item.isError, false, item.name);
+      assert.equal(item.isError, item.name === "clear_wakeup", item.name);
       assert.deepEqual(item.result.structuredContent, item.result.details);
       assert.deepEqual(JSON.parse(textOf(item.result)), item.result.structuredContent);
     }

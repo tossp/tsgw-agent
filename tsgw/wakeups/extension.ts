@@ -97,7 +97,7 @@ export function createWakeupExtension(runtime: WakeupRuntime): InlineExtension {
       }));
       pi.registerTool(defineTool({
         name: "query_wakeups", label: "Query wakeup status", exposure: "codemode",
-        description: "Read the authoritative global wakeup status, observation evidence and scheduler health. Filter explicitly by session_id, source, target, cwd, status, armed or pagination; armed=true lists only timers actually armed in this process. Filter by wakeup_id for full message and evidence. received means notification observed; run_settled is not task success. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
+        description: "Read the authoritative global wakeup status, observation evidence and scheduler health. Filter explicitly by session_id, source, target, cwd, status, armed or pagination; armed=true lists only timers actually armed in this process. Filter by wakeup_id for full message and evidence. received means notification observed; run_settled is not task success. Saved run_settled, cancelled and closed records are automatically removed after submission finishes. Interrupted, delivery_failed and unknown records remain for review; absence does not prove task success. Session messages and audit remain. Unknown dispatches are not retried. Read-only: never starts or leases a session.",
         annotations: { readOnlyHint: true, openWorldHint: false },
         parameters: querySchema, outputSchema: queryResultSchema,
         async execute(_id, input, signal) {

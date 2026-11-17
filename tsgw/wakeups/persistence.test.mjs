@@ -92,7 +92,7 @@ test("cancel is durable and cancelled state never restores a timer", async t => 
   await f.restart().ready();
   await f.tick(120_000);
   assert.equal(f.calls.length, 0);
-  assert.equal(f.state().tasks[0].status, "cancelled");
+  assert.deepEqual(f.state().tasks, []);
   assert.deepEqual(f.runtime.list(), []);
 });
 
@@ -105,9 +105,11 @@ test("a target deleted before a restored pending task fires stays deleted", asyn
   await f.tick(60_000);
   assert.equal(f.calls.length, 0);
   assert.equal(f.state().tasks[0].status, "delivery_failed");
+  assert.equal(f.audit.at(-1).event, "failed");
   await f.restart().ready();
   await f.tick(60_000);
   assert.equal(f.calls.length, 0);
+  assert.equal(f.state().tasks[0].status, "delivery_failed");
 });
 
 test("dispatching is saved before host delivery and a crash never replays it", async t => {
@@ -194,11 +196,11 @@ test("audit failures do not undo a durable schedule or cancellation", async t =>
   assert.equal(task.diagnostics[0].code, "wakeup_audit_not_saved");
   const cancelled = await f.runtime.cancel(task.wakeupId);
   assert.equal(cancelled.diagnostics[0].code, "wakeup_audit_not_saved");
-  assert.equal(f.state().tasks[0].status, "cancelled");
+  assert.deepEqual(f.state().tasks, []);
   assert.equal((await f.runtime.query()).health.state, "ready");
 });
 
-test("receipt and settled observed before send resolves cannot be downgraded by submitted", async t => {
+test("settled before send resolves is cleaned only after submission saves, with audit retained", async t => {
   const f = fixture(t, { deliver: async (task, _context, runtime) => {
     const at = new Date().toISOString();
     runtime.observe({ wakeupId: task.wakeupId, type: "received", at, runId: "run", notificationEntryId: "notice" });
@@ -207,12 +209,14 @@ test("receipt and settled observed before send resolves cannot be downgraded by 
   f.restart();
   const task = await f.schedule();
   await f.tick(60_000);
-  const item = (await f.runtime.query({ wakeup_id: task.wakeupId })).items[0];
-  assert.equal(item.status, "run_settled");
-  assert.ok(item.submittedAt && item.receivedAt && item.settledAt);
-  assert.deepEqual(item.responseEntryIds, ["response"]);
+  assert.deepEqual((await f.runtime.query({ wakeup_id: task.wakeupId })).items, []);
+  assert.deepEqual(f.state().tasks, []);
+  const settled = f.audit.find(item => item.event === "run_settled");
+  assert.ok(settled.receivedAt && settled.settledAt);
+  assert.deepEqual(settled.responseEntryIds, ["response"]);
+  assert.ok(f.audit.find(item => item.event === "submitted"));
   await f.restart().ready();
-  assert.equal((await f.runtime.query({ wakeup_id: task.wakeupId })).items[0].status, "run_settled");
+  assert.deepEqual((await f.runtime.query({ wakeup_id: task.wakeupId })).items, []);
 });
 
 for (const failBeforeReceipt of [true, false]) test(`late acceptance preserves unsaved settled evidence (receipt saved: ${!failBeforeReceipt})`, async t => {
@@ -250,6 +254,9 @@ test("Stop records uncertainty without claiming an individual queue removal", as
   item = (await f.runtime.query({ wakeup_id: task.wakeupId })).items[0];
   assert.equal(item.status, "run_aborted");
   assert.equal(item.aborted, true);
+  const aborted = f.audit.at(-1);
+  assert.equal(aborted.event, "run_aborted");
+  assert.equal(aborted.aborted, true);
 });
 
 test("ownership loss after preparation blocks the unsent host operation", async t => {
@@ -313,7 +320,7 @@ test("queries remain available while scheduler initialization waits for ownershi
   await starting.ready();
 });
 
-test("closing investigated uncertainty preserves evidence, audit and closure across restart, then permits cleanup", async t => {
+test("closing investigated uncertainty automatically clears the record and preserves audit across restart", async t => {
   const f = fixture(t);
   f.restart();
   const task = await f.schedule();
@@ -326,27 +333,21 @@ test("closing investigated uncertainty preserves evidence, audit and closure acr
   assert.deepEqual(closed, { wakeupId: task.wakeupId, status: "closed", closedAt: at, closeReason: reason });
   for (const type of ["received", "settled", "uncertain"]) f.runtime.observe({ type, wakeupId: task.wakeupId, at });
   f.runtime.stopSession(task.targetSessionId);
-  let item = (await f.runtime.query({ wakeup_id: task.wakeupId, status: "closed" })).items[0];
-  assert.equal(item.status, "closed");
+  assert.deepEqual((await f.runtime.query({ wakeup_id: task.wakeupId, status: "closed" })).items, []);
+  const item = f.audit.at(-1);
   assert.equal(item.error, "observation interrupted");
   assert.equal(item.receivedAt, at);
   assert.equal(item.notificationEntryId, "notice");
   assert.deepEqual(item.responseEntryIds, ["response"]);
   assert.equal(item.settledAt, undefined, "closure must not invent run completion");
-  assert.equal(f.audit.at(-1).event, "closed");
-  assert.equal(f.audit.at(-1).closeReason, reason);
+  assert.equal(item.event, "closed");
+  assert.equal(item.closeReason, reason);
   await f.restart().ready();
   await f.tick(60_000);
-  item = (await f.runtime.query({ wakeup_id: task.wakeupId })).items[0];
-  assert.equal(item.status, "closed");
-  assert.equal(item.closeReason, reason);
+  assert.deepEqual((await f.runtime.query({ wakeup_id: task.wakeupId })).items, []);
   assert.equal(f.calls.length, 1);
   assert.deepEqual(f.runtime.list(), []);
-  const auditBefore = [...f.audit];
-  assert.deepEqual(f.runtime.clear(task.wakeupId), { wakeupId: task.wakeupId });
-  assert.deepEqual(f.audit, auditBefore);
-  await f.restart().ready();
-  assert.deepEqual((await f.runtime.query()).items, []);
+  assert.equal(f.audit.at(-1), item);
 });
 
 test("close rejects missing IDs, blank reasons and non-unknown states without modifying disk", async t => {
@@ -362,7 +363,7 @@ test("close rejects missing IDs, blank reasons and non-unknown states without mo
   await assert.rejects(f.runtime.close(task.wakeupId, "checked"), error => error.details.code === "wakeup_not_closable");
   f.runtime.observe({ type: "uncertain", wakeupId: task.wakeupId, at: new Date().toISOString() });
   await f.runtime.close(task.wakeupId, "checked");
-  await assert.rejects(f.runtime.close(task.wakeupId, "overwrite"), error => error.details.code === "wakeup_not_closable");
+  await assert.rejects(f.runtime.close(task.wakeupId, "overwrite"), error => error.details.code === "wakeup_not_found");
 });
 
 test("failed close persistence retains unknown state and pauses scheduling", async t => {
@@ -391,7 +392,7 @@ test("close retains its durable result when the audit mirror fails", async t => 
   assert.equal(result.status, "closed");
   assert.equal(result.diagnostics[0].code, "wakeup_audit_not_saved");
   await f.restart().ready();
-  assert.equal((await f.runtime.query({ wakeup_id: task.wakeupId })).items[0].status, "closed");
+  assert.deepEqual((await f.runtime.query({ wakeup_id: task.wakeupId })).items, []);
 });
 
 test("read-only instance can inspect durable tasks but refuses scheduling and cancellation", async t => {
