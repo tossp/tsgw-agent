@@ -30,19 +30,17 @@ export interface ImAttachment {
   mimeType: string;
 }
 
-export interface ImReplyCapabilities {
-  attachments: boolean;
-}
+export type ImSendItem = { type: "text"; text: string } | { type: "image" | "file"; path: string };
 
-export interface ImReply {
-  text: string;
-  attachments?: ImAttachment[];
+export interface ImRecipient {
+  chatId: string;
+  senderId?: string;
+  isGroup?: boolean;
+  threadId?: string;
 }
 
 export interface ImInbound {
   id: string;
-  /** Native message ID when the receipt key above differs (Telegram update_id). */
-  messageId?: string;
   chatId: string;
   senderId: string;
   text: string;
@@ -63,8 +61,8 @@ export interface ImDriverStatus {
 export interface ImDriver {
   start(): void;
   stop(): Promise<void>;
-  send(message: ImInbound, text: string): Promise<void>;
-  sendAttachment?(message: ImInbound, attachment: ImAttachment, signal?: AbortSignal): Promise<void>;
+  send(message: ImRecipient, text: string, signal?: AbortSignal): Promise<void>;
+  sendAttachment?(message: ImRecipient, attachment: ImAttachment, signal?: AbortSignal): Promise<void>;
   setTyping?(message: ImInbound, active: boolean): void;
 }
 
@@ -100,7 +98,6 @@ export interface ImConversation {
 export interface ImBotView extends Omit<ImBot, "credentials"> {
   status: ImDriverStatus;
   deliveryError?: string;
-  username?: string;
 }
 
 export interface ImSessionView {
@@ -115,11 +112,10 @@ export interface ImSnapshot {
 }
 
 export type ImAction =
-  | { action: "add-telegram"; token: string; name: string; cwd: string; allowedUserIds: string[]; allowedChatIds: string[] }
   | { action: "login-weixin"; name: string; cwd: string }
   | { action: "poll-weixin"; loginId: string }
   | { action: "cancel-weixin"; loginId: string }
-  | { action: "update-bot"; botId: string; name: string; cwd: string; enabled: boolean; allowedUserIds: string[]; allowedChatIds: string[] }
+  | { action: "update-bot"; botId: string; name: string; cwd: string; enabled: boolean }
   | { action: "remove-bot"; botId: string }
   | { action: "bind"; conversationKey: string; sessionId: string | null };
 

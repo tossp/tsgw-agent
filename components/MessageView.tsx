@@ -7,7 +7,6 @@ import { ImagePreview } from "./ImagePreview";
 import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
-import { ImSourceBadge } from "@/tsgw/im";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantAborted, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
@@ -646,7 +645,6 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
             </div>
           )}
-          {message.imSource && <ImSourceBadge source={message.imSource} />}
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
         </div>
       )}

@@ -4,26 +4,13 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { ConfigButton, ConfigDetailStack, ConfigDetailTitle, ConfigField, ConfigNotice } from "@/components/SettingsUi";
 import type { ImAction, ImBotView, ImConversation, ImSessionView } from "./types";
 import { imRequest } from "./useImSettings";
-import { parseImIds, type ImCopy } from "./im-ui";
+import type { ImCopy } from "./im-ui";
 import styles from "./im-settings.module.css";
 
-export function ImTextField({ label, value, onChange, password = false, hint }: {
-  label: string; value: string; onChange: (value: string) => void; password?: boolean; hint?: string;
-}) {
+export function ImTextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   const id = useId();
   return <ConfigField label={<label htmlFor={id}>{label}</label>}>
-    <input id={id} className={styles.input} type={password ? "password" : "text"} value={value}
-      autoComplete="off" spellCheck={false} onChange={(event) => onChange(event.target.value)} aria-describedby={hint ? `${id}-hint` : undefined} />
-    {hint && <span id={`${id}-hint`} className={styles.hint}>{hint}</span>}
-  </ConfigField>;
-}
-
-export function ImIdField({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint: string }) {
-  const id = useId();
-  return <ConfigField label={<label htmlFor={id}>{label}</label>}>
-    <textarea id={id} className={styles.input} rows={2} value={value} spellCheck={false}
-      onChange={(event) => onChange(event.target.value)} aria-describedby={`${id}-hint`} />
-    <span id={`${id}-hint`} className={styles.hint}>{hint}</span>
+    <input id={id} className={styles.input} type="text" value={value} spellCheck={false} onChange={(event) => onChange(event.target.value)} />
   </ConfigField>;
 }
 
@@ -84,36 +71,26 @@ export function ImBotDetail({ bot, conversations, copy, busy, act, onRemoved }: 
 }) {
   const [name, setName] = useState(bot.name);
   const [cwd, setCwd] = useState(bot.cwd);
-  const [users, setUsers] = useState(bot.allowedUserIds.join(", "));
-  const [chats, setChats] = useState(bot.allowedChatIds.join(", "));
   const [confirming, setConfirming] = useState(false);
-  const allowedUserIds = parseImIds(users);
-  const allowedChatIds = parseImIds(chats);
-  const valid = Boolean(name.trim() && cwd.trim() && (bot.channel !== "telegram" || allowedUserIds.length));
-  const changed = name.trim() !== bot.name || cwd.trim() !== bot.cwd
-    || JSON.stringify(allowedUserIds) !== JSON.stringify(bot.allowedUserIds)
-    || JSON.stringify(allowedChatIds) !== JSON.stringify(bot.allowedChatIds);
-  const reason = busy ? copy.saving : !name.trim() || !cwd.trim() ? copy.required
-    : !valid ? copy.tokenRequired : !changed ? copy.noChanges : "";
+  const valid = Boolean(name.trim() && cwd.trim());
+  const changed = name.trim() !== bot.name || cwd.trim() !== bot.cwd;
+  const reason = busy ? copy.saving : !valid ? copy.required : !changed ? copy.noChanges : "";
   return <ConfigDetailStack>
     <ConfigDetailTitle>{bot.name}</ConfigDetailTitle>
-    <div role="status" className={styles.status}>{copy[bot.status.state]} · {bot.channel === "weixin" ? copy.weixin : copy.telegram}{bot.username ? ` · @${bot.username}` : ""}</div>
+    <div role="status" className={styles.status}>{copy[bot.status.state]} · {copy.weixin}</div>
     {bot.status.error && <ConfigNotice><span role="alert">{bot.status.error}</span></ConfigNotice>}
     {bot.deliveryError && <ConfigNotice><span role="alert">{bot.deliveryError}</span></ConfigNotice>}
     <fieldset className={styles.fields} disabled={busy}>
       <ImTextField label={copy.name} value={name} onChange={setName} />
       <ImTextField label={copy.cwd} value={cwd} onChange={setCwd} />
-      {bot.channel === "telegram" ? <>
-        <ImIdField label={copy.users} value={users} onChange={setUsers} hint={copy.idsHint} />
-        <ImIdField label={copy.chats} value={chats} onChange={setChats} hint={copy.chatsHint} />
-      </> : <p className={styles.hint}>{copy.ownerHint}</p>}
+      <p className={styles.hint}>{copy.ownerHint}</p>
     </fieldset>
     <ImFormActions busy={busy} reason={reason}>
       <ConfigButton variant="primary" disabled={busy || !valid || !changed} onClick={() => void act({
-        action: "update-bot", botId: bot.id, name: name.trim(), cwd: cwd.trim(), enabled: bot.enabled, allowedUserIds, allowedChatIds,
+        action: "update-bot", botId: bot.id, name: name.trim(), cwd: cwd.trim(), enabled: bot.enabled,
       })}>{copy.save}</ConfigButton>
       <ConfigButton disabled={busy} onClick={() => void act({ action: "update-bot", botId: bot.id,
-        name: bot.name, cwd: bot.cwd, enabled: !bot.enabled, allowedUserIds: bot.allowedUserIds, allowedChatIds: bot.allowedChatIds,
+        name: bot.name, cwd: bot.cwd, enabled: !bot.enabled,
       })}>{bot.enabled ? copy.stop : copy.start}</ConfigButton>
       <ConfigButton variant="danger" disabled={busy} onClick={() => setConfirming(true)}>{copy.remove}</ConfigButton>
     </ImFormActions>

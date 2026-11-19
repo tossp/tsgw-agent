@@ -37,6 +37,7 @@
     "public",
     "tsgw/wakeups/skills",
     "tsgw/session-management/skills",
+    "tsgw/im/skills",
     "tsgw/release/index.js",
     "tsgw/release/index.d.ts",
     "tsgw/cat-monitoring/next-config.mjs",

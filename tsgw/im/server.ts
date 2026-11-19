@@ -5,24 +5,23 @@ import { ImStore } from "./store";
 import { ImRuntime } from "./runtime";
 import { ImService, projectDirectory } from "./service";
 import { parseImAction } from "./actions";
-import { createTelegramDriver, verifyTelegramToken } from "./telegram";
-import { describeTelegramBot } from "./telegram-setup";
 import { createWeixinDriver } from "./weixin";
 import { createWeixinLogin } from "./weixin-login";
 import { createPiSessionHost } from "./pi-host";
 import { reportImError } from "./telemetry";
+import { createImExtension as createExtension, installChatOnlyImReply as installReply } from "./extension";
+
+const getRuntime = async () => (await getImService()).runtime;
+export const createImExtension = () => createExtension(getRuntime);
+export const installChatOnlyImReply = (session: Parameters<typeof installReply>[0]) => installReply(session, getRuntime);
 
 const SERVICE_KEY = Symbol.for("pi-web.im.service");
 type ServiceGlobal = typeof globalThis & { [SERVICE_KEY]?: Promise<ImService> };
 
 async function createService(): Promise<ImService> {
   const store = await ImStore.open(join(getAgentDir(), "integrations", "im", "state.json"));
-  const runtime = new ImRuntime(store, createPiSessionHost(), {
-    telegram: createTelegramDriver,
-    weixin: createWeixinDriver,
-  }, describeTelegramBot);
+  const runtime = new ImRuntime(store, createPiSessionHost(), createWeixinDriver);
   const service = new ImService(runtime, {
-    verifyTelegram: (token) => verifyTelegramToken(token),
     createWeixinLogin: (signal) => createWeixinLogin({ signal }),
     qrImage: (url) => QRCode.toDataURL(url, { width: 280, margin: 2 }),
   });

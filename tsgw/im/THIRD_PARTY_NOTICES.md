@@ -1,10 +1,8 @@
 # IM third-party notices
 
-The Telegram and Weixin adapters use the protocol and routing behavior of
+The Weixin adapter uses the protocol and routing behavior of
 `xmanrui/dsh-im` v5.10.0 as a reference, especially:
 
-- `src/channels/telegram/telegram-api.mjs`
-- `src/channels/telegram/telegram-runtime.mjs`
 - `src/channels/weixin/weixin-api.mjs`
 - `src/channels/weixin/weixin-controller.mjs`
 - `src/channels/weixin/weixin-runtime.mjs`

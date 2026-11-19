@@ -7,55 +7,33 @@ import {
   ConfigNotice, ConfigPanelShell, ConfigSidebar, ConfigSidebarItem, ConfigSidebarList, ConfigSidebarText,
   ConfigSplitView, ConfigStatusDot, useConfigDetailNavigation,
 } from "@/components/SettingsUi";
-import { ImBotDetail, ImFormActions, ImIdField, ImTextField } from "./ImBotDetail";
-import { imCopy, parseImIds, type ImCopy } from "./im-ui";
+import { ImBotDetail, ImFormActions, ImTextField } from "./ImBotDetail";
+import { imCopy, type ImCopy } from "./im-ui";
 import { useImSettings } from "./useImSettings";
-import type { ImAction, ImChannel, WeixinLoginResult } from "./types";
+import type { ImAction, WeixinLoginResult } from "./types";
 import styles from "./im-settings.module.css";
 
 function ImCreateBot({ cwd: initialCwd, copy, busy, login, act, cancelLogin }: {
   cwd: string | null; copy: ImCopy; busy: boolean; login: WeixinLoginResult | null; cancelLogin: () => Promise<boolean>;
   act: (action: ImAction) => Promise<boolean>;
 }) {
-  const [channel, setChannel] = useState<ImChannel>("telegram");
   const [name, setName] = useState("");
   const [cwd, setCwd] = useState(initialCwd ?? "");
-  const [token, setToken] = useState("");
-  const [users, setUsers] = useState("");
-  const [chats, setChats] = useState("");
-  const waiting = channel === "weixin" && (login?.state === "waiting" || login?.state === "scanned");
-  const reason = busy ? copy.saving : waiting ? copy[login!.state] : !name.trim() || !cwd.trim() ? copy.required
-    : channel === "telegram" && (!token.trim() || !parseImIds(users).length) ? copy.tokenRequired : "";
-  const create = async () => {
-    if (channel === "weixin") {
-      await act({ action: "login-weixin", name: name.trim(), cwd: cwd.trim() });
-    } else if (await act({ action: "add-telegram", name: name.trim(), cwd: cwd.trim(), token: token.trim(),
-      allowedUserIds: parseImIds(users), allowedChatIds: parseImIds(chats),
-    })) {
-      setToken("");
-    }
-  };
+  const waiting = login?.state === "waiting" || login?.state === "scanned";
+  const reason = busy ? copy.saving : waiting ? copy[login.state] : !name.trim() || !cwd.trim() ? copy.required : "";
+  const create = () => act({ action: "login-weixin", name: name.trim(), cwd: cwd.trim() });
   return <ConfigDetailStack>
     <ConfigDetailTitle>{copy.add}</ConfigDetailTitle>
     <fieldset className={styles.fields} disabled={busy || waiting}>
       <legend className="sr-only">{copy.add}</legend>
-      <div className={styles.actions} role="radiogroup" aria-label={copy.add}>
-        {(["telegram", "weixin"] as const).map((value) => <label key={value} className={styles.channel}>
-          <input type="radio" name="im-channel" value={value} checked={channel === value} onChange={() => setChannel(value)} />{copy[value]}
-        </label>)}
-      </div>
       <ImTextField label={copy.name} value={name} onChange={setName} />
       <ImTextField label={copy.cwd} value={cwd} onChange={setCwd} />
-      {channel === "telegram" ? <>
-        <ImTextField label={copy.token} value={token} onChange={setToken} password />
-        <ImIdField label={copy.users} value={users} onChange={setUsers} hint={copy.idsHint} />
-        <ImIdField label={copy.chats} value={chats} onChange={setChats} hint={copy.chatsHint} />
-      </> : <p className={styles.hint}>{copy.ownerHint}</p>}
+      <p className={styles.hint}>{copy.ownerHint}</p>
     </fieldset>
     <ImFormActions busy={busy} reason={reason}>
-      <ConfigButton variant="primary" disabled={Boolean(reason)} onClick={() => void create()}>{channel === "telegram" ? copy.create : copy.scan}</ConfigButton>
+      <ConfigButton variant="primary" disabled={Boolean(reason)} onClick={() => void create()}>{copy.scan}</ConfigButton>
     </ImFormActions>
-    {channel === "weixin" && login && <div className={styles.login}>
+    {login && <div className={styles.login}>
       <p role="status">{copy[login.state]}</p>
       {waiting && <>
         {login.qrImage?.startsWith("data:image/png;base64,") ?
@@ -85,7 +63,7 @@ export function ImSettings({ cwd, onClose }: { cwd: string | null; onClose: () =
           {snapshot?.bots.map((item) => <ConfigSidebarItem key={item.id} active={selection === item.id} onClick={() => setSelection(item.id)}>
             <ConfigStatusDot active={item.status.state === "connected"} />
             <ConfigSidebarText>{item.name}</ConfigSidebarText>
-            <span className={styles.badge}>{item.channel === "weixin" ? copy.weixin : copy.telegram}</span>
+            <span className={styles.badge}>{copy.weixin}</span>
           </ConfigSidebarItem>)}
           {snapshot && !snapshot.bots.length && <ConfigEmptyState>{copy.noBots}</ConfigEmptyState>}
           {!snapshot && !error && <p role="status" className={styles.hint}>{copy.loading}</p>}

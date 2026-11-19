@@ -10,13 +10,13 @@ registerHooks({ load(url, context, nextLoad) {
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { createElement: h } = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ImBotDetail, ImTextField } = await jiti.import("./ImBotDetail.tsx");
+const { ImBotDetail } = await jiti.import("./ImBotDetail.tsx");
 const { ConfigDetailNavigationContext, ConfigSplitView } = await jiti.import("../../components/SettingsUi.tsx");
 const { imCopy } = await jiti.import("./im-ui.ts");
 const noop = () => {};
 
 function renderImFixture(detailOpen, deliveryError) {
-  const bot = { id: "bot", channel: "telegram", name: "Example bot", cwd: "/work/project",
+  const bot = { id: "bot", channel: "weixin", name: "Example bot", cwd: "/work/project",
     enabled: true, allowedUserIds: ["123"], allowedChatIds: [], status: { state: "connected" }, deliveryError };
   const conversation = { key: "conversation", botId: bot.id, chatId: "-100123", title: "Example conversation",
     sessionId: "associated-session", cwd: bot.cwd };
@@ -25,13 +25,6 @@ function renderImFixture(detailOpen, deliveryError) {
     h(ConfigSplitView, null, h(ImBotDetail, { bot, conversations: [conversation], copy: imCopy("en"), busy: false, act: async () => true, onRemoved: noop })),
   ));
 }
-
-test("the token control masks input and does not offer credential autofill", () => {
-  const html = renderToStaticMarkup(h(ImTextField, { label: "Bot Token", value: "", onChange: noop, password: true }));
-  assert.match(html, /type="password"/);
-  assert.match(html, /autoComplete="off"/);
-  assert.match(html, /<label for="[^"]+">Bot Token<\/label>/);
-});
 
 test("bot details show an explicit current association and new-session choice without credentials", () => {
   const html = renderImFixture(true);

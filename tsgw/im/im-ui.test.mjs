@@ -16,7 +16,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const { renderHook } = await import(shim);
 const { useImSettings, imRequest } = await jiti.import("./useImSettings.ts");
-const { parseImIds, imCopy } = await jiti.import("./im-ui.ts");
+const { imCopy } = await jiti.import("./im-ui.ts");
 const { ImConversations } = await jiti.import("./ImBotDetail.tsx");
 const snapshot = { bots: [], conversations: [] };
 const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
@@ -33,10 +33,6 @@ function environment(t, fetch) {
   t.mock.method(globalThis, "clearTimeout", (key) => timeouts.delete(key));
   return { intervals, timeouts };
 }
-
-test("ID input preserves string IDs and deduplicates comma/newline lists", () => {
-  assert.deepEqual(parseImIds("123, -100002\n123，00456\n"), ["123", "-100002", "00456"]);
-});
 
 test("GET uses the project query without creating a bot; API refusals retain their message", async (t) => {
   const calls = [];

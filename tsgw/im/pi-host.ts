@@ -1,18 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { isOrdinarySession as ordinary, listSessionCatalog, projectSessions, sessionDirectoryKey as directoryKey } from "../session-management";
+import { setTimeout as delay } from "node:timers/promises";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { isOrdinarySession, listSessionCatalog, projectSessions, sessionDirectoryKey } from "../session-management";
 import type { AgentSessionWrapper } from "../../lib/rpc-manager";
 import type { SessionInfo } from "../../lib/types";
 import type { ImSessionHost } from "./host-types";
-import { abortable, sendPiPrompt, waitForPiIdle } from "./pi-host-run";
-import { registerImMessageSource } from "./message-source";
-import type { ImMessageSource } from "./message-data";
-import { collectImReply, preparePiAttachments } from "./pi-media";
-import type { ImReplyCapabilities } from "./types";
+import { makeImNotification, type ImReplyHandle } from "./notification";
 
-type Wrapper = Pick<AgentSessionWrapper, "send" | "onEvent" | "isAlive" | "isRunning">;
+type Wrapper = Pick<AgentSessionWrapper, "isAlive" | "send" | "beginCustomMessageSubmission" | "acquirePromptAdmission" | "prepareMcpForRun" | "shellRunning">
+  & { inner: Pick<AgentSession, "isCompacting" | "isStreaming" | "sendCustomMessage"> };
 
-/** Narrow I/O seam; tests exercise the real attribution/queue logic with scripted events. */
 export interface PiHostAccess {
   list(): Promise<SessionInfo[]>;
   get(id: string): Promise<Wrapper | undefined>;
@@ -20,7 +18,6 @@ export interface PiHostAccess {
   resolvePath(id: string): Promise<string | null>;
   allowRoot(cwd: string): Promise<void>;
   invalidateList(): Promise<void>;
-  registerSource(wrapper: Wrapper, source: ImMessageSource, replyCapabilities?: ImReplyCapabilities): () => void;
 }
 
 const defaultAccess: PiHostAccess = {
@@ -33,37 +30,10 @@ const defaultAccess: PiHostAccess = {
   async resolvePath(id) { return (await import("../../lib/session-reader")).resolveSessionPath(id); },
   async allowRoot(cwd) { (await import("../../lib/file-access")).allowFileRoot(cwd); },
   async invalidateList() { (await import("../../lib/session-reader")).invalidateSessionListCache(); },
-  registerSource(wrapper, source, replyCapabilities) {
-    // defaultAccess returns real wrappers; scripted tests use the narrow I/O seam.
-    return registerImMessageSource((wrapper as AgentSessionWrapper).inner.sessionManager, source, replyCapabilities);
-  },
 };
 
-// Only IM submissions are serialized here. Wrapper/SDK retain ownership of the actual session.
-const QUEUES_KEY = Symbol.for("pi-web.im.host-session-queues");
-// SAFETY: this private global symbol is only assigned the IM queue Map below; its
-// entries contain completion promises, never AgentSession objects or message text.
-const queues = ((globalThis as unknown as Record<symbol, Map<string, Promise<void>>>)[QUEUES_KEY] ??= new Map());
-
-async function inSession<T>(id: string, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
-  const previous = queues.get(id) ?? Promise.resolve();
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const tail = previous.then(() => gate);
-  queues.set(id, tail);
-  try {
-    await abortable(previous, signal);
-    signal.throwIfAborted();
-    return await action();
-  } finally {
-    release();
-    void tail.then(() => { if (queues.get(id) === tail) queues.delete(id); });
-  }
-}
-
 export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSessionHost {
-  const find = async (id: string, cwd?: string) => (await access.list()).find((session) =>
-    session.id === id && ordinary(session) && (cwd === undefined || directoryKey(session.cwd) === directoryKey(cwd)));
+  const find = async (id: string, cwd: string) => projectSessions(await access.list(), cwd).find((session) => session.id === id);
 
   return {
     async list(cwd) {
@@ -72,61 +42,52 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
     },
     async exists(id, cwd) { return Boolean(await find(id, cwd)); },
     async create(cwd) {
-      // Preserve pi-autoname: a fixed /name here would disable normal automatic titles.
-      const path = directoryKey(cwd);
-      try {
-        if (!statSync(path).isDirectory()) throw new Error();
-      } catch { throw new Error("项目目录不存在或不可用。"); }
-      let started;
-      try { started = await access.start(`__new__${randomUUID()}`, "", path); }
-      catch { throw new Error("无法创建 Pi 会话，请检查项目与模型配置。"); }
+      const path = sessionDirectoryKey(cwd);
+      if (!statSync(path, { throwIfNoEntry: false })?.isDirectory()) throw new Error("项目目录不存在或不可用。");
       await access.allowRoot(path);
+      const started = await access.start(`__new__${randomUUID()}`, "", path);
       await access.invalidateList();
       return started.realSessionId;
     },
-    async prompt(id, text, signal, source, attachments, replyCapabilities) {
-      return inSession(id, signal, async () => {
-        const info = await abortable(find(id), signal);
-        if (!info) throw new Error("Pi 普通会话不存在或不可用，请重新绑定。");
-        let wrapper = await abortable(access.get(id), signal);
-        if (!wrapper?.isAlive()) {
-          const file = await abortable(access.resolvePath(id), signal);
-          if (!file) throw new Error("Pi 会话不存在或尚未保存，请重新绑定。");
-          try {
-            const started = await abortable(access.start(id, file), signal);
-            if (started.realSessionId !== id) throw new Error();
-            wrapper = started.session;
-          } catch {
-            signal.throwIfAborted();
-            throw new Error("无法恢复 Pi 会话，请重新绑定或查看 Pi 会话。");
-          }
-        }
-        await waitForPiIdle(wrapper, signal);
-        const media = attachments?.length ? await abortable(preparePiAttachments(attachments, signal), signal) : undefined;
-        if (media) {
-          text += `\n\n${media.links}`;
-          await waitForPiIdle(wrapper, signal);
-        }
-        // The marker belongs to this submission, even when two chats send identical text.
-        // Prefixing also prevents IM text from executing extension slash commands.
-        const requestId = randomUUID();
-        const marker = `[IM request ${requestId}]`;
-        const releaseSource = source ? access.registerSource(wrapper, { ...source, requestId }, replyCapabilities) : () => {};
+    async notify(handle: ImReplyHandle, cwd, input, signal) {
+      const id = handle.sessionId;
+      if (!await find(id, cwd)) throw new Error("Pi 普通会话不存在或不属于当前项目。");
+      const notification = await makeImNotification(handle, input, signal);
+      let wrapper = await access.get(id);
+      if (!wrapper?.isAlive()) {
+        const file = await access.resolvePath(id);
+        if (!file) throw new Error("Pi 会话不存在或尚未保存。");
+        signal.throwIfAborted();
+        const started = await access.start(id, file);
+        if (started.realSessionId !== id) throw new Error("无法恢复原 Pi 会话。");
+        wrapper = started.session;
+      }
+      signal.throwIfAborted();
+      const finishSubmission = wrapper.beginCustomMessageSubmission();
+      try {
+        const releaseAdmission = await wrapper.acquirePromptAdmission();
         try {
-          const answer = await sendPiPrompt(wrapper, `${marker}\n${text}`, marker, signal, media?.images);
-          return replyCapabilities?.attachments
-            ? await abortable(collectImReply(answer, info.cwd, signal), signal) : answer;
+          signal.throwIfAborted();
+          if (!await wrapper.prepareMcpForRun(signal)) throw new DOMException("通知提交已停止。", "AbortError");
+          while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) {
+            await delay(50, undefined, { signal });
+          }
+          signal.throwIfAborted();
+          if (!wrapper.isAlive()) throw new Error("Pi 会话已关闭。");
+          // While idle this promise covers the run. Busy sessions resolve on queueing.
+          // The IM queue only waits for submission and uses rejection for delivery errors.
+          return { completion: wrapper.inner.sendCustomMessage(notification, { triggerTurn: true, deliverAs: "followUp" }) };
         } finally {
-          releaseSource();
+          releaseAdmission();
         }
-      });
+      } finally {
+        finishSubmission();
+      }
     },
     async stop(id) {
       const wrapper = await access.get(id);
-      if (!wrapper?.isAlive()) return;
-      if (!await find(id)) throw new Error("只能停止普通 Pi 会话。");
-      try { await wrapper.send({ type: "abort" }); }
-      catch { throw new Error("无法停止 Pi 会话，请查看会话状态。"); }
+      if (!wrapper?.isAlive() || !(await access.list()).some((session) => session.id === id && isOrdinarySession(session))) return;
+      await wrapper.send({ type: "abort" });
     },
   };
 }

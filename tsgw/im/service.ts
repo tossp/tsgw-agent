@@ -3,9 +3,6 @@ import { isAbsolute } from "node:path";
 import type { ImAction, ImSnapshot, WeixinLoginResult } from "./types";
 import type { ImRuntime } from "./runtime";
 import { WeixinSetup, type WeixinSetupDependencies } from "./weixin-setup";
-import { addTelegramBot, telegramAccess, type TelegramSetupDependencies } from "./telegram-setup";
-
-export interface ImServiceDependencies extends WeixinSetupDependencies, TelegramSetupDependencies {}
 
 export class ImService {
   private weixin: WeixinSetup;
@@ -13,7 +10,7 @@ export class ImService {
   private lifetime = new AbortController();
   private closing?: Promise<void>;
 
-  constructor(readonly runtime: ImRuntime, private dependencies: ImServiceDependencies) {
+  constructor(readonly runtime: ImRuntime, dependencies: WeixinSetupDependencies) {
     this.weixin = new WeixinSetup(runtime, dependencies, this.lifetime.signal, (change) => this.enqueue(change));
   }
 
@@ -53,15 +50,12 @@ export class ImService {
   }
 
   private async change(action: Exclude<ImAction, { action: "login-weixin" | "poll-weixin" | "cancel-weixin" }>): Promise<ImSnapshot> {
-    if (action.action === "add-telegram") {
-      const cwd = await projectDirectory(action.cwd);
-      await addTelegramBot(this.runtime, { ...action, cwd }, this.dependencies, this.lifetime.signal);
-    } else if (action.action === "bind") {
+    if (action.action === "bind") {
       await this.runtime.bind(action.conversationKey, action.sessionId);
     } else {
       const state = await this.runtime.store.read();
       const bot = state.bots.find((item) => item.id === action.botId);
-      if (!bot) throw new Error("机器人不存在。");
+      if (!bot || bot.channel !== "weixin") throw new Error("微信机器人不存在。");
       if (action.action === "remove-bot") {
         await this.runtime.stop(bot.id);
         await this.runtime.store.update((data) => {
@@ -74,14 +68,11 @@ export class ImService {
         });
       } else {
         const cwd = await projectDirectory(action.cwd);
-        const access = bot.channel === "telegram" ? telegramAccess(action)
-          : { allowedUserIds: bot.allowedUserIds, allowedChatIds: action.allowedChatIds };
         await this.runtime.stop(bot.id);
         await this.runtime.store.update((data) => {
           const target = data.bots.find((item) => item.id === bot.id)!;
           Object.assign(target, {
             name: action.name || bot.name, cwd, enabled: action.enabled,
-            ...access,
           });
           // The new project must never inherit a conversation's old-project session.
           if (cwd !== bot.cwd) for (const conversation of Object.values(data.conversations)) {

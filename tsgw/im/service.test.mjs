@@ -9,7 +9,6 @@ const jiti = createJiti(import.meta.url);
 const { ImStore } = await jiti.import("./store.ts");
 const { ImRuntime } = await jiti.import("./runtime.ts");
 const { ImService } = await jiti.import("./service.ts");
-const { describeTelegramBot } = await jiti.import("./telegram-setup.ts");
 
 function deferred() {
   let resolve;
@@ -30,11 +29,9 @@ async function fixture(t, overrides = {}, driverHooks = {}) {
       async send() {},
     };
   };
-  const runtime = new ImRuntime(store, { async exists() { return false; } }, { telegram: factory, weixin: factory },
-    describeTelegramBot);
+  const runtime = new ImRuntime(store, { async exists() { return false; } }, factory);
   let loginSignal;
   const dependencies = {
-    async verifyTelegram() { return { username: "test_bot" }; },
     async createWeixinLogin(signal) {
       loginSignal = signal;
       return { qrUrl: "https://example.invalid/qr", async poll() { return { state: "waiting" }; } };
@@ -48,35 +45,6 @@ async function fixture(t, overrides = {}, driverHooks = {}) {
 }
 
 const credentials = { token: "wx-secret", baseUrl: "https://example.invalid", accountId: "account", ownerUserId: "owner" };
-
-test("Telegram validates project and owner before verification, rejects duplicates, and returns no token", async (t) => {
-  let verifications = 0;
-  const f = await fixture(t, { async verifyTelegram() { verifications++; return { username: "test_bot" }; } });
-  const action = { action: "add-telegram", name: "TG", cwd: f.directory, token: "123:tg-secret", allowedUserIds: [], allowedChatIds: [] };
-  await assert.rejects(f.service.action(action), /至少/);
-  assert.equal(verifications, 0);
-  const snapshot = await f.service.action({ ...action, allowedUserIds: ["42"] });
-  assert.equal(snapshot.bots[0].cwd, f.directory);
-  assert.equal(snapshot.bots[0].username, "test_bot");
-  assert.ok(!JSON.stringify(snapshot).includes("tg-secret"));
-  await assert.rejects(f.service.action({ ...action, allowedUserIds: ["42"] }), /已经添加/);
-  assert.equal((await f.store.read()).bots.length, 1);
-  const update = { ...action, action: "update-bot", botId: snapshot.bots[0].id, enabled: false };
-  await assert.rejects(f.service.action(update), /至少/);
-  assert.equal(f.active.size, 1, "invalid access changes must not stop the bot");
-  const project = await mkdtemp(join(f.directory, "project-"));
-  await f.store.update((state) => {
-    state.conversations.key = { botId: update.botId, cwd: f.directory, sessionId: "retained-pi-session" };
-  });
-  const stopped = await f.service.action({ ...update, cwd: project, allowedUserIds: ["43"], allowedChatIds: ["chat"] });
-  assert.equal((await f.store.read()).conversations.key.cwd, project);
-  assert.equal((await f.store.read()).conversations.key.sessionId, null);
-  assert.deepEqual(stopped.bots[0].allowedUserIds, ["43"]);
-  assert.deepEqual(stopped.bots[0].allowedChatIds, ["chat"]);
-  assert.equal(stopped.bots[0].status.state, "stopped");
-  assert.equal(stopped.bots[0].username, "test_bot");
-  assert.ok(!JSON.stringify(stopped).includes("tg-secret"));
-});
 
 test("WeChat confirmation installs one bot with project and owner, concurrent polls coalesce", async (t) => {
   let complete, polls = 0;
@@ -161,28 +129,29 @@ test("cancellation is refused after credentials commit while the old driver is s
 });
 
 test("confirmed login queued behind management is still cancellable before commit", async (t) => {
-  const verifying = deferred(), release = deferred();
+  const stopping = deferred(), release = deferred();
   t.after(() => release.resolve());
   let signal;
   const f = await fixture(t, {
-    async verifyTelegram() { verifying.resolve(); await release.promise; return { username: "test_bot" }; },
     async createWeixinLogin(value) {
       signal = value;
       return { qrUrl: "https://example.invalid/qr", async poll() { return { state: "connected", credentials }; } };
     },
-  });
+  }, { async stop() { stopping.resolve(); await release.promise; } });
+  await f.store.update((state) => state.bots.push({ id: "old", channel: "weixin", name: "Old", cwd: f.directory, enabled: true,
+    allowedUserIds: ["owner"], allowedChatIds: [], credentials }));
+  await f.runtime.start();
   const login = await f.service.action({ action: "login-weixin", name: "WX", cwd: f.directory });
-  const management = f.service.action({ action: "add-telegram", name: "TG", cwd: f.directory,
-    token: "123:dummy", allowedUserIds: ["42"], allowedChatIds: [] });
-  await verifying.promise;
+  const management = f.service.action({ action: "remove-bot", botId: "old" });
+  await stopping.promise;
   const pending = f.service.action({ action: "poll-weixin", loginId: login.id });
   await new Promise((resolve) => setImmediate(resolve));
   await f.service.action({ action: "cancel-weixin", loginId: login.id });
   assert.equal(signal.aborted, true);
   release.resolve();
   await Promise.all([management, pending]);
-  assert.equal((await f.store.read()).bots.some((bot) => bot.channel === "weixin"), false);
-  assert.equal(f.configs.some((config) => config.bot.channel === "weixin"), false);
+  assert.equal((await f.store.read()).bots.length, 0);
+  assert.equal(f.configs.length, 1);
 });
 
 test("login errors cannot disclose platform credentials and deleting a bot preserves Pi sessions", async (t) => {
@@ -261,28 +230,31 @@ for (const operation of ["second-login", "disable", "remove", "close"]) {
 }
 
 test("close drains in-flight management, rejects queued changes and ignores late login confirmation", async (t) => {
-  const verifying = deferred(), verified = deferred(), confirmed = deferred();
+  const stopping = deferred(), release = deferred(), confirmed = deferred();
+  t.after(() => release.resolve());
   const f = await fixture(t, {
-    async verifyTelegram() { verifying.resolve(); await verified.promise; return { username: "test_bot" }; },
     async createWeixinLogin() {
       return { qrUrl: "https://example.invalid/qr", poll: () => confirmed.promise };
     },
-  });
+  }, { async stop() { stopping.resolve(); await release.promise; } });
+  await f.store.update((state) => state.bots.push({ id: "old", channel: "weixin", name: "Old", cwd: f.directory, enabled: true,
+    allowedUserIds: ["owner"], allowedChatIds: [], credentials }));
+  await f.runtime.start();
   const login = await f.service.action({ action: "login-weixin", name: "WX", cwd: f.directory });
   const poll = f.service.action({ action: "poll-weixin", loginId: login.id });
-  const action = { action: "add-telegram", name: "TG", cwd: f.directory, token: "123:dummy", allowedUserIds: ["42"], allowedChatIds: [] };
-  const rejected = assert.rejects(f.service.action(action));
-  await verifying.promise;
-  const queued = assert.rejects(f.service.action(action));
+  const action = { action: "remove-bot", botId: "old" };
+  const management = f.service.action(action);
+  await stopping.promise;
+  const queued = assert.rejects(f.service.action(action), /关闭/);
   let closed = false;
   const close = f.service.close().then(() => { closed = true; });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(closed, false);
-  verified.resolve();
-  await Promise.all([rejected, queued, close]);
+  release.resolve();
+  await Promise.all([management, queued, close]);
   confirmed.resolve({ state: "connected", credentials });
   await poll;
-  assert.equal(f.configs.length, 0);
+  assert.equal(f.configs.length, 1);
   assert.equal((await f.store.read()).bots.length, 0);
   await assert.rejects(f.service.action(action), /关闭/);
 });

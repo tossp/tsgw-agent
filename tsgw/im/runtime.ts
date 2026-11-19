@@ -1,8 +1,14 @@
-import { abortable } from "./pi-host-run";
+import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { basename, resolve } from "node:path";
+import { sessionDirectoryKey } from "../session-management";
+import { getDocumentMime, getImageMime } from "../../lib/file-types";
 import { reportImError } from "./telemetry";
 import type { ImSessionHost } from "./host-types";
+import type { ImReplyHandle } from "./notification";
 import type { ImStore } from "./store";
-import type { ImBot, ImBotView, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImReply, ImSnapshot } from "./types";
+import { WeixinError } from "./weixin-transport";
+import type { ImBot, ImDriver, ImDriverOptions, ImDriverStatus, ImInbound, ImRecipient, ImSendItem, ImSnapshot, WeixinCredentials } from "./types";
 
 export type ImDriverFactory = (options: ImDriverOptions) => ImDriver;
 interface RunningBot {
@@ -20,19 +26,13 @@ export function conversationKey(botId: string, message: Pick<ImInbound, "chatId"
 export class ImRuntime {
   private running = new Map<string, RunningBot>();
   private queues = new Map<string, Promise<void>>();
-  private queueGeneration = new Map<string, number>();
-  private active = new Map<string, AbortController>();
+  private chatWork = new Map<string, AbortController>();
 
-  constructor(
-    readonly store: ImStore,
-    readonly host: ImSessionHost,
-    private factories: Record<ImBot["channel"], ImDriverFactory>,
-    private describeBot: (bot: ImBot) => Pick<ImBotView, "username"> = () => ({}),
-  ) {}
+  constructor(readonly store: ImStore, readonly host: ImSessionHost, private createDriver: ImDriverFactory) {}
 
   async start(): Promise<void> {
     const { bots } = await this.store.read();
-    for (const bot of bots) if (bot.enabled) await this.restart(bot.id);
+    for (const bot of bots) if (bot.enabled && bot.channel === "weixin") await this.restart(bot.id);
   }
 
   async restart(botId: string, signal?: AbortSignal): Promise<void> {
@@ -41,11 +41,11 @@ export class ImRuntime {
     const state = await this.store.read();
     signal?.throwIfAborted();
     const bot = state.bots.find((entry) => entry.id === botId);
-    if (!bot?.enabled) return;
+    if (!bot?.enabled || bot.channel !== "weixin") return;
     const controller = new AbortController();
     const entry: RunningBot = {
       bot, controller, status: { state: "connecting" },
-      driver: this.factories[bot.channel]({
+      driver: this.createDriver({
         bot,
         checkpoint: state.checkpoints[bot.id] ?? {},
         saveCheckpoint: async (checkpoint) => {
@@ -57,9 +57,7 @@ export class ImRuntime {
         onStatus: (status) => {
           if (controller.signal.aborted) return;
           entry.status = status;
-          if (status.state === "error") {
-            reportImError("receive", { channel: bot.channel, botId: bot.id }, status.error);
-          }
+          if (status.state === "error") reportImError("receive", { channel: bot.channel, botId: bot.id }, status.error);
         },
         onMessage: (message, prepare) => this.accept(entry, message, prepare),
       }),
@@ -79,112 +77,178 @@ export class ImRuntime {
 
   async snapshot(): Promise<ImSnapshot> {
     const state = await this.store.read();
+    const bots = state.bots.filter((bot) => bot.channel === "weixin");
+    const ids = new Set(bots.map((bot) => bot.id));
     return {
-      bots: state.bots.map(({ credentials, ...bot }) => ({
-        ...bot,
-        ...this.describeBot({ ...bot, credentials }),
-        status: this.running.get(bot.id)?.status ?? { state: "stopped" },
-        deliveryError: this.running.get(bot.id)?.deliveryError,
+      bots: bots.map(({ id, channel, name, cwd, enabled, allowedUserIds, allowedChatIds }) => ({
+        id, channel, name, cwd, enabled, allowedUserIds, allowedChatIds,
+        status: this.running.get(id)?.status ?? { state: "stopped" },
+        deliveryError: this.running.get(id)?.deliveryError,
       })),
-      conversations: Object.values(state.conversations).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      conversations: Object.values(state.conversations).filter((item) => ids.has(item.botId))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     };
   }
 
   async bind(key: string, sessionId: string | null): Promise<void> {
-    const conversation = (await this.store.read()).conversations[key];
-    if (!conversation) throw new Error("对话不存在，请先给机器人发送一条消息。");
-    if (this.queues.has(key)) throw new Error("该对话正在处理消息，请停止或等任务结束后再切换会话。");
+    const state = await this.store.read();
+    const conversation = state.conversations[key];
+    if (!conversation || !state.bots.some((bot) => bot.id === conversation.botId && bot.channel === "weixin")) {
+      throw new Error("微信对话不存在，请先给机器人发送一条消息。");
+    }
     if (sessionId !== null && !await this.host.exists(sessionId, conversation.cwd)) {
       throw new Error("只能绑定当前项目内已有的普通会话。");
     }
-    await this.store.update((state) => {
-      state.conversations[key].sessionId = sessionId;
-      state.conversations[key].updatedAt = new Date().toISOString();
+    await this.store.update((data) => {
+      if (this.queues.has(key)) throw new Error("该对话正在提交消息，请稍后再切换会话。");
+      data.conversations[key].sessionId = sessionId;
+      data.conversations[key].updatedAt = new Date().toISOString();
     });
   }
 
+  async send(cwd: string, destination: { handle: ImReplyHandle } | { bot: string }, items: ImSendItem[], signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const entry = await this.resolveDestination(cwd, destination);
+    const recipient = { chatId: (entry.bot.credentials as WeixinCredentials).ownerUserId };
+    const results: { index: number; type: ImSendItem["type"]; status: "sent" | "failed" | "not_attempted"; error?: string }[] = [];
+    let failed = false;
+    for (const [index, item] of items.entries()) {
+      const record = { index, type: item.type };
+      if (failed || signal?.aborted || entry.controller.signal.aborted) {
+        failed = true;
+        results.push({ ...record, status: "not_attempted" });
+        continue;
+      }
+      try {
+        await this.sendItem(entry, recipient, cwd, item, signal);
+        results.push({ ...record, status: "sent" });
+      } catch (error) {
+        failed = true;
+        this.sendFailed(entry, error);
+        // A transport failure may occur after WeChat has accepted all or part of this item.
+        results.push({ ...record, status: "failed", error: error instanceof WeixinError ? error.message : "微信发送失败。" });
+      }
+    }
+    if (!failed) entry.deliveryError = undefined;
+    return { success: !failed, results };
+  }
+
+  private async resolveDestination(cwd: string, destination: { handle: ImReplyHandle } | { bot: string }): Promise<RunningBot> {
+    const project = sessionDirectoryKey(cwd);
+    const { bots } = await this.store.read();
+    const weixin = bots.filter((bot) => bot.channel === "weixin" && sessionDirectoryKey(bot.cwd) === project);
+    let id: string | undefined;
+    if ("handle" in destination) {
+      id = weixin.find((bot) => bot.id === destination.handle.botId
+        && (bot.credentials as WeixinCredentials).ownerUserId === destination.handle.chatId)?.id;
+    } else {
+      const exact = weixin.find((bot) => bot.id === destination.bot);
+      if (exact) id = exact.id;
+      else {
+        const names = weixin.filter((bot) => bot.name === destination.bot);
+        if (names.length > 1) throw new Error("微信机器人名称重复，请指定机器人 ID。");
+        id = names[0]?.id;
+      }
+    }
+    const entry = id && this.running.get(id);
+    if (!entry || ("handle" in destination && (entry.bot.credentials as WeixinCredentials).ownerUserId !== destination.handle.chatId)) {
+      throw new Error("当前项目找不到该可用的微信机器人或回复地址。");
+    }
+    return entry;
+  }
+
+  private async sendItem(entry: RunningBot, recipient: ImRecipient, cwd: string, item: ImSendItem, signal?: AbortSignal): Promise<void> {
+    if (item.type === "text") return this.sendText(entry, recipient, item.text, signal);
+    const path = resolve(cwd, item.path);
+    const info = await stat(path).catch(() => undefined);
+    if (!info?.isFile()) throw new WeixinError("file", "微信附件文件无效或无法读取。");
+    const imageMime = getImageMime(path);
+    if (item.type === "image" && !imageMime) throw new WeixinError("file", "图片须使用 PNG、JPEG、GIF 或 WebP 文件。");
+    if (!entry.driver.sendAttachment) throw new WeixinError("file", "微信附件发送不可用。");
+    await entry.driver.sendAttachment(recipient, {
+      type: item.type, path, name: basename(path), mimeType: imageMime ?? getDocumentMime(path) ?? "application/octet-stream",
+    }, signal);
+  }
+
   private async accept(entry: RunningBot, message: ImInbound, prepare?: (signal: AbortSignal) => Promise<ImInbound>): Promise<void> {
-    if (entry.controller.signal.aborted) return;
+    const botSignal = entry.controller.signal;
+    if (botSignal.aborted) return;
     const key = conversationKey(entry.bot.id, message);
     const fresh = await this.store.update((state) => {
-      if (entry.controller.signal.aborted) return false;
+      if (botSignal.aborted) return false;
       const seen = state.seen[entry.bot.id] ?? [];
       const id = JSON.stringify([message.chatId, message.id]);
       if (seen.includes(id)) return false;
       state.seen[entry.bot.id] = [...seen, id].slice(-500);
-      state.conversations[key] ??= {
+      const receivedAt = new Date().toISOString();
+      const conversation = state.conversations[key] ??= {
         key, botId: entry.bot.id, chatId: message.chatId, threadId: message.threadId,
         title: message.chatTitle || message.chatId, sessionId: null,
-        cwd: entry.bot.cwd, updatedAt: new Date().toISOString(),
+        cwd: entry.bot.cwd, updatedAt: receivedAt,
       };
+      conversation.updatedAt = receivedAt;
       return true;
     });
-    if (!fresh || entry.controller.signal.aborted) return;
+    if (!fresh || botSignal.aborted) return;
     if (!this.queues.has(key)) entry.driver.setTyping?.(message, true);
-    // Stop must bypass the chat's queue: a long-running prompt must remain stoppable.
+    const previous = this.queues.get(key) ?? Promise.resolve();
     let task: Promise<void>;
+    let work: AbortController | undefined;
     if (/^\/stop(?:\s|$)/i.test(message.text)) {
-      this.queueGeneration.set(key, (this.queueGeneration.get(key) ?? 0) + 1);
-      this.active.get(key)?.abort();
-      // Later inputs wait for Stop itself; older queued inputs retain their cancelled generation.
-      task = this.deliver(entry, message, () => this.stopConversation(key, entry.controller.signal));
+      this.chatWork.get(key)?.abort();
+      this.chatWork.delete(key);
+      const stopping = this.stopConversation(key, botSignal).then((text) => this.sendNotice(entry, message, text, botSignal))
+        .catch((error) => this.inboundFailed(entry, message, botSignal, error));
+      // New input waits for Stop as well as a cancelled creation/preparation to unwind.
+      task = Promise.all([previous, stopping]).then(() => undefined);
     } else {
-      const generation = this.queueGeneration.get(key) ?? 0;
-      const previous = this.queues.get(key) ?? Promise.resolve();
+      work = this.chatWork.get(key) ?? new AbortController();
+      this.chatWork.set(key, work);
+      const signal = AbortSignal.any([botSignal, work.signal]);
       task = previous.then(async () => {
-        if (entry.controller.signal.aborted || generation !== (this.queueGeneration.get(key) ?? 0)) return;
-        const controller = new AbortController();
-        const signal = AbortSignal.any([entry.controller.signal, controller.signal]);
-        this.active.set(key, controller);
+        if (signal.aborted) return;
         try {
-          await this.deliver(entry, message, async () => {
-            const input = prepare ? await abortable(prepare(signal), signal) : message;
-            signal.throwIfAborted();
-            return abortable(this.process(entry, key, input, signal), signal);
-          }, signal);
-        } finally {
-          if (this.active.get(key) === controller) this.active.delete(key);
+          const input = prepare ? await prepare(signal) : message;
+          signal.throwIfAborted();
+          await this.process(entry, key, message, input, signal);
+        } catch (error) {
+          await this.inboundFailed(entry, message, signal, error);
         }
       });
     }
-    const settled = task.catch(() => undefined).finally(() => {
+    const settled = task.catch((error) => this.inboundFailed(entry, message, botSignal, error)).finally(() => {
       if (this.queues.get(key) === settled) {
         this.queues.delete(key);
+        if (this.chatWork.get(key) === work) this.chatWork.delete(key);
         entry.driver.setTyping?.(message, false);
       }
     });
     this.queues.set(key, settled);
   }
 
-  private async deliver(entry: RunningBot, message: ImInbound, respond: () => Promise<string | ImReply>, signal = entry.controller.signal): Promise<void> {
-    let reply: string | ImReply;
-    try {
-      reply = await respond();
-    } catch (error) {
-      if (signal.aborted) return;
-      if (!(error instanceof Error && error.name === "AbortError")) {
-        reportImError("process", { channel: entry.bot.channel, botId: entry.bot.id });
-      }
-      reply = "任务未完成，请在 Web 会话中查看详情；确认项目、模型与连接状态后再试。";
-    }
+  private sendText(entry: RunningBot, recipient: ImRecipient, text: string, signal?: AbortSignal) {
+    if (!text.trim()) throw new WeixinError("text", "文字消息不能为空。");
+    return entry.driver.send(recipient, text, signal);
+  }
+
+  private sendFailed(entry: RunningBot, error: unknown) {
+    if (entry.controller.signal.aborted || error instanceof Error && error.name === "AbortError") return;
+    reportImError("send", { channel: entry.bot.channel, botId: entry.bot.id });
+    entry.deliveryError = "消息发送失败，请检查微信连接状态。";
+  }
+
+  private async sendNotice(entry: RunningBot, recipient: ImRecipient, text: string, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return;
     try {
-      const text = typeof reply === "string" ? reply : reply.text;
-      if (text.trim()) await entry.driver.send(message, text);
-      if (typeof reply !== "string" && reply.attachments?.length) {
-        const sendAttachment = entry.driver.sendAttachment?.bind(entry.driver);
-        if (!sendAttachment) throw new Error("该渠道暂不支持附件回复。");
-        for (const attachment of reply.attachments) {
-          if (signal.aborted) return;
-          await sendAttachment(message, attachment, signal);
-        }
-      }
+      await this.sendText(entry, recipient, text, signal);
       entry.deliveryError = undefined;
-    } catch (error) {
-      if (signal.aborted || error instanceof Error && error.name === "AbortError") return;
-      reportImError("send", { channel: entry.bot.channel, botId: entry.bot.id });
-      entry.deliveryError = "回复发送失败，请检查机器人连接状态。";
-    }
+    } catch (error) { this.sendFailed(entry, error); }
+  }
+
+  private async inboundFailed(entry: RunningBot, message: ImInbound, signal: AbortSignal, error: unknown): Promise<void> {
+    if (signal.aborted || error instanceof Error && error.name === "AbortError") return;
+    reportImError("process", { channel: entry.bot.channel, botId: entry.bot.id });
+    await this.sendNotice(entry, message, "微信通知处理失败，请在 Web 会话中查看。", signal);
   }
 
   private async stopConversation(key: string, signal: AbortSignal): Promise<string> {
@@ -195,60 +259,48 @@ export class ImRuntime {
     return "已请求停止当前会话。";
   }
 
-  private async process(entry: RunningBot, key: string, message: ImInbound, signal: AbortSignal): Promise<string | ImReply> {
-    const { bot, driver } = entry;
-    if (message.preparationError) return message.preparationError;
-    const text = message.text.trim();
-    const [command, argument] = text.split(/\s+/, 2);
+  private async process(entry: RunningBot, key: string, message: ImInbound, input: ImInbound, signal: AbortSignal): Promise<void> {
+    if (input.preparationError) return this.sendNotice(entry, message, input.preparationError, signal);
+    const { bot } = entry;
+    const [command, argument] = input.text.trim().split(/\s+/, 2);
     if (["/help", "/start"].includes(command.toLowerCase())) {
-      return "直接发送文字继续当前项目会话。\n/status 查看关联\n/new 新建会话\n/sessions 列出项目会话\n/bind 会话ID 关联已有会话\n/stop 停止当前会话";
+      return this.sendNotice(entry, message, "直接发送文字继续当前项目会话。\n/status 查看关联\n/new 新建会话\n/sessions 列出项目会话\n/bind 会话ID 关联已有会话\n/stop 停止当前会话", signal);
     }
     if (command === "/new") {
-      await this.store.update((state) => {
-        signal.throwIfAborted();
-        state.conversations[key].sessionId = null;
-      });
-      return "已解除原会话关联，下一条消息将在当前项目中新建会话。";
+      await this.updateBinding(key, null, signal);
+      return this.sendNotice(entry, message, "已解除原会话关联，下一条消息将在当前项目中新建会话。", signal);
     }
     if (command === "/sessions") {
       const sessions = await this.host.list(bot.cwd);
-      return sessions.length ? sessions.map((session) => `${session.title || "未命名"}\n${session.id}`).join("\n\n") : "当前项目还没有会话，直接发送消息即可新建。";
+      return this.sendNotice(entry, message, sessions.length ? sessions.map((item) => `${item.title}\n${item.id}`).join("\n\n")
+        : "当前项目还没有会话，直接发送消息即可新建。", signal);
     }
     if (command === "/bind") {
-      if (!argument) return "请使用 /bind 会话ID，或在 Web 的 IM 机器人设置中选择会话。";
-      if (!await this.host.exists(argument, bot.cwd)) return "该会话不存在或不属于当前项目。";
-      await this.store.update((state) => {
-        signal.throwIfAborted();
-        state.conversations[key].sessionId = argument;
-      });
-      return `已关联会话 ${argument}`;
+      if (!argument || !await this.host.exists(argument, bot.cwd)) {
+        return this.sendNotice(entry, message, "请使用 /bind 会话ID 关联当前项目的普通会话。", signal);
+      }
+      await this.updateBinding(key, argument, signal);
+      return this.sendNotice(entry, message, `已关联会话 ${argument}`, signal);
     }
-    let conversation = (await this.store.read()).conversations[key];
+    let { sessionId } = (await this.store.read()).conversations[key];
     signal.throwIfAborted();
-    if (command === "/status") return `项目：${bot.cwd}\n会话：${conversation.sessionId ?? "下一条消息时新建"}`;
-    if (!conversation.sessionId || !await this.host.exists(conversation.sessionId, bot.cwd)) {
+    if (command === "/status") return this.sendNotice(entry, message, `项目：${bot.cwd}\n会话：${sessionId ?? "下一条消息时新建"}`, signal);
+    if (!sessionId || !await this.host.exists(sessionId, bot.cwd)) {
       signal.throwIfAborted();
-      const id = await this.host.create(bot.cwd, `${bot.name} · ${conversation.title}`);
-      signal.throwIfAborted();
-      await this.store.update((state) => {
-        signal.throwIfAborted();
-        state.conversations[key].sessionId = id;
-        state.conversations[key].updatedAt = new Date().toISOString();
-      });
-      conversation = { ...conversation, sessionId: id };
+      sessionId = await this.host.create(bot.cwd);
+      await this.updateBinding(key, sessionId, signal);
     }
+    const handle = { id: randomUUID(), sessionId, botId: bot.id, chatId: message.chatId };
     signal.throwIfAborted();
-    const prompt = [message.text || "请处理附件。", message.quotedText && `以下是引用内容，供理解本次消息：\n${message.quotedText}`].filter(Boolean).join("\n\n");
-    const reply = await this.host.prompt(conversation.sessionId!, prompt, signal, {
-      channel: bot.channel, botId: bot.id, botName: bot.name,
-      chatId: message.chatId, senderId: message.senderId, messageId: message.messageId ?? message.id, isGroup: message.isGroup,
-      ...(message.threadId === undefined ? {} : { threadId: message.threadId }),
-    }, message.attachments, { attachments: typeof driver.sendAttachment === "function" });
-    signal.throwIfAborted();
+    const { completion } = await this.host.notify(handle, bot.cwd, input, signal);
+    void completion.catch((error) => this.inboundFailed(entry, message, signal, error)).catch(() => {});
+  }
+
+  private async updateBinding(key: string, sessionId: string | null, signal: AbortSignal): Promise<void> {
     await this.store.update((state) => {
       signal.throwIfAborted();
+      state.conversations[key].sessionId = sessionId;
       state.conversations[key].updatedAt = new Date().toISOString();
     });
-    return reply || "本次任务已结束，没有文字回复，请在 Web 会话中查看结果。";
   }
 }

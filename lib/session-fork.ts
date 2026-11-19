@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from "crypto";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { IM_MESSAGE_SOURCE_TYPE, missingImForkSources } from "../tsgw/im/message-data";
 import { forkSessionName, sessionDisplayTitle } from "./session-fork-name";
 import { scanSessionFileInfo } from "./session-list-scanner";
 import { readSubagentRun } from "./subagents";
@@ -142,11 +141,7 @@ function copySessionBranch(
   const name = nameFor(manager);
   const sourceSessionId = manager.getSessionId();
   const toolSelection = readSessionToolSelection(manager.getEntries() as unknown as SessionEntry[]);
-  const sourceEntries = manager.getEntries();
   const path = manager.createBranchedSession(leafId);
-  for (const data of missingImForkSources(sourceEntries, manager.getEntries())) {
-    manager.appendCustomEntry(IM_MESSAGE_SOURCE_TYPE, data);
-  }
   // Appended to the copy's file; a shell-only copy keeps it in memory until
   // it is written below.
   if (name) manager.appendSessionInfo(name);

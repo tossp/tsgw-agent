@@ -46,7 +46,6 @@ textarea.input { resize: vertical; }
 }
 
 .actions > .hint { flex-basis: 100%; }
-.channel { display: inline-flex; align-items: center; gap: 6px; }
 .badge { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
 .status { font-size: 13px; overflow-wrap: anywhere; }
 .login { display: grid; gap: 8px; justify-items: start; }

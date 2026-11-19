@@ -4,8 +4,7 @@ import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@e
 import { randomUUID } from "crypto";
 import { createSessionOwnerAccess, createWakeupExtension, getWakeupRuntime, peekWakeupRuntime, createWakeupObserver } from "../tsgw/wakeups/server";
 import { createSessionManagementExtension } from "../tsgw/session-management";
-import { installImRequestContextProjection, withLiveImMessageSource } from "../tsgw/im/message-source";
-import { IM_MESSAGE_SOURCE_TYPE, missingImForkSources } from "../tsgw/im/message-data";
+import { createImExtension, installChatOnlyImReply } from "../tsgw/im/server";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
@@ -691,11 +690,10 @@ export class AgentSessionWrapper {
         // Prompts parked while compaction ran go out now, FIFO, whatever its outcome (as the TUI).
         this.flushParkedPrompts();
       }
-      const outgoing = withLiveImMessageSource(event, this.inner.sessionManager);
       this.emit(
-        event.type === "message_end" ? this.withTranscriptNotices(outgoing)
-          : event.type === "agent_settled" ? this.withSubagentsActive(outgoing)
-            : outgoing,
+        event.type === "message_end" ? this.withTranscriptNotices(event)
+          : event.type === "agent_settled" ? this.withSubagentsActive(event)
+            : event,
       );
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
       this.checkExtensionShutdown();
@@ -1696,12 +1694,8 @@ export class AgentSessionWrapper {
             // Fork after some history: copy path up to (but not including) the fork point
             if (!existsSync(currentSessionFile)) throw new Error(UNSAVED_SESSION_FORK_ERROR);
             forkedManager = SessionManager.open(currentSessionFile, sessionDir);
-            const sourceEntries = forkedManager.getEntries();
             const forkedPath = forkedManager.createBranchedSession(entry.parentId);
             if (!forkedPath) throw new Error("Failed to create forked session");
-            for (const data of missingImForkSources(sourceEntries, forkedManager.getEntries())) {
-              forkedManager.appendCustomEntry(IM_MESSAGE_SOURCE_TYPE, data);
-            }
             newSessionFile = forkedPath;
           }
 
@@ -1737,12 +1731,8 @@ export class AgentSessionWrapper {
 
         const sessionDir = sessionManager.getSessionDir();
         const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
-        const sourceEntries = sourceManager.getEntries();
         const forkedPath = sourceManager.createBranchedSession(entryId);
         if (!forkedPath) throw new Error("Failed to create forked session");
-        for (const data of missingImForkSources(sourceEntries, sourceManager.getEntries())) {
-          sourceManager.appendCustomEntry(IM_MESSAGE_SOURCE_TYPE, data);
-        }
 
         const newSessionId = SessionManager.open(forkedPath, sessionDir).getSessionId();
         cacheSessionPath(newSessionId, forkedPath);
@@ -1776,12 +1766,8 @@ export class AgentSessionWrapper {
         return this.withSessionReplacement("clone", async () => {
           const sessionDir = sessionManager.getSessionDir();
           const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
-          const sourceEntries = sourceManager.getEntries();
           const clonedPath = sourceManager.createBranchedSession(leafId);
           if (!clonedPath || !existsSync(clonedPath)) throw new Error("Failed to clone current session branch");
-          for (const data of missingImForkSources(sourceEntries, sourceManager.getEntries())) {
-            sourceManager.appendCustomEntry(IM_MESSAGE_SOURCE_TYPE, data);
-          }
 
           const newSessionId = SessionManager.open(clonedPath, sessionDir).getSessionId();
           cacheSessionPath(newSessionId, clonedPath);
@@ -3683,6 +3669,7 @@ export async function startRpcSession(
               createReadOnlyMcpPolicyExtension(),
               createWakeupExtension(initializeWakeups()),
               createSessionManagementExtension(),
+              ...(!isSideChat ? [createImExtension()] : []),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,
@@ -3797,7 +3784,8 @@ export async function startRpcSession(
         ? subagentToolOptions(subagentResources)
         : toolsOption !== undefined ? { tools: toolsOption } : {}),
     });
-    if (!subagentResources) installImRequestContextProjection(inner);
+
+    if (chatOnly && !isSideChat && !subagentResources) installChatOnlyImReply(inner);
 
     // A pinned selection replaces only the coding tools of the SDK's initial loadout, which
     // already holds the extension tools pi activates on registration and whatever

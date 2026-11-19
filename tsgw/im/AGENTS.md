@@ -2,64 +2,31 @@
 
 ## 范围与契约
 
-首期支持微信 iLink 扫码、Telegram Bot API 长轮询、文字私聊、Telegram 群聊/Topic、项目内 Pi 会话关联、停止和重启恢复；微信另支持图片/文件双向、语音转写及 inline 引用上下文。操作说明与已知限制见 [README.md](README.md)，私聊接入与职责边界见 [DESIGN.md](DESIGN.md)，适配来源及许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+当前接入微信 iLink 主人私聊，支持扫码、文本与图片/文件双向、语音转写和 inline 引用。用户操作见 [README.md](README.md)，会话及投递契约见 [DESIGN.md](DESIGN.md)。保留 Telegram 旧配置的兼容读取，运行时与设置页仅启用微信。
 
-主体、样式和测试在本目录。浏览器公共入口为 `index.ts`（设置面板、来源角标与类型），Node 初始化和路由入口为 `server.ts`；会话来源的纯数据入口为 `message-data.ts`，宿主事件接入为 `message-source.ts`（含请求级模型上下文投影）。客户端通过 `@/tsgw/im` 引用；Node 会话读写代码以相对路径引用这些公共入口，兼容现有不带 Next alias 的 Jiti/SDK 测试。浏览器入口不能导出 Node 模块。
-
-- 机器人绑定项目目录；`[botId, chatId, threadId]` 为持久关联键。只恢复已关联会话；没有有效关联时新建，不猜测最近会话。不同聊天不能自动合并。
-- Pi 宿主复用 `startRpcSession`、wrapper.send/onEvent 和 session-reader，不另建 SDK 会话管理器，不独立打开活跃会话文件。会话清单与项目/普通类型筛选复用 [session-management](../session-management/AGENTS.md) 的 Node 公共入口；保持只读，排除子代理与侧聊，保留项目中的普通 fork。
-- 等待 Web 当前任务结束再提交 IM。每次提交带唯一入站标记，订阅先于提交；仅返回归属明确的最终 assistant 文本，子代理仍活跃时继续等待。扩展移除标记或其他 Web 输入混入时提示用户查看 Web，不发送混合内容。
-- 每次已接收的 IM 用户消息写入 `pi-web:im-source` custom entry，`version: 1`、`messageEntryId` 与 `source` 记录本次 requestId、channel、botId/botName、chatId/threadId、senderId 和平台 messageId；可选 `isGroup` 保留私聊/群聊事实，旧 v1 记录仍有效。不写平台凭据，完整路由 Meta 不进入模型上下文，不把整条会话标成某渠道。实时及历史只为对应 user 消息投影 `imSource`，移除本模块内部请求前缀；原 SDK 消息对象保持不变。
-- `installImRequestContextProjection()` 串联 SDK 公开 `agent.transformContext`，在每次模型调用的原有转换（含 exact prompt）之后投影渠道、私聊/群聊/Topic 和实际回复能力；不把完整来源/地址/机器人名称交给模型，不持久写系统说明、不拼用户正文。依据本次原始上下文最后 user 的 requestId 匹配同一 manager 的有效登记，完成/拒绝/取消共用来源注册释放；custom 子代理续跑沿用仍等待的输入，Web steer/follow-up 或后续 Web 输入不继承。不冻结整段 prompt，保留动态工具的声明、snippet 和 guidelines。普通和 Chat-only wrapper 均接入，不给子代理另加 IM 身份。
-- SDK 当前先广播 `message_end` 再同步 appendMessage；宿主订阅安排微任务，在同一 manager 的真实 user entry 写入后追加 Meta。升级 SDK 必须用真实 wrapper 集成测试核对顺序、entryId 关联及原生消息对象。历史先从完整 entries 建索引，再分页；fork 保留原消息来源，新 Web 输入不会继承来源。
-- Web 显示整个会话，微信/Telegram 角标只说明输入来源。任务仅回复发起它的原聊天/Topic；共享会话不广播 Web 输入、Web 回复或其他渠道的回复。持久 Meta 不代表恢复未完成投递或重启补发。
-- `/stop` 绕过消息队列，取消本聊天当前等待、建会话和待提交输入，再通过原 wrapper 停止关联任务；后续新消息仍可接收。停用、换项目或删除机器人必须取消旧作用域，异步建会话结束后及关联写入回调内均核验取消状态。
-- 适配器拥有平台配置验证、登录和恢复数据语义；`WeixinSetup` 自管扫码尝试、二维码、轮询和取消。管理操作与扫码凭据提交共用 `ImService` 的顺序队列，平台扫码轮询不占管理队列。关闭服务先取消生命周期和扫码，再排空管理操作、停止驱动，不能留下晚到重启。公共机器人描述由渠道 helper 提供，runtime 不解析凭据字段。
-- Telegram 必须先过滤允许用户，允许聊天名单可进一步收紧；群聊只响应明确指向本机器人的消息。微信只接受扫码返回的 `ownerUserId`。
-- 凭据、轮询游标、去重记录和关联写入 agent 目录的 `integrations/im/state.json`，权限 `0600`；单进程持有，不支持多实例共用同一文件。API 返回状态与关联，不返回凭据或 checkpoint。损坏文件不得被默认空配置覆盖。
-- 禁止将 Token、微信 context token、二维码授权票据写入日志、错误或 CAT。`credential-fetch.ts` 仅对本模块凭据请求调用 SDK 原生 `suppressTracing`；当前 Sentry 11.9 的 NodeFetch 同时跳过此请求的 breadcrumbs，不修改全局采集策略。升级时必须用真实 SDK envelope 回归确认，不能仅检查自定义错误文本。
-- 遥测猫通过 `telemetry.ts` 复用 CAT 公共 capture：上报连接/接收入站、任务处理、回复发送、初始化、扫码失败以及设置页网络/JSON 故障；正常停止/取消（含从 Web 停止共享任务的 AbortError）、微信长轮询超时、二维码过期及管理校验 4xx 不报。初始化失败由 service 创建边界上报，GET 不重复捕获同一失败；其他 GET 读取故障和 POST 文件系统故障单独上报（保留原有 HTTP 响应）。任务/发送只报告失败阶段，不附加外部原始异常或聊天正文；接收错误使用驱动已生成的安全状态提示。
-- IM 后台任务可能继承包含 Token 的管理请求上下文。每条服务端 IM 错误使用 Sentry 原生独立 current/isolation scope，复用现有 client 和 `initialScope`（保留 instance / release），标注 `source=im`、`operation`、可选 `channel` / `botId`；不继承请求、聊天上下文和 breadcrumbs，不修改全局 CAT 默认采集、过滤或限流。浏览器沿用 CAT 的标准 scope；设置请求失败仅补充固定用途（状态读取、会话列表或 action 类型）、GET/POST、是否收到响应、已收到的真实 HTTP 状态码、标准异常类别和 navigator.onLine，不附加 action 对象、项目路径、原始异常文本/cause/自定义名称或响应正文。在线状态仅作浏览器线索，不判定服务端或网络根因；无响应不填 HTTP 状态码。包括纯文本 401/429 在内的 4xx 不因 JSON 解析失败而上报，有效 JSON 的服务端失败沿用原有单次上报边界。连接重试的每次实际失败各自上报，交给遥测猫按异常分组；不另建遥测故障状态或限流器。
-- 长轮询、发送及等待都支持取消；游标只在 runtime 接收入站后推进。发送结果未知时不自动重试；重启恢复连接与关联，不自动重放已经接收的任务。
-- `ImDriver.setTyping` 是可选的同步入队接口，不能让状态网络请求阻塞收发。runtime 从新聊天队列开始到排空维持状态，重复消息不重复开启；微信每个忙碌周期获取 `typing_ticket`，每 5 秒续显，仅内存保存，旧取消完成后才发新开始。停用时 abort 并等待状态任务，取消请求使用独立的 10 秒时限。状态失败仅按 `typing` / `typing-stop` 上报安全阶段，不改连接状态或附带 provider 正文；正常取消不报。只有 `sendtyping` 的成功响应允许空 body，其余传输保留原校验。
-- `ImInbound` 的 attachments 为本地文件描述；平台媒体下载通过 `onMessage(message, prepare?)` 在 runtime 聊天队列内执行，不能堵住长轮询和 `/stop`。下载失败/缺转写/视频给安全提示，不提交空或部分输入；引用保持独立字段，不能触发当前聊天命令。图片按原始字节走 wrapper.images，文件链接写进本次用户正文，Meta 不写媒体数据。
-- Pi 桥接以通用 `ImReplyCapabilities` 决定请求级系统指令和最终输出处理；当前由驱动是否实现 `sendAttachment` 推导，不根据来源渠道名称分支。通用输入保留 `text`、`attachments` 与独立 `quotedText`。连接状态仅由驱动上报，最近投递失败用独立 `deliveryError` 展示，后续投递成功清除，不改写仍在线的连接状态。
-- 微信附件回复只从归属明确的最终 assistant Markdown 显式本地链接提取；不扫描工具/历史/代码/裸路径/远端 URL，Web 原文保持不变，微信正文以名称替代路径。按现有原聊天串行发文字和附件，上传/发送可取消，不盲重试；TG 保持文字路径。媒体目录是 agent/integrations/im/media 下随机子目录，成功附件留存供历史精确引用，不全局扩大 file roots。图片10MiB/10张、文件100MiB是客户端限制，CDN为官方HTTPS域，所有带能力参数的请求沿用credentialFetch抑制。
-- 微信能力采用情况与后续决定边界见 [WEIXIN_CAPABILITIES.md](WEIXIN_CAPABILITIES.md)，外部协议通用证据保存在记忆系统条目 1149。字段枚举、官方客户端策略和服务端保证必须区分；不把 `group_id`、音频上传枚举、宿主定时/流式能力或缓存期限直接当平台支持。
-
-## 主体文件
-
-- `types.ts`、`actions.ts`：平台与宿主接口、管理请求入口校验。
-- `store.ts`、`runtime.ts`、`service.ts`：文件持久化、消息路由与取消、通用管理串行队列与生命周期。
-- `telegram-setup.ts`、`weixin-setup.ts`：渠道配置验证与公开描述、Telegram 创建及允许名单规则、微信扫码和凭据提交生命周期。
-- `pi-host.ts`、`pi-host-run.ts`、`host-types.ts`、`pi-media.ts`：既有 wrapper 的会话清单、创建/恢复、顺序提交、图片/文件输入、最终附件链接提取与回答归属。
-- `message-data.ts`、`message-source.ts`：具体用户消息的来源记录、历史校验/索引、Web 投影、宿主 manager 的临时请求注册及模型调用时的渠道上下文投影。
-- `ImSourceBadge.tsx` 与来源角标样式：微信/Telegram 的用户消息角标，普通 Web 消息无角标。
-- `telegram.ts`：身份核验、授权与群聊路由、长轮询与分段发送。
-- `weixin-login.ts`、`weixin-transport.ts`、`weixin.ts`、`weixin-inbound.ts`、`weixin-media.ts`：扫码状态机、平台传输、主人过滤、输入状态、入站引用/转写、媒体加解密及 context/cursor 持久化。`weixin-transport.ts` 保留 uint64 JSON 整数精度。
-- `ImSettings.tsx`、`ImBotDetail.tsx`、`useImSettings.ts`、`im-ui.ts`、`im-settings.module.css`：设置、扫码取消和会话关联。沿用 SettingsUi 与 DirectoryPicker，使用原有手机导航上下文。
-- `telemetry.ts`、`telemetry.test.mjs`：IM 专属错误上报 scope 和真实 SDK 内存 envelope 回归，含默认请求采集阴性对照及正常取消/超时不报。
-- `*.test.mjs`、`e2e.mjs`、`source-e2e.mjs`：协议、路由、并发与取消、真实 wrapper/fork、真实 Sentry 内存 transport 回归，以及设置和消息角标界面流程。
+- 浏览器公共入口 `index.ts` 导出设置面板及类型。Node 入口 `server.ts` 提供初始化、管理 API 和工具接入。主体、样式和测试位于本目录。
+- 机器人绑定项目，`[botId, chatId, threadId]` 为既有持久绑定键。微信只接受扫码绑定主人。绑定选择、按聊天串行提交、重放去重、取消及管理命令由 IM 管理。对普通会话的筛选复用 [session-management](../session-management/AGENTS.md)，排除侧聊、子代理，保留普通 fork。
+- `pi-host.ts` 复用 `startRpcSession` 及已有 wrapper 的 `beginCustomMessageSubmission`、`acquirePromptAdmission`、`prepareMcpForRun`。在 admission 内调用 SDK `sendCustomMessage`，直接将忙碌会话的通知提交为 `followUp`。IM 队列只等提交，SDK 空闲路径返回的整轮 promise 用于反馈提交/运行异常，回复内容只能由 `im_send` 投递。按现有 SDK 语义，纯通知的新会话从第一条 assistant 消息开始落盘。
+- `notification.ts` 使用 SDK 原生 `custom_message`，将两句 [回复技能](skills/tsgw-im-reply/SKILL.md) 与正文、媒体和句柄一同交给模型。真实路由位于通知 `details`，通过同一会话当前分支的 SDK 历史解析，凭据由微信驱动单独持有。普通会话注册 `im_send`，Chat-only 仅在本轮处理通知时临时增加回复能力，侧聊和子代理不注册。升级时验证这两种模式、Web 普通消息及动态工具保留原行为。
+- `/stop` 跳过 IM 队列，取消本聊天的下载、建立绑定和未提交输入，再复用原 wrapper 停止、清除 Pi 队列。停用机器人只撤销 IM 接入与投递。管理操作及扫码凭据提交共用 `ImService` 顺序队列，平台扫码轮询独立。切换项目清除旧关联。
+- 微信驱动持有协议配置、重连和 checkpoint。平台媒体下载由 `onMessage(message, prepare?)` 交给 IM 聊天队列以保持轮询可响应；准备失败提示用户，图片保留原始字节，回复媒体为 `im_send` 的显式参数。Web 复用原生通知展示和既有精确文件引用访问。输入状态覆盖 IM 通知准备和提交，票据内存保留、每 5 秒续显，取消使用独立时限，失败按安全阶段上报。
+- `im_send` 将明确的机器人名称或 ID 解析到当前项目的微信绑定主人。句柄回复额外验证原通知会话和原收件人。工具分项报告发送结果，遇到首次失败停止发送剩余项，驱动对结果未知的发送不自动重试。连接状态和 `deliveryError` 独立，成功发送会清除后者。
+- 凭据、轮询游标、去重和关联存于 agent 目录 `integrations/im/state.json`，权限 `0600`，单进程持有；读取失败不得覆盖原数据。重启恢复连接和绑定。会话历史中的句柄由 SDK 持久化，复制后的会话 ID 不具有相同的回复权限。
+- CAT 错误按实际阶段上报，沿用 [telemetry.ts](telemetry.ts) 的原生独立 scope 和 [credential-fetch.ts](credential-fetch.ts) 的 SDK 采集抑制。正文、Token、context token、二维码授权票据及 raw provider errors 不进入遥测。正常取消、长轮询超时、二维码过期及管理校验 4xx 保持静默。升级时核验真实 SDK envelope 及普通 HTTP 采集对照。
 
 ## 模块外接入清单
 
 | 文件 / 接入点 | 原因与升级核验 |
 | --- | --- |
-| `lib/rpc-manager.ts` 的 `AgentSessionWrapper.start()`、`fork`、`fork_branch`、`clone` | 发出 Web 事件前投影 IM 来源，安排同一 manager 追加 Meta；各复制入口补齐被保留用户消息的来源，含来源 Meta 位于另一分支的共享祖先。保留原 SDK/扩展对象及 notices、subagents、队列、计时与 fork 语义。 |
-| `lib/rpc-manager.ts` 的 `startRpcSession()` → 创建 SDK session 后 | 普通与 Chat-only 会话安装请求级 `transformContext` 投影；串联原转换及 exact prompt，不给子代理接入。SDK 升级用真实请求核对工具执行中激活新工具的声明/snippet/guidelines、Web steer/follow-up、Chat-only、custom 续跑及不落盘、不污染下一次 Web。 |
-| `lib/session-fork.ts` 的 `forkSessionBranch()` | 离线复制同样补齐被保留用户消息的来源，含恰好截止在 user entry 的分支；原文件字节/mtime 不变，excludeLeaf 不带被排除消息的来源。 |
-| `lib/session-reader.ts` 的 `buildSessionContext()` | 从完整条目索引来源后按 user entryId 投影，保持分页、entryIds、分支和普通消息行为；只读路径不写文件。 |
-| `lib/types.ts` 的 `UserMessage.imSource` | 可选来源数据，普通 Web/assistant 消息维持原有角色和结构。 |
-| `components/MessageView.tsx` 的 `UserMessageView()` | 只挂来源角标；正文、复制、编辑和分支仍使用原有展示投影。 |
-| `components/MessageView.test.mjs` 的 Node loader | 沿用仓库 CSS module 的 SSR 测试处理，让新增角标和聚合入口的样式不阻断原有消息回归；实际样式另用浏览器验证。 |
-| `instrumentation-node.ts` 的 `registerNodeInstrumentation()` | 异步导入 Node 入口，启动恢复已启用机器人；不阻塞原有启动与 SDK 预热。退出监听在本模块注册，沿用原 SSE 关闭逻辑。 |
-| `app/api/tsgw/im/route.ts` 的 GET/POST | Node 薄路由代理本模块 handler，保留原 proxy 的 Web 认证、Host/Origin 边界；GET 不落盘，JSON 解析错误不回显正文。 |
-| `components/SettingsPanel.tsx` 的 `SettingsSectionIcon()`、`SettingsPanel()` | 栏目、图标与面板接线；未选中时卸载 IM，终止页面轮询。保留原手机详情导航及各上游设置功能。宿主已超过 500 行，只保留必要接线，不在此实现业务。 |
-| `lib/settings-navigation.ts` 的 `SETTINGS_SECTION_VALUES` | 加入 `im`，无需已选项目即可管理全局机器人；创建时仍校验实际项目目录。 |
-| `package.json`、`package-lock.json` | 固定 `qrcode` 1.5.4 与 `@types/qrcode` 1.5.6；二维码在本机生成。发布清单包含模块 README 与第三方许可。 |
-| `tsgw/AGENTS.md` 的公共入口与文档索引 | 模块规则、客户端/Node 入口、私聊契约和操作说明索引。 |
+| `lib/rpc-manager.ts` → `startRpcSession()` | 普通会话注册发送扩展，Chat-only 安装 IM 回复的请求内工具，侧聊和子代理按原设置。复用现有自定义消息受理与 wrapper 生命周期。 |
+| `lib/message-display.ts` → `isMessageGroupAnchor()` | 将 IM 原生通知作为独立轮次锚点，包括新会话第一条消息。复用通用通知组件。 |
+| `instrumentation-node.ts` → `registerNodeInstrumentation()` | 异步恢复已启用的微信机器人。模块管理退出停机。 |
+| `app/api/tsgw/im/route.ts` → GET/POST | 薄代理，沿用原 proxy 的 Web 认证及 Host/Origin 校验。 |
+| `components/SettingsPanel.tsx`、`lib/settings-navigation.ts` | 设置入口、栏目图标和 `im` 导航值。未选中时卸载面板并停止页面轮询。 |
+| `package.json`、`package-lock.json` | 本地二维码依赖与发布的技能、操作说明及许可。打包须包含 `tsgw/im/skills/tsgw-im-reply/SKILL.md`。 |
+| `tsgw/AGENTS.md` | 模块索引。 |
 
-## 验收
+## 验证
 
 ```sh
 node --experimental-strip-types --test tsgw/im/*.test.mjs
@@ -67,12 +34,6 @@ node_modules/.bin/tsc --noEmit --incremental false
 npm run lint
 npm test
 IM_E2E_URL=http://127.0.0.1:30141 node tsgw/im/e2e.mjs
-# 与该服务 PI_CODING_AGENT_DIR 相同的临时目录，脚本会创建独立会话夹具。
-IM_E2E_AGENT_DIR=<临时agent目录> IM_E2E_URL=http://127.0.0.1:30141 node tsgw/im/source-e2e.mjs
 ```
 
-按职责拆分，源文件不超过 500 行；改动 TS/TSX 需主动 LSP 检查。全量测试在 root 的 DAC override/read-search capabilities 下存在原有权限用例差异，必要时只对测试进程按既有方式撤去 capabilities，不跳过用例。
-
-协议使用模拟 HTTP；Pi 宿主集成使用真实 wrapper 和本地模型服务；遥测回归仅使用内存 transport，必须保留未抑制请求可复现泄漏的负对照，以及普通 HTTP breadcrumbs 仍存在的正例。浏览器使用临时 agent 目录，拦截全部 IM 管理操作与 CAT 初始化请求，不新增真实机器人。
-
-先检查并复用健康开发服务，禁止在开发工作树运行 `next build`。模拟测试不代表真实微信扫码、Telegram 收发或生产包验收；真实账号需用户完成扫码/Token 配置后再联调。提交、发布、部署及连接真实机器人需对应授权。
+改动 TS/TSX 使用主动 LSP 诊断。测试覆盖已有及新绑定、原生通知和工具调用、旧数据兼容、协议收发、媒体、取消及遥测。运行浏览器测试时复用健康开发服务，或者用临时 agent 目录启动；禁止 `next build`。模拟测试与手机扫码收发分开验收。提交、发布、部署及真实机器人连接需要对应授权。

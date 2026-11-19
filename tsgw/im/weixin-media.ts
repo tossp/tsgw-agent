@@ -249,7 +249,7 @@ async function readAttachment(attachment: ImAttachment, limit: number, signal: A
 
 /** Returns a sendmessage item only. Never sends a chat message or retries a POST. */
 export async function uploadWeixinAttachment(
-  attachment: ImAttachment, message: ImInbound, options: MediaOptions,
+  attachment: ImAttachment, message: Pick<ImInbound, "chatId">, options: MediaOptions,
 ): Promise<Record<string, unknown>> {
   return mediaOperation(options.signal, async (signal) => {
     if (attachment.type !== "image" && attachment.type !== "file") throw new MediaError("file");

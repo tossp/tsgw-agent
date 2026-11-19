@@ -2,7 +2,6 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { imMessageSources, withImMessageSource } from "../tsgw/im/message-data";
 import { closeSync, type Dirent, fstatSync, openSync, readSync, statSync } from "fs";
 import { readdir } from "fs/promises";
 import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
@@ -723,7 +722,6 @@ export function buildSessionContext(
   options: BuildSessionContextOptions = {},
 ): SessionContext {
   const { tail, excludeLeaf } = options;
-  const sources = imMessageSources(entries);
   // History pages retain the original branch order, including compacted messages.
   // SDK context filtering can drop a page's messages when firstKeptEntryId is outside it.
   const sliced = leafId === null ? [] : sliceActiveBranch(
@@ -738,7 +736,7 @@ export function buildSessionContext(
   for (const entry of sliced) {
     const m = entryToUiMessage(entry, options);
     if (m) {
-      messages.push(m.role === "user" ? withImMessageSource(m, sources.get(entry.id)) : m);
+      messages.push(m);
       entryIds.push(entry.id);
     }
   }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { reportImError } from "./telemetry";
-import type { ImAttachment, ImDriver, ImDriverOptions, ImInbound, WeixinCredentials } from "./types";
+import type { ImAttachment, ImDriver, ImDriverOptions, ImInbound, ImRecipient, WeixinCredentials } from "./types";
 import { prepareWeixinInput, weixinInputText } from "./weixin-inbound";
 import { downloadWeixinAttachment, uploadWeixinAttachment } from "./weixin-media";
 import { WEIXIN_BASE_INFO, WeixinError, weixinAbort, weixinRecord, weixinRequest, weixinString, weixinUrl } from "./weixin-transport";
@@ -166,16 +166,16 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
     }
   }
 
-  function replyContext(message: ImInbound, signal?: AbortSignal): string {
+  function replyContext(message: ImRecipient, signal?: AbortSignal): string {
     if (!signal || signal.aborted) throw weixinAbort();
-    if (message.chatId !== credentials.ownerUserId || message.senderId !== credentials.ownerUserId
+    if (message.chatId !== credentials.ownerUserId || (message.senderId !== undefined && message.senderId !== credentials.ownerUserId)
       || message.isGroup || message.threadId) throw new WeixinError("recipient", "微信消息接收者无效。");
     const token = contexts.get(message.chatId);
     if (!token) throw new WeixinError("context", "请先向微信机器人发送消息后再回复。");
     return token;
   }
 
-  async function sendItem(message: ImInbound, item: Record<string, unknown>, contextToken: string, signal: AbortSignal): Promise<void> {
+  async function sendItem(message: ImRecipient, item: Record<string, unknown>, contextToken: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     // Never retry an uncertain send: iLink does not promise client_id deduplication.
     await weixinRequest({
@@ -191,13 +191,13 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
     });
   }
 
-  async function sendNow(message: ImInbound, text: string, signal?: AbortSignal): Promise<void> {
+  async function sendNow(message: ImRecipient, text: string, signal?: AbortSignal): Promise<void> {
     if (!signal || signal.aborted) throw weixinAbort();
     const contextToken = replyContext(message, signal);
     for (const part of chunks(text)) await sendItem(message, { type: 1, text_item: { text: part } }, contextToken, signal);
   }
 
-  async function sendAttachmentNow(message: ImInbound, attachment: ImAttachment, signal?: AbortSignal): Promise<void> {
+  async function sendAttachmentNow(message: ImRecipient, attachment: ImAttachment, signal?: AbortSignal): Promise<void> {
     if (!signal || signal.aborted) throw weixinAbort();
     const contextToken = replyContext(message, signal);
     const item = await uploadWeixinAttachment(attachment, message, { bot, fetchImpl, signal });
@@ -244,8 +244,9 @@ export function createWeixinDriver(options: ImDriverOptions): ImDriver {
       sendQueue = result.catch(() => undefined);
       return result;
     },
-    send(message, text) {
-      const signal = controller?.signal;
+    send(message, text, requestSignal) {
+      const driverSignal = controller?.signal;
+      const signal = driverSignal && requestSignal ? AbortSignal.any([driverSignal, requestSignal]) : driverSignal;
       const result = sendQueue.then(() => sendNow(message, text, signal));
       sendQueue = result.catch(() => undefined);
       return result;

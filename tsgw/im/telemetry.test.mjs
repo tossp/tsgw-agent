@@ -16,7 +16,6 @@ const { ImRuntime } = await jiti.import("./runtime.ts");
 const { ImService } = await jiti.import("./service.ts");
 const { createWeixinDriver } = await jiti.import("./weixin.ts");
 const { WeixinError } = await jiti.import("./weixin-transport.ts");
-const { PiAnswerCollector } = await jiti.import("./pi-host-run.ts");
 const { imRequest } = await jiti.import("./useImSettings.ts");
 const envelopes = [];
 Sentry.init({
@@ -53,7 +52,7 @@ async function fixture(t, options = {}) {
   let sendCount = 0;
   const host = {
     async exists() { return true; }, async create() { return "session"; }, async list() { return []; }, async stop() {},
-    async prompt(...args) { return options.prompt ? options.prompt(...args) : "answer"; },
+    async notify(...args) { return { completion: options.notify ? options.notify(...args) : Promise.resolve() }; },
   };
   const factory = (value) => {
     config = value;
@@ -61,7 +60,7 @@ async function fixture(t, options = {}) {
       start() {}, async stop() {}, async send() { sendCount++; await options.send?.(); },
     };
   };
-  const runtime = new ImRuntime(store, host, { weixin: factory, telegram: factory });
+  const runtime = new ImRuntime(store, host, factory);
   t.after(() => runtime.stop());
   await runtime.start();
   return { runtime, config, directory, sendCount: () => sendCount };
@@ -96,9 +95,14 @@ test("handled task and send failures report their owning stage once without raw 
     await t.test(operation, async (t) => {
       envelopes.length = 0;
       const fail = async () => { throw new Error("private-token private-chat-text private-response-body"); };
-      const f = await fixture(t, operation === "process" ? { prompt: fail } : { send: fail });
-      await f.config.onMessage(message);
-      await eventually(() => f.sendCount() === 1);
+      const f = await fixture(t, operation === "process" ? { notify: fail } : { send: fail });
+      if (operation === "process") {
+        await f.config.onMessage(message);
+        await eventually(() => f.sendCount() === 1);
+      } else {
+        const result = await f.runtime.send(f.directory, { bot: "WX" }, [{ type: "text", text: message.text }]);
+        assert.equal(result.success, false);
+      }
       const all = await flush();
       assert.equal(all.length, 1);
       assert.equal(all[0].tags.operation, operation);
@@ -131,36 +135,27 @@ test("real WeChat long-poll timeouts and intentional stop remain quiet; a connec
   await failed.runtime.stop();
 });
 
-test("cancelled model waits do not produce failure events", async (t) => {
+test("a stopped driver ignores late notification failures", async (t) => {
   envelopes.length = 0;
   let started = false;
-  const f = await fixture(t, { prompt: async () => { started = true; return new Promise(() => {}); } });
+  const { promise, reject } = Promise.withResolvers();
+  const f = await fixture(t, { notify: () => { started = true; return promise; } });
   await f.config.onMessage(message);
   await eventually(() => started);
   await f.runtime.stop();
+  reject(new Error("late failure"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal((await flush()).length, 0);
 });
 
-test("a Web stop or aborted assistant remains a cancellation when the IM wait signal is still live", async (t) => {
-  for (const type of ["agent_settled", "assistant"]) {
-    envelopes.length = 0;
-    const f = await fixture(t, { prompt: async () => {
-      const marker = "[IM request test]";
-      const collector = new PiAnswerCollector(marker);
-      collector.accept({ type: "message_end", message: { role: "user", content: marker } });
-      if (type === "agent_settled") collector.accept({ type, aborted: true });
-      else {
-        collector.accept({ type: "message_end", message: { role: "assistant", stopReason: "aborted", content: [] } });
-        collector.accept({ type: "prompt_done" });
-      }
-      assert.throws(() => collector.result(true), { name: "AbortError" });
-      return collector.result(true);
-    } });
-    await f.config.onMessage(message);
-    await eventually(() => f.sendCount() === 1);
-    assert.equal((await flush()).length, 0);
-  }
+test("a cancelled Pi notification produces no failure or fallback message", async (t) => {
+  envelopes.length = 0;
+  let called = false;
+  const f = await fixture(t, { notify: async () => { called = true; throw new DOMException("cancelled", "AbortError"); } });
+  await f.config.onMessage(message);
+  await eventually(() => called);
+  assert.equal(f.sendCount(), 0);
+  assert.equal((await flush()).length, 0);
 });
 
 test("failed WeChat binding is captured but cancellation and normal QR expiration are not", async (t) => {
@@ -169,7 +164,6 @@ test("failed WeChat binding is captured but cancellation and normal QR expiratio
     envelopes.length = 0;
     let release;
     const service = new ImService(f.runtime, {
-      async verifyTelegram() { throw new Error("unused"); },
       async qrImage() { return "data:image/png;base64,AA=="; },
       async createWeixinLogin() {
         return { qrUrl: "https://example.invalid/qr", async poll() {
@@ -202,7 +196,6 @@ test("QR creation and image generation failures are captured while project valid
     envelopes.length = 0;
     const failure = new Error("private-qr-ticket");
     const service = new ImService(f.runtime, {
-      async verifyTelegram() { throw new Error("unused"); },
       async createWeixinLogin() {
         if (stage === "create") throw failure;
         return { qrUrl: "https://example.invalid/qr", async poll() { return { state: "waiting" }; } };
@@ -219,7 +212,7 @@ test("QR creation and image generation failures are captured while project valid
 });
 
 test("settings failures distinguish request purpose and response receipt without exposing payloads; reporting boundaries stay unchanged", async (t) => {
-  const action = { action: "add-telegram", token: "private-token", name: "TG", cwd: "/work", allowedUserIds: ["1"], allowedChatIds: [] };
+  const action = { action: "login-weixin", name: "private-token", cwd: "/work" };
   const scope = new AbortController();
   let online = false;
   t.mock.getter(globalThis, "navigator", () => ({ onLine: online }));
@@ -229,7 +222,7 @@ test("settings failures distinguish request purpose and response receipt without
   for (const [input, cwd, request, method] of [
     [undefined, undefined, "status", "GET"],
     [undefined, "/private-project/path", "sessions", "GET"],
-    [action, undefined, "add-telegram", "POST"],
+    [action, undefined, "login-weixin", "POST"],
     [{ action: "poll-weixin", loginId: "private-qr-ticket" }, undefined, "poll-weixin", "POST"],
   ]) {
     envelopes.length = 0;
@@ -254,7 +247,7 @@ test("settings failures distinguish request purpose and response receipt without
     assert.equal(all.length, 1);
     assert.deepEqual(all[0].tags, {
       instance: "test-host", source: "im", operation: "settings-response",
-      request: "add-telegram", method: "POST", responseReceived: true, status, errorType: "SyntaxError", online: true,
+      request: "login-weixin", method: "POST", responseReceived: true, status, errorType: "SyntaxError", online: true,
     });
     assert.ok(!JSON.stringify(all).includes("private-response-body"));
   }
@@ -299,7 +292,9 @@ test("initialization and management failures retain API responses and each produ
     events.length = 0;
     const directory = process.env.PI_CODING_AGENT_DIR;
     const file = join(directory, 'integrations/im/state.json');
-    await writeFile(file, JSON.stringify({ version: 1, bots: [], checkpoints: {}, seen: {}, conversations: {
+    const bot = { id: 'bot', channel: 'weixin', cwd: directory, enabled: false, allowedUserIds: ['chat'], allowedChatIds: [],
+      credentials: { token: 'private-token', accountId: 'account', ownerUserId: 'chat', baseUrl: 'https://ilinkai.weixin.qq.com/' } };
+    await writeFile(file, JSON.stringify({ version: 1, bots: [bot], checkpoints: {}, seen: {}, conversations: {
       test: { key: 'test', botId: 'bot', chatId: 'chat', title: 'chat', cwd: directory, sessionId: null, updatedAt: new Date().toISOString() },
     } }));
     assert.equal((await handleImGet(new Request('http://localhost/api/tsgw/im'))).status, 200);

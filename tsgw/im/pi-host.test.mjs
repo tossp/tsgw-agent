@@ -1,102 +1,31 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const jiti = createJiti(import.meta.url);
-const { createPiSessionHost } = await jiti.import("./pi-host.ts");
-const { PiAnswerCollector } = await jiti.import("./pi-host-run.ts");
-const tick = () => new Promise((resolve) => setImmediate(resolve));
-const marker = "[IM request test]";
-const user = (text = marker, type = "message_end") => ({ type, message: { role: "user", content: [{ type: "text", text }] } });
-const assistant = (text, stopReason = "stop", extra = {}) => ({
-  type: "message_end", message: { role: "assistant", content: [{ type: "text", text }], stopReason, ...extra },
-});
+const { createPiSessionHost } = await createJiti(import.meta.url).import("./pi-host.ts");
 const row = (id, extra = {}) => ({ id, cwd: process.cwd(), firstMessage: id, ...extra });
 
 function fixture(rows = [row("main")]) {
-  const listeners = new Set();
-  const calls = [];
-  const starts = [];
-  const sources = [];
-  const capabilities = [];
-  let running = false;
-  let alive = true;
-  let onSend = () => null;
+  const starts = [], calls = [], notifications = [];
   const wrapper = {
-    isRunning: () => running,
-    isAlive: () => alive,
-    onEvent(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    send(command) { calls.push(command); return Promise.resolve(onSend(command)); },
+    isAlive: () => true,
+    async send(value) { calls.push(value); },
+    beginCustomMessageSubmission: () => () => {},
+    acquirePromptAdmission: async () => () => {},
+    prepareMcpForRun: async () => true,
+    shellRunning: false,
+    inner: { isCompacting: false, isStreaming: false, async sendCustomMessage(notification, options) { notifications.push({ notification, options }); } },
   };
   const access = {
-    list: async () => rows,
-    get: async () => wrapper,
-    start: async (...args) => { starts.push(args); return { session: wrapper, realSessionId: args[0].startsWith("__new__") ? "new" : args[0] }; },
-    resolvePath: async () => "/session.jsonl",
-    allowRoot: async () => {},
-    invalidateList: async () => {},
-    registerSource(_wrapper, source, replyCapabilities) { sources.push(source); capabilities.push(replyCapabilities); return () => sources.splice(sources.indexOf(source), 1); },
+    async list() { return rows; }, async get() { return wrapper; },
+    async start(...args) { starts.push(args); return { session: wrapper, realSessionId: args[0].startsWith("__new__") ? "new" : args[0] }; },
+    async resolvePath() { return "/session.jsonl"; }, async allowRoot() {}, async invalidateList() {},
   };
-  const emit = (event) => { for (const fn of listeners) fn(event); };
-  const begin = () => {
-    onSend = (command) => {
-      if (command.type !== "prompt") return;
-      running = true;
-      emit(user(command.message, "message_start"));
-      emit(user(command.message));
-    };
-  };
-  const finish = (text = "final") => {
-    emit(assistant(text));
-    emit({ type: "agent_end" });
-    emit({ type: "agent_settled", aborted: false });
-    running = false;
-    emit({ type: "prompt_done" });
-  };
-  return { access, wrapper, listeners, calls, starts, sources, capabilities, emit, begin, finish,
-    host: createPiSessionHost(access), setRunning: (value) => { running = value; },
-    setAlive: (value) => { alive = value; }, setSend: (fn) => { onSend = fn; } };
+  return { access, host: createPiSessionHost(access), wrapper, starts, calls, notifications };
 }
-
-const signal = () => new AbortController().signal;
-const inputSource = { channel: "telegram", botId: "bot", botName: "TG", chatId: "42", senderId: "42", messageId: "1" };
-
-test("source registration begins only after the shared Web run is idle, and is released after the reply", async () => {
-  const f = fixture();
-  f.setRunning(true);
-  f.begin();
-  const pending = f.host.prompt("main", "IM input", signal(), inputSource);
-  await tick();
-  assert.equal(f.sources.length, 0);
-  f.setRunning(false);
-  f.emit({ type: "agent_settled" });
-  await tick();
-  assert.equal(f.sources.length, 1);
-  assert.equal(f.sources[0].chatId, "42");
-  assert.match(f.sources[0].requestId, /^[0-9a-f-]{36}$/);
-  f.finish();
-  assert.equal(await pending, "final");
-  assert.equal(f.sources.length, 0);
-});
-
-test("busy refusals and cancelled IM requests release their temporary source registration", async () => {
-  const refused = fixture();
-  refused.setSend(() => Promise.reject(new Error("private error")));
-  await assert.rejects(refused.host.prompt("main", "input", signal(), inputSource), /暂时无法接收/);
-  assert.equal(refused.sources.length, 0);
-  const cancelled = fixture();
-  cancelled.begin();
-  const controller = new AbortController();
-  const pending = cancelled.host.prompt("main", "input", controller.signal, inputSource);
-  await tick();
-  assert.equal(cancelled.sources.length, 1);
-  controller.abort();
-  await assert.rejects(pending, { name: "AbortError" });
-  assert.equal(cancelled.sources.length, 0);
-});
 
 test("catalogue and exists restrict the cwd and ordinary sessions, preserving forks", async () => {
   const f = fixture([
@@ -104,334 +33,41 @@ test("catalogue and exists restrict the cwd and ordinary sessions, preserving fo
     row("subagent", { relation: { kind: "subagent" } }), row("side", { relation: { kind: "side" } }),
     row("other", { cwd: "/another-project" }), row("pending", { detailsPending: true }),
   ]);
-  assert.deepEqual((await f.host.list(`${process.cwd()}/.`)).map((value) => value.id), ["main", "fork"]);
+  assert.deepEqual((await f.host.list(`${process.cwd()}/.`)).map(({ id }) => id), ["main", "fork"]);
   assert.equal((await f.host.list(process.cwd()))[0].title, "Named");
   assert.equal(await f.host.exists("fork", process.cwd()), true);
-  for (const id of ["subagent", "side", "other", "pending", "missing"]) {
-    assert.equal(await f.host.exists(id, process.cwd()), false);
-  }
-  assert.equal(f.starts.length, 0);
+  for (const id of ["subagent", "side", "other", "pending", "missing"]) assert.equal(await f.host.exists(id, process.cwd()), false);
+  assert.deepEqual(f.starts, []);
 });
 
-test("create uses unique new-session keys, allows the cwd and leaves naming to extensions", async () => {
+test("create allows the project and leaves naming and notification delivery to Pi", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "im-host-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
   const f = fixture();
   const allowed = [];
-  let invalidations = 0;
   f.access.allowRoot = async (cwd) => { allowed.push(cwd); };
-  f.access.invalidateList = async () => { invalidations++; };
-  assert.equal(await f.host.create(process.cwd(), "IM title"), "new");
-  await f.host.create(process.cwd(), "IM title");
+  assert.equal(await f.host.create(cwd), "new");
+  await f.host.create(cwd);
   assert.match(f.starts[0][0], /^__new__[0-9a-f-]{36}$/);
   assert.notEqual(f.starts[0][0], f.starts[1][0]);
-  assert.equal(f.starts[0][1], "");
-  assert.deepEqual(allowed, [process.cwd(), process.cwd()]);
-  assert.equal(invalidations, 2);
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.starts[0].slice(1), ["", cwd]);
+  assert.deepEqual(allowed, [cwd, cwd]);
+  assert.deepEqual(f.notifications, []);
 });
 
-test("collector replaces pre-tool process text with only the final assistant answer", () => {
-  const c = new PiAnswerCollector(marker);
-  c.accept(assistant("unrelated previous Web reply"));
-  c.accept(user(marker, "message_start"));
-  c.accept(user());
-  c.accept(assistant("I will run a tool", "toolUse", { content: [{ type: "text", text: "process" }, { type: "toolCall", id: "tool" }] }));
-  c.accept({ type: "message_end", message: { role: "toolResult", content: "tool output" } });
-  c.accept({ type: "message_end", message: { role: "custom", customType: "subagent-notification", content: "child text" } });
-  c.accept(assistant("Final answer", "stop", { content: [{ type: "thinking", thinking: "private" }, { type: "text", text: "Final answer" }] }));
-  c.accept({ type: "agent_end" });
-  assert.equal(c.result(true), undefined, "agent_end is not final; a retry may follow");
-  c.accept({ type: "agent_settled" });
-  assert.equal(c.result(false), undefined);
-  assert.equal(c.result(true), "Final answer");
-});
-
-test("collector waits for subagents and returns the parent's settled answer", () => {
-  const c = new PiAnswerCollector(marker);
-  c.accept(user());
-  c.accept(assistant("waiting"));
-  c.accept({ type: "agent_settled", subagentsActive: true });
-  c.accept({ type: "prompt_done", subagentsActive: true });
-  assert.equal(c.result(true), undefined);
-  c.accept({ type: "message_end", message: { role: "custom", content: "child report" } });
-  c.accept({ type: "agent_start" });
-  c.accept(assistant("parent final"));
-  c.accept({ type: "agent_settled", subagentsActive: false });
-  assert.equal(c.result(true), "parent final");
-  const noReply = new PiAnswerCollector(marker);
-  noReply.accept(user()); noReply.accept(assistant("waiting for children"));
-  noReply.accept({ type: "agent_settled", subagentsActive: true });
-  noReply.accept({ type: "agent_start" });
-  noReply.accept({ type: "agent_settled", subagentsActive: false });
-  assert.throws(() => noReply.result(true), /最终/);
-});
-
-test("collector refuses foreign users, rewritten input and incomplete terminal messages", () => {
-  for (const foreign of [user("Web", "message_start"), user("Web")]) {
-    const c = new PiAnswerCollector(marker);
-    c.accept(user()); c.accept(assistant("own")); c.accept(foreign);
-    c.accept(assistant("Web answer")); c.accept({ type: "prompt_done" });
-    assert.throws(() => c.result(true), /其他消息/);
-  }
-  const rewritten = new PiAnswerCollector(marker);
-  rewritten.accept({ type: "prompt_done" });
-  assert.throws(() => rewritten.result(true), /未能确认/);
-  for (const reason of ["toolUse", "length", "aborted", "error"]) {
-    const c = new PiAnswerCollector(marker);
-    c.accept(user()); c.accept(assistant("partial", reason, { errorMessage: "secret credential" }));
-    c.accept({ type: "prompt_done" });
-    assert.throws(() => c.result(true), (error) => !error.message.includes("secret"));
-  }
-});
-
-test("prompt preflight is not completion and events emitted synchronously by send are retained", async () => {
-  const f = fixture(); f.begin();
-  let complete = false;
-  const reply = f.host.prompt("main", "hello", signal()).then((value) => { complete = true; return value; });
-  await tick();
-  assert.equal(f.calls.length, 1);
-  assert.equal(f.calls[0].streamingBehavior, undefined);
-  assert.match(f.calls[0].message, /^\[IM request [0-9a-f-]+\]\nhello$/);
-  assert.equal(complete, false);
-  f.emit(assistant("tool process", "toolUse"));
-  f.finish("only final");
-  assert.equal(await reply, "only final");
-  assert.equal(f.listeners.size, 0);
-});
-
-test("an existing Web run is waited out and never attributed to IM", async () => {
-  const f = fixture(); f.setRunning(true); f.begin();
-  const reply = f.host.prompt("main", "IM text", signal());
-  await tick();
-  assert.equal(f.calls.length, 0);
-  f.finish("Web reply");
-  await tick();
-  assert.equal(f.calls.length, 1);
-  f.finish("IM reply");
-  assert.equal(await reply, "IM reply");
-});
-
-test("same-session prompts across host instances serialize even when their texts match", async () => {
-  const f = fixture(); f.begin();
-  const otherHost = createPiSessionHost(f.access);
-  const first = f.host.prompt("main", "same text", signal());
-  const second = otherHost.prompt("main", "same text", signal());
-  await tick(); assert.equal(f.calls.length, 1);
-  f.finish("first"); assert.equal(await first, "first");
-  await tick(); assert.equal(f.calls.length, 2);
-  assert.notEqual(f.calls[0].message, f.calls[1].message);
-  f.finish("second"); assert.equal(await second, "second");
-});
-
-test("foreign Web messages during an IM run fail closed without aborting the shared task", async () => {
-  const f = fixture(); f.begin();
-  const reply = f.host.prompt("main", "IM", signal());
-  const rejected = assert.rejects(reply, /其他消息/);
-  await tick();
-  f.emit(user("Web follow-up", "message_start"));
-  f.finish("mixed answer");
-  await rejected;
-  assert.deepEqual(f.calls.map((command) => command.type), ["prompt"]);
-  assert.equal(f.listeners.size, 0);
-});
-
-test("signal abort cancels idle/queue/answer waits and never sends abort to Web", async () => {
-  for (const phase of ["idle", "answer", "queue"]) {
-    const f = fixture(); f.begin();
-    if (phase === "idle") f.setRunning(true);
-    let first;
-    if (phase === "queue") first = f.host.prompt("main", "first", signal());
-    const controller = new AbortController();
-    const pending = f.host.prompt("main", "cancelled", controller.signal);
-    const rejected = assert.rejects(pending, { name: "AbortError" });
-    await tick(); controller.abort(); await rejected;
-    if (first) { f.finish("first"); await first; }
-    assert.ok(f.calls.every((command) => command.type === "prompt"));
-    assert.equal(f.listeners.size, 0);
-  }
-});
-
-test("reopening uses the exact mapped id/path; no latest-project fallback", async () => {
-  const f = fixture(); f.begin();
+test("a stopped wrapper resumes the exact stored session and submits a native follow-up", async () => {
+  const f = fixture();
   f.access.get = async () => undefined;
-  const reply = f.host.prompt("main", "resume", signal());
-  await tick();
+  const signal = new AbortController().signal;
+  const address = { id: "handle", sessionId: "main", botId: "wx", chatId: "42" };
+  const input = { id: "1", text: "hello", chatId: "42", senderId: "42", isGroup: false };
+  const { completion } = await f.host.notify(address, process.cwd(), input, signal);
+  await completion;
   assert.deepEqual(f.starts, [["main", "/session.jsonl"]]);
-  f.finish(); await reply;
-  await assert.rejects(f.host.prompt("missing", "text", signal()), /不存在/);
+  assert.deepEqual(f.notifications[0].options, { triggerTurn: true, deliverAs: "followUp" });
+  assert.equal(f.notifications[0].notification.details, address);
+  assert.match(f.notifications[0].notification.content[0].text, /hello/);
+  f.access.resolvePath = async () => null;
+  await assert.rejects(f.host.notify(address, process.cwd(), input, signal), /会话不存在/);
   assert.equal(f.starts.length, 1);
-});
-
-test("stop sends wrapper abort only to an already live ordinary session", async () => {
-  const f = fixture();
-  await f.host.stop("main");
-  assert.deepEqual(f.calls, [{ type: "abort" }]);
-  f.setAlive(false); await f.host.stop("main");
-  assert.equal(f.calls.length, 1); assert.equal(f.starts.length, 0);
-  const child = fixture([row("child", { relation: { kind: "subagent" } })]);
-  await assert.rejects(child.host.stop("child"), /普通/);
-  assert.equal(child.calls.length, 0);
-});
-
-test("busy/send failures and asynchronous errors never expose provider secrets", async () => {
-  const f = fixture();
-  f.wrapper.send = async () => { throw new Error("token=secret-password"); };
-  await assert.rejects(f.host.prompt("main", "text", signal()), (error) => !error.message.includes("secret"));
-  assert.equal(f.listeners.size, 0);
-  const g = fixture(); g.begin();
-  const pending = g.host.prompt("main", "text", signal());
-  const rejected = assert.rejects(pending, (error) => !error.message.includes("secret"));
-  await tick(); g.emit({ type: "prompt_error", errorMessage: "token=secret-password" });
-  await rejected; assert.equal(g.listeners.size, 0);
-});
-
-test("cancelling a queued caller does not allow its successor to overtake the active call", async () => {
-  const f = fixture(); f.begin();
-  const first = f.host.prompt("main", "first", signal());
-  const controller = new AbortController();
-  const cancelled = f.host.prompt("main", "cancelled", controller.signal);
-  const rejected = assert.rejects(cancelled, { name: "AbortError" });
-  const third = f.host.prompt("main", "third", signal());
-  await tick(); controller.abort(); await rejected;
-  await tick(); assert.equal(f.calls.length, 1);
-  f.finish("first"); await first;
-  await tick(); assert.equal(f.calls.length, 2);
-  assert.ok(f.calls[1].message.endsWith("\nthird"));
-  f.finish("third"); assert.equal(await third, "third");
-});
-
-test("real wrapper preflight returns while the host still awaits this prompt's terminal events", async (t) => {
-  const { AgentSessionWrapper } = await jiti.import("../../lib/rpc-manager.ts");
-  let emit;
-  let finishRun;
-  const inner = {
-    sessionId: "real-wrapper-im", sessionFile: "", isStreaming: false, isCompacting: false, isBashRunning: false,
-    model: { provider: "test", id: "test" }, agent: { state: { thinkingLevel: "low" } }, systemPrompt: "",
-    sessionManager: { getCwd: () => process.cwd(), getSessionName: () => undefined, getEntries: () => [], getBranch: () => [] },
-    extensionRunner: {}, bindExtensions: async () => {},
-    subscribe(fn) { emit = fn; return () => {}; },
-    getContextUsage: () => null, getSteeringMessages: () => [], getFollowUpMessages: () => [],
-    prompt: async (text, options) => {
-      inner.isStreaming = true;
-      emit({ type: "agent_start" });
-      emit(user(text, "message_start")); emit(user(text));
-      options.preflightResult("started");
-      await new Promise((resolve) => { finishRun = resolve; });
-      emit(assistant("real final")); emit({ type: "agent_end" });
-      inner.isStreaming = false;
-      emit({ type: "agent_settled", aborted: false });
-    },
-    dispose() {},
-  };
-  const wrapper = new AgentSessionWrapper(inner);
-  wrapper.start(); wrapper.beginExtensionBinding();
-  t.after(() => wrapper.destroy());
-  const f = fixture([row("real-wrapper-im")]);
-  f.access.get = async () => wrapper;
-  let completed = false;
-  const reply = f.host.prompt("real-wrapper-im", "hello", signal()).then((text) => { completed = true; return text; });
-  await tick(); await tick();
-  assert.equal(typeof finishRun, "function");
-  assert.equal(completed, false);
-  finishRun();
-  assert.equal(await reply, "real final");
-});
-
-async function mediaFixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), "im-host-media-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const image = { type: "image", path: join(directory, "image (1).png"), name: "image (1).png", mimeType: "image/png" };
-  const file = { type: "file", path: join(directory, "report (1).txt"), name: "report (1).txt", mimeType: "text/plain" };
-  const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-  return { image, file, data, async write() {
-    await writeFile(image.path, Buffer.from(data, "base64"));
-    await writeFile(file.path, "never embed document contents");
-  } };
-}
-
-async function untilCalls(f, count) {
-  for (let attempt = 0; attempt < 100 && f.calls.length < count; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  assert.equal(f.calls.length, count);
-}
-const weixin = { ...inputSource, channel: "weixin" };
-const mediaReplies = { attachments: true };
-const fileLink = (file) => `[file](<${encodeURI(file.path)}>)`;
-
-test("host waits for Web before reading images, submits original images, and keeps media out of source metadata", async (t) => {
-  const media = await mediaFixture(t);
-  const f = fixture(); f.begin(); f.setRunning(true);
-  const answer = f.host.prompt("main", "same text", signal(), weixin, [media.image, media.file], mediaReplies);
-  await tick();
-  assert.equal(f.calls.length, 0);
-  await media.write();
-  f.finish(fileLink(media.file));
-  await untilCalls(f, 1);
-  assert.deepEqual(f.calls[0].images, [{ type: "image", data: media.data, mimeType: "image/png" }]);
-  assert.ok(f.calls[0].message.includes(media.file.path));
-  assert.ok(!f.calls[0].message.includes("never embed document contents"));
-  assert.doesNotMatch(f.calls[0].message, /附件交付约定/);
-  assert.deepEqual(f.capabilities[0], mediaReplies);
-  assert.ok(!JSON.stringify(f.sources).includes(media.data));
-  assert.ok(!JSON.stringify(f.sources).includes(media.image.path));
-  f.emit(assistant(fileLink(media.file), "toolUse"));
-  f.emit({ type: "message_end", message: { role: "toolResult", content: fileLink(media.image) } });
-  f.finish("final has no attachments");
-  assert.deepEqual(await answer, { text: "final has no attachments" });
-  assert.equal(f.sources.length, 0);
-});
-
-test("owned final attachments depend on delivery capability; text-only deliveries preserve original links", async (t) => {
-  const media = await mediaFixture(t); await media.write();
-  const f = fixture(); f.begin();
-  const a = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "A" }, undefined, mediaReplies);
-  const b = f.host.prompt("main", "same", signal(), { ...weixin, chatId: "B" }, undefined, mediaReplies);
-  await untilCalls(f, 1);
-  assert.equal(f.sources[0].chatId, "A");
-  f.finish(fileLink(media.image));
-  assert.deepEqual((await a).attachments.map((item) => item.path), [media.image.path]);
-  await untilCalls(f, 2);
-  assert.equal(f.sources[0].chatId, "B");
-  f.finish(fileLink(media.file));
-  assert.deepEqual((await b).attachments.map((item) => item.path), [media.file.path]);
-  const tg = f.host.prompt("main", "same", signal(), inputSource);
-  await untilCalls(f, 3);
-  f.finish(fileLink(media.file));
-  assert.equal(await tg, fileLink(media.file));
-  assert.doesNotMatch(f.calls[2].message, /最终答复.*本地 Markdown/);
-  const capable = f.host.prompt("main", "same", signal(), inputSource, undefined, mediaReplies);
-  await untilCalls(f, 4);
-  f.finish(fileLink(media.image));
-  assert.deepEqual((await capable).attachments.map((item) => item.path), [media.image.path]);
-  const textOnly = f.host.prompt("main", "same", signal(), weixin, undefined, { attachments: false });
-  await untilCalls(f, 5);
-  f.finish(fileLink(media.file));
-  assert.equal(await textOnly, fileLink(media.file));
-});
-
-test("stopped media requests reject and late file events cannot be delivered to the next chat", async (t) => {
-  const media = await mediaFixture(t); await media.write();
-  const f = fixture(); f.begin();
-  const controller = new AbortController();
-  const pending = f.host.prompt("main", "cancelled", controller.signal, weixin, [media.image], mediaReplies);
-  const rejected = assert.rejects(pending, { name: "AbortError" });
-  await untilCalls(f, 1);
-  controller.abort(); await rejected;
-  assert.equal(f.listeners.size, 0);
-  const next = f.host.prompt("main", "next", signal(), { ...weixin, chatId: "next" }, undefined, mediaReplies);
-  await tick();
-  assert.equal(f.calls.length, 1);
-  f.finish(fileLink(media.file));
-  await untilCalls(f, 2);
-  f.finish("new chat answer");
-  assert.deepEqual(await next, { text: "new chat answer" });
-  assert.equal(f.sources.length, 0);
-});
-
-test("invalid media rejects before dispatch or source registration", async (t) => {
-  const media = await mediaFixture(t);
-  const f = fixture(); f.begin();
-  await assert.rejects(f.host.prompt("main", "input", signal(), weixin, [media.image], mediaReplies), { code: "ENOENT" });
-  assert.equal(f.calls.length, 0);
-  assert.equal(f.sources.length, 0);
 });
