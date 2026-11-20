@@ -18,7 +18,7 @@
 | `app/login2/page.tsx` 默认导出 | Next App Router 的 `/login2` 路由入口；保留 `"use client"`，仅重导出本模块 `LoginPage` | 页面主体移入模块，宿主只留路由接线 |
 | `app/api/web-auth/route.ts` 的 `GET()`、`getPiLoginSourceIp` import | 在既有 JSON 响应的 `X-Pi-Source-IP` 头返回展示元数据 | 只更新 import 到本模块；GET/POST/DELETE 行为不变 |
 | `proxy.ts` 的 `proxy()` 未认证页面分支及 `config.matcher` | 默认未认证首页进入 `/login2`，保留查询参数为 `next`；`/debug` 也沿用该入口；`/login2` 和其公开资源不进入受保护 matcher | 不修改现有行为；不得把 `/login2` 加入 matcher 导致自重定向或资源拦截 |
-| `components/SettingsPanel.tsx` 的 `logOut()` | 既有 DELETE 登出成功后 `window.location.replace("/login2")` | 现有字面量接线无需改动 |
+| `components/SettingsPanel.tsx` 的 `logOut()` | 既有 DELETE 登出成功并清理浏览器草稿后，跳转至 `/login2` | 保留上游草稿清理顺序，由 `components/SettingsPanel.test.mjs` 验证 |
 | `public/login2/assets/` | Next 公开资源，地址固定 `/login2/assets/`；含 `emblem-source.png`、`emblem.webp`、MIT 声明和 connected/permission/password/read/verified/welcome 六段 MP3 | 原路径及字节保持不动；不迁入模块、不生成或改写音频 |
 | `tsgw/release/smoke.mjs` 的 `startPiAccess` import | 发布验收复用相同开始操作，不维护另一套开场逻辑 | 使用 `../login2/login2-start.mjs` 专用浏览器辅助入口 |
 | `package.json` 的 `scripts.test` / `files` | 测试由既有 `tsgw/**/*.test.mjs` 发现；打包文档改为 `tsgw/login2/README.md` | 仅调整迁移后的打包路径，不改变依赖或包身份 |

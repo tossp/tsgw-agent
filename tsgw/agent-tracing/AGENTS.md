@@ -17,9 +17,9 @@
 ## 主体文件
 
 - `tracer.ts`：run、模型请求、工具及嵌套工具 span 生命周期；局部错误关联；dispose 中断收尾。
-- `sdk-runtime.ts`：Pi 1.5.2 runtime stream 认证标记适配，仅在模块自身调用 `createAgentSessionFromServices()` 后、交还宿主前记录原始 stream 来源；tracer 只为这些已知 stream 的包装继承标记。私有 setter 由外置 SDK 的公开 `getPackageDir()` 定位并动态加载，核对导出 `AgentSession` 与公开入口类身份一致；不复用 MCP internals loader，不修改 SDK。不能用本模块的 `import.meta.url` 定位：生产 bundler 会将它固化成构建机源码路径。
+- `sdk-runtime.ts`：Pi 1.6.0 runtime stream 认证标记适配，仅在模块自身调用 `createAgentSessionFromServices()` 后、交还宿主前记录原始 stream 来源；tracer 只为这些已知 stream 的包装继承标记。私有 setter 由外置 SDK 的公开 `getPackageDir()` 定位并动态加载，核对导出 `AgentSession` 与公开入口类身份一致；不复用 MCP internals loader，不修改 SDK。不能用本模块的 `import.meta.url` 定位：生产 bundler 会将它固化成构建机源码路径。
 - `sdk-runtime.bundle.test.mjs`：用 Next 自带 webpack 打包真实实现（SDK 保持 external），迁移产物、删除构建源码，从无关 cwd 创建真实内存 SDK session 并运行本地 faux 请求；不访问网络。回归须防止构建路径固化，并拒绝缺失私有 marker 或 `AgentSession` 身份不同的内部模块，不能静默降级。
-- `sdk-runtime.integration.test.mjs`：强制真实 Pi 1.5.2，使用内存 OAuth credentials、本地 faux provider、内存 Sentry transport；覆盖正常请求、手动及 threshold/overflow 自动压缩、分支摘要、自定义 stream（含真实 `session_start` 扩展替换）负例、dispose 和运行中 A→B 切模型。
+- `sdk-runtime.integration.test.mjs`：强制真实 Pi 1.6.0，使用内存 OAuth credentials、本地 faux provider、内存 Sentry transport；覆盖正常请求、手动及 threshold/overflow 自动压缩、分支摘要、自定义 stream（含真实 `session_start` 扩展替换）负例、dispose 和运行中 A→B 切模型。
 - `usage.ts`：Pi usage 到 Sentry token/估算费用字段的映射。
 - `policy.ts`：服务端手动 root 采样、重叠 AI/MCP 自动埋点排除及 HTTP 自动 spans 关闭；不设置 dataCollection、beforeSendSpan、beforeEnvelope 或 ignoreSpans。
 - 模块内 `*.test.mjs`：真实 Sentry SDK 与内存 transport、本地确定性模型 stream；不得外发遥测或调用收费模型。
@@ -30,7 +30,7 @@
 | --- | --- |
 | `lib/pi-types.ts` 的 `AgentSessionLike.agent.streamFunction` | 必要宿主类型：补充 SDK 公开的可写请求边界；可选以兼容既有测试 session，不改变 SDK 接口。 |
 | `lib/rpc-manager.ts` 的 `AgentSessionWrapperOptions`、constructor | 必要注册：每 wrapper 建立一个 tracer，须早于 startup notices 的 `emit()`；子代理只传 profile 与父 session ID，不传任务或路径。 |
-| `lib/rpc-manager.ts` 的 `startRpcSession()`、`lib/subagent-runtime.ts` 的新子代理创建入口 | 必要认证接线：经 `createTracingAgentSessionFromServices()` 创建，在 wrapper/tracer 建立与 `beginExtensionBinding()` 前记录来源；透传完整 SDK 参数和返回值，保留宿主对 `modelFallbackMessage` 的处理及生命周期。重开子代理仍走普通入口。 |
+| `lib/rpc-manager.ts` 的 `startRpcSession()`、`lib/subagent-runtime.ts` 的新子代理创建入口 | 必要认证接线：经 `createTracingAgentSessionFromServices()` 创建，在 wrapper/tracer 建立与 `beginExtensionBinding()` 前记录来源；透传完整 SDK 参数和返回值，保留宿主对 `modelFallbackMessage` 的处理及生命周期。重开子代理仍走普通入口。`TurnLimitedSession` 从同一创建入口推导 SDK 会话类型，继续使用原生 `finishTurn`。 |
 | `AgentSessionWrapper.start()` 原始 `inner.subscribe` | 必要事件边界：在客户端投影、重播和 SSE 监听之前消费原始生命周期；浏览器连接数不影响采集。 |
 | `AgentSessionWrapper.emit()` | 现有错误捕获的局部 scope：关联原有错误到相应 span，不重复 capture，也不改变错误内容/过滤。 |
 | `AgentSessionWrapper.destroy()` | 必要释放：中断未结束 spans，恢复原 streamFunction，避免迟到 result 重复上报。 |
@@ -42,15 +42,15 @@
 
 ## 依赖但未修改的宿主契约 / 升级核验
 
-- Pi 1.5.2 的 Coding Agent `ModelRuntime.streamSimple()` 未安装 `pi.ai.request` observer；本模块直接观察公开 stream，不声称已接通原生 Pi telemetry，不修改 provider、认证、路由或 node_modules。
+- Pi 1.6.0 的 Coding Agent `ModelRuntime.streamSimple()` 未安装 `pi.ai.request` observer；本模块直接观察公开 stream，不声称已接通原生 Pi telemetry，不修改 provider、认证、路由或 node_modules。
 - `next.config.ts` 的 `serverExternalPackages` 必须继续外置 Coding Agent SDK；运行时路径来自该 SDK 的 `getPackageDir()`，不是工作目录或本模块经 bundler 改写的 URL。`PI_PACKAGE_DIR` 可能覆盖 SDK 路径，现有 `AgentSession` 身份核对仍必须阻止加载第二份 SDK。
-- Pi 1.5.2 的 `dist/core/agent-session.js` 用私有 `WeakMap<StreamFn, ModelRuntime>` 比较 stream 对应的 runtime 与 session 的 ModelRuntime 是否为同一实例；适配必须使用同一 SDK 模块的 WeakMap。仅该内部模块导出 `markRuntimeStreamFunction(stream, runtime)`，包根无 setter，也无 getter/继承 API。不能查询并复制原标记或无条件登记自定义 stream。本模块仅登记自己调用 SDK 创建入口取得的原函数及其包装；替换为未知 stream 时保留 SDK 的预解析分支。SDK 内部入口/导出或模块身份变化必须报错并重新评估，不能静默略过、禁用摘要或 tracing。
+- Pi 1.6.0 的 `dist/core/agent-session.js` 用私有 `WeakMap<StreamFn, ModelRuntime>` 比较 stream 对应的 runtime 与 session 的 ModelRuntime 是否为同一实例；适配必须使用同一 SDK 模块的 WeakMap。仅该内部模块导出 `markRuntimeStreamFunction(stream, runtime)`，包根无 setter，也无 getter/继承 API。不能查询并复制原标记或无条件登记自定义 stream。本模块仅登记自己调用 SDK 创建入口取得的原函数及其包装；替换为未知 stream 时保留 SDK 的预解析分支。SDK 内部入口/导出或模块身份变化必须报错并重新评估，不能静默略过、禁用摘要或 tracing。
 - 真实 faux OAuth 负例验证未适配包装会增加一次 auth 解析，并向 runtime 传入显式 key；不把这个可观察差异宣称为已复现真实供应商 OAuth 故障。Faux 原生费用为零，切模型用例只在本地 provider 边界用 Pi `calculateCost()` 生成可区分的模拟估算费用；没有供应商扣费验收。
 - `StreamFn` 可同步或异步返回同一个 `AssistantMessageEventStream`，`result()` 为共享 promise；只观察结果，不增加流迭代器或改变参数。
 - 第一个 `agent_start` 开 run；retry/continuation 可再次发 start/end，最终 `agent_settled` 才结束 run。最新 assistant stopReason 决定失败/恢复，settled.aborted 优先；这些状态描述运行结果，不能证明任务业务成功。
 - `tool_execution_end.isError` 是工具最终结论，不能只看抛错或 result.isError；`parentToolCallId` 表达 codemode/MCP 嵌套工具关系。
 - 内建 compaction/summary 和自动命名经过 `agent.streamFunction`；SDK 为其提供不同于主 session UUID 的 routing `options.sessionId`，这些辅助请求独立模型 root，即使与主 run 并发也不继承其 span/run ID。未传 routing ID 的公开 stream 调用按普通请求处理。
-- Pi 1.5.2 的 cache warming 默认模式为 `idle`，包含运行中及轮次间的保温；SDK 原始 stream 仍调用 `CacheWarmer.start()`，包装必须原样委托，不修改此上游行为。cache warming 直接访问 ModelRuntime，不在本模块覆盖内；扩展绕过该公开 stream/executeTool 的直接调用也不保证覆盖。preflight 不计入 run 耗时。
+- Pi 1.6.0 的 cache warming 默认模式为 `idle`，包含运行中及轮次间的保温；SDK 原始 stream 仍调用 `CacheWarmer.start()`，包装必须原样委托，不修改此上游行为。cache warming 直接访问 ModelRuntime，不在本模块覆盖内；扩展绕过该公开 stream/executeTool 的直接调用也不保证覆盖。preflight 不计入 run 耗时。
 - 子代理独立 session/run，通过父 session ID 关联，不保持等待工具长开，不另建家族完成协议。侧聊是独立普通 wrapper，`sideChat` 与 `agentTracing` 选项并列保留，沿用独立 conversation/root，不新增侧聊父级字段或改变上游工具、通知策略；宿主行为见[侧聊说明](../../docs/agents/side-sessions.md)。
 - Pi input 不含 cacheRead/cacheWrite；Sentry input 包含二者；缓存是输入子集，reasoning 为输出子集，不能重复相加。
 - 仅模型 spans 携带 token/费用，不复制到父 run 或工具；采用 Pi calculateCost 的最高适用价格档位及严格阈值规则，命中档价格缺失/全零时省略费用。失败/取消的 SDK 合成全零 usage 视为未知并省略，部分实际 usage 保留；估算不等于供应商/AIH 最终扣费。
@@ -78,7 +78,7 @@ npm test
 
 ## 覆盖限制与容量边界
 
-- [真实 SDK 集成](sdk-runtime.integration.test.mjs)使用 Pi 1.5.2、内存 OAuth 凭据和本地 faux provider；[搬迁打包回归](sdk-runtime.bundle.test.mjs)覆盖迁移后的 SDK 定位与失败守卫。生产 `.next`、npm tarball 及安装后 wrapper/SDK 身份须按最终依赖快照独立验收，不以源集成测试替代。
+- [真实 SDK 集成](sdk-runtime.integration.test.mjs)使用 Pi 1.6.0、内存 OAuth 凭据和本地 faux provider；[搬迁打包回归](sdk-runtime.bundle.test.mjs)覆盖迁移后的 SDK 定位与失败守卫。生产 `.next`、npm tarball 及安装后 wrapper/SDK 身份须按最终依赖快照独立验收，不以源集成测试替代。
 - 模块隔离回归不覆盖真实供应商 OAuth 刷新/过期、供应商扣费、Anthropic message threads、cache warming 后台请求、PTY、Docker 或跨 OS 行为。本地测试不使用用户凭据或真实会话，不调用收费模型或向 CAT 外发 AI 测试遥测。
 - CAT 实际 AI 摄入、Conversations、费用展示及源码映射的线上效果未验收。部署与受控实发须另获授权，再经 `ts_tool → cat` 回读确认；不能用本地 envelope 测试替代服务端证据。
 - 容量按 100% 采集规划，span 数约为 run＋模型请求＋工具执行，含重试、嵌套与子代理。单条未压缩 1–4 KB 仅为预算假设，不是实际落盘倍率；首次摄入后须量测。

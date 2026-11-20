@@ -11,8 +11,11 @@ test("the trust dialog Settings › MCP opens stacks above Settings", () => {
   assert.ok(zIndex(".project-trust-backdrop") > zIndex(".settings-dialog-backdrop"));
 });
 
-test("logout returns to the default login2 entry", () => {
-  assert.match(settingsSource, /window\.location\.replace\("\/login2"\)/);
+test("signing out clears stored drafts after success and returns to login2", () => {
+  assert.match(
+    settingsSource,
+    /if \(!response\.ok\) throw new Error\([^\n]*\);\n(?:\s*\/\/[^\n]*\n)*\s*clearStoredDrafts\(\);\n\s*window\.location\.replace\("\/login2"\);/,
+  );
 });
 
 test("the login page returns only to a destination safeLoginDestination() accepts", () => {

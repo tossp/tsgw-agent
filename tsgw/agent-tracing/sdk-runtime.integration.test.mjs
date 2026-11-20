@@ -16,7 +16,7 @@ import {
 import { Sentry, AgentTracer, markEnvelopes, settleSpans, spansSince, agentSpans, modelSpans, attrs } from "./tracer-fixture.mjs";
 
 const { version } = JSON.parse(await readFile(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url), "utf8"));
-assert.equal(version, "1.5.2", "this auth contract regression must run against the target SDK, not the old installation");
+assert.equal(version, "1.6.0", "this auth contract regression must run against the target SDK, not the old installation");
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { createTracingAgentSessionFromServices } = await jiti.import("./index.ts");
 const fetch = globalThis.fetch;
@@ -24,7 +24,7 @@ globalThis.fetch = () => { throw new Error("Network is forbidden in the tracing 
 test.after(async () => { await Sentry.close(2000); globalThis.fetch = fetch; });
 
 async function fixture(t, { adapted = true, settings, models, tools = [], onSessionStart } = {}) {
-  const cwd = await mkdtemp(join(tmpdir(), "tsgw-tracing-sdk15-"));
+  const cwd = await mkdtemp(join(tmpdir(), "tsgw-tracing-sdk-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const faux = fauxProvider({
     models: models ?? [{ id: "faux-auth", cost: { input: 1, output: 2, cacheRead: 1, cacheWrite: 1 } }],
