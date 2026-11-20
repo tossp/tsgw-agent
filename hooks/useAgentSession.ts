@@ -19,7 +19,7 @@ import { AgentCommandError, agentStatusUrl, EXTENSION_REPORTED_CODE, isPromptRej
 import { createSideChat, SIDE_REFUSAL_MESSAGES } from "@/lib/side-chat-client";
 import { missingCwdFromBody } from "@/lib/missing-cwd";
 import { reportCatError } from "@/tsgw/cat-monitoring";
-import { useNoticeDismiss } from "@/tsgw/notice-dismiss";
+import { useNoticeDismiss } from "@/tsgw/notice-dismiss/useNoticeDismiss";
 import {
   deleteSessionViewSnapshot,
   getSessionViewSnapshot,

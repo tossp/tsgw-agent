@@ -1,19 +1,18 @@
 import { existsSync } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionWrapper } from "../../lib/rpc-manager";
 import type { SessionOwnerAccess } from "./session-owner";
 import { invalidateSessionListCache, invalidateSessionManagerCache, resolveSessionPath } from "../../lib/session-reader";
 import { SUBAGENT_META_TYPE } from "../../lib/subagents";
+import { withNotificationAdmission, type NotificationWrapper } from "../session-management";
 import { WAKEUP_META_TYPE, WAKEUP_NOTIFICATION_TYPE, readWakeupSessionFile } from "./history";
 import { WakeupRuntime, type WakeupRuntimeOptions, type WakeupSessionStore } from "./runtime";
 import { createWakeupSession } from "./new-session";
 import { readWakeupReceipt } from "./reconcile";
 import type { Wakeup } from "./scheduler";
 
-export type WakeupWrapper = Pick<AgentSessionWrapper,
-  "inner" | "isAlive" | "shellRunning" | "prepareMcpForRun" | "acquirePromptAdmission" | "beginCustomMessageSubmission" | "cwd" | "sessionFile">;
+export type WakeupWrapper = NotificationWrapper & Pick<AgentSessionWrapper, "inner" | "cwd" | "sessionFile">;
 
 export interface WakeupHostAccess {
   getSession(sessionId: string): WakeupWrapper | undefined;
@@ -79,34 +78,17 @@ export function createWakeupHost(access: WakeupHostAccess, options: WakeupRuntim
     let wrapper = access.getSession(wakeup.targetSessionId);
     if (!wrapper?.isAlive()) wrapper = await access.reopenSession(wakeup.targetSessionId, snapshot.file);
     if (wrapper.inner.sessionId !== wakeup.targetSessionId) throw new Error("Reopened session ID does not match wakeup target");
-    // Count preparation before its first await, just like send(): shell commands must not
-    // overtake an idle submission, and ctx.shutdown() must wait until it is accepted.
-    context.assertCanSubmit();
-    const finishSubmission = wrapper.beginCustomMessageSubmission();
-    try {
-      // Share admission and prepareMcpForRun's Stop handle for session_start and MCP,
-      // not the model's whole run. A separate binding wait would bypass Stop.
-      const release = await wrapper.acquirePromptAdmission();
-      try {
-        context.assertCanSubmit();
-        if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
-        if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}`);
-        if (!await wrapper.prepareMcpForRun(context.signal)) throw new Error("Wakeup stopped while MCP servers were connecting");
-        // A streaming follow-up can queue beside !bash. Only a new run must wait for
-        // shell execution AND user_bash hooks; a run may have ended during the MCP wait.
-        // Never wait on isRunning(): parked prompts need this same admission to drain.
-        while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) await delay(50, undefined, { signal: context.signal });
-        context.assertCanSubmit();
-        if (!wrapper.isAlive()) throw new Error("Target session closed before wakeup delivery");
-        if (!existsSync(snapshot.file)) throw new Error("Target session file was deleted before wakeup delivery");
-        assertOrdinary(wrapper.inner.sessionManager.getEntries());
-        await submitWakeup(wrapper, wakeup);
-      } finally {
-        release();
-      }
-    } finally {
-      finishSubmission();
-    }
+    const target = wrapper;
+    await withNotificationAdmission(target, {
+      ...context,
+      beforeMcp() {
+        if (!existsSync(target.cwd)) throw new Error(`Directory does not exist: ${target.cwd}`);
+      },
+    }, () => {
+      if (!existsSync(snapshot.file)) throw new Error("Target session file was deleted before wakeup delivery");
+      assertOrdinary(target.inner.sessionManager.getEntries());
+      return submitWakeup(target, wakeup);
+    });
   }, options);
 }
 

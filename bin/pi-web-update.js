@@ -12,26 +12,6 @@ const { PACKAGE_NAME, COMMAND_NAME, getReleaseChannel, getNpmLatestUrl, readRele
 
 const FETCH_TIMEOUT_MS = 10_000;
 
-// Port of lib/app-update.ts (bin cannot import TypeScript).
-function parseStableVersion(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (!match) return null;
-  const parts = match.slice(1).map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
-}
-
-function isNewerStableVersion(candidate, current) {
-  const candidateParts = parseStableVersion(candidate);
-  const currentParts = parseStableVersion(current);
-  if (!candidateParts || !currentParts) return false;
-  for (let index = 0; index < candidateParts.length; index += 1) {
-    if (candidateParts[index] !== currentParts[index]) {
-      return candidateParts[index] > currentParts[index];
-    }
-  }
-  return false;
-}
-
 async function fetchLatestVersion(currentVersion) {
   const response = await fetch(getNpmLatestUrl(currentVersion), {
     headers: { Accept: "application/json" },
@@ -140,4 +120,4 @@ async function runUpdate({
   return code;
 }
 
-module.exports = { findNpmInvocation, getInstallKind, isNewerStableVersion, runUpdate };
+module.exports = { findNpmInvocation, getInstallKind, runUpdate };

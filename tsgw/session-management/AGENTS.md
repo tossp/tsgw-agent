@@ -5,6 +5,7 @@
 本模块为机器人、普通会话代理提供共享的会话查询与整理能力。Node-only 公共入口为 `index.ts`，不允许浏览器导入。工具只有 `list_sessions`、`read_session`、`rename_session`、`archive_session`，统一 `exposure: "codemode"`。调用指引为 [技能](skills/tsgw-session-management/SKILL.md)。不提供删除工具、标题维护状态机、后台命名模型或自动清理任务。
 
 - `catalog.ts` 复用宿主磁盘与内存清单，并统一普通会话、普通 fork 和项目真实路径匹配；IM 沿用该筛选，排除侧聊和子代理。
+- `notification-admission.ts` 给微信和唤醒共用 wrapper 提交计数、串行受理、MCP 准备和压缩／shell 等待。调用方提供目标的业务校验，并定义 SDK 提交何时算完成。
 - `service.ts` 复用现有搜索、分支上下文转换、wrapper 改名和 Web 家族归档，不另建会话管理器或注册表。列表不传 cwd/archived 时覆盖全部项目和归档状态；正文搜索沿用上游限额并返回 truncated。
 - 离线观察只用 SDK parse/migrate 纯函数处理内存，不调用可能迁移并重写文件的 SessionManager.open。v1 原文件没有条目 ID；SDK 内存迁移后按文件顺序重映射为稳定的只读分页 ID，并同步 compaction 引用，避免重复读取随机生成 ID 使游标失效。活跃读取直接使用原 wrapper 的 manager；不启动、不续租、不重开会话。
 - read_session 返回当前分支最近 50 条可见消息的文本与 nextBefore；不返回图片字节和 thinking。before 用于继续读历史；目标缺失或分页位置不存在则明确失败。
@@ -17,7 +18,8 @@
 | 文件 / 位置 | 原因与升级核验 |
 | --- | --- |
 | `lib/rpc-manager.ts` 的 import、普通分支 extensionFactories | 注册工具与技能资源；保持 Chat only、子代理、侧聊 allow-list、现有 builtins 和扩展加载完整。Node 路径使用相对模块公共入口以兼容 Jiti 测试。 |
-| `tsgw/im/pi-host.ts` 的 defaultAccess.list、项目清单及普通目标筛选 | 调用共享 catalogue / projectSessions / 路径及类型判断；保留注入式测试 seam、消息队列、创建与恢复、来源及媒体流程。 |
+| `tsgw/im/pi-host.ts` 的 defaultAccess.list、项目筛选及 notify | 调用共享清单、项目筛选与通知受理；IM 管理绑定和发送结果。 |
+| `tsgw/wakeups/host.ts` 的定时投递 | 调用共享通知受理；唤醒管理目标校验、调度 owner 状态和投递回执。 |
 | `package.json` 的 files | 发布新技能资源，测试清单已包含 tsgw/**/*.test.mjs，无需额外测试脚本。 |
 | `tsgw/AGENTS.md`、`docs/agents/tools.md` | 模块与技能薄索引。 |
 | `tsgw/im/AGENTS.md` | 记录 IM 对共享查询入口的依赖。 |

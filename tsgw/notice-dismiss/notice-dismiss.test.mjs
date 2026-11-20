@@ -7,12 +7,9 @@ import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
 const shimPath = fileURLToPath(new URL("../../hooks/__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, {
-  jsx: { runtime: "automatic" }, tsconfigPaths: true,
-  alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shimPath },
-});
+const jiti = createJiti(import.meta.url, { alias: { react: shimPath } });
 const { renderHook } = await import(shimPath);
-const { useNoticeDismiss } = await jiti.import("./index.ts");
+const { useNoticeDismiss } = await jiti.import("./useNoticeDismiss.ts");
 
 const source = ts.createSourceFile("useAgentSession.ts", await readFile(new URL("../../hooks/useAgentSession.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 const dismissSource = ts.createSourceFile("useNoticeDismiss.ts", await readFile(new URL("./useNoticeDismiss.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);

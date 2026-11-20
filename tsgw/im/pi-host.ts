@@ -1,15 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { isOrdinarySession, listSessionCatalog, projectSessions, sessionDirectoryKey } from "../session-management";
+import { isOrdinarySession, listSessionCatalog, projectSessions, sessionDirectoryKey, withNotificationAdmission, type NotificationWrapper } from "../session-management";
 import type { AgentSessionWrapper } from "../../lib/rpc-manager";
 import type { SessionInfo } from "../../lib/types";
 import type { ImSessionHost } from "./host-types";
 import { makeImNotification, type ImReplyHandle } from "./notification";
 
-type Wrapper = Pick<AgentSessionWrapper, "isAlive" | "send" | "beginCustomMessageSubmission" | "acquirePromptAdmission" | "prepareMcpForRun" | "shellRunning">
-  & { inner: Pick<AgentSession, "isCompacting" | "isStreaming" | "sendCustomMessage"> };
+type Wrapper = NotificationWrapper & Pick<AgentSessionWrapper, "send">
+  & { inner: Pick<AgentSession, "sendCustomMessage"> };
 
 export interface PiHostAccess {
   list(): Promise<SessionInfo[]>;
@@ -62,27 +61,11 @@ export function createPiSessionHost(access: PiHostAccess = defaultAccess): ImSes
         if (started.realSessionId !== id) throw new Error("无法恢复原 Pi 会话。");
         wrapper = started.session;
       }
-      signal.throwIfAborted();
-      const finishSubmission = wrapper.beginCustomMessageSubmission();
-      try {
-        const releaseAdmission = await wrapper.acquirePromptAdmission();
-        try {
-          signal.throwIfAborted();
-          if (!await wrapper.prepareMcpForRun(signal)) throw new DOMException("通知提交已停止。", "AbortError");
-          while (wrapper.isAlive() && (wrapper.inner.isCompacting || (!wrapper.inner.isStreaming && wrapper.shellRunning))) {
-            await delay(50, undefined, { signal });
-          }
-          signal.throwIfAborted();
-          if (!wrapper.isAlive()) throw new Error("Pi 会话已关闭。");
-          // While idle this promise covers the run. Busy sessions resolve on queueing.
-          // The IM queue only waits for submission and uses rejection for delivery errors.
-          return { completion: wrapper.inner.sendCustomMessage(notification, { triggerTurn: true, deliverAs: "followUp" }) };
-        } finally {
-          releaseAdmission();
-        }
-      } finally {
-        finishSubmission();
-      }
+      const target = wrapper;
+      // While idle completion covers the run. The IM queue only waits for submission.
+      return withNotificationAdmission(target, { signal }, () => ({
+        completion: target.inner.sendCustomMessage(notification, { triggerTurn: true, deliverAs: "followUp" }),
+      }));
     },
     async stop(id) {
       const wrapper = await access.get(id);

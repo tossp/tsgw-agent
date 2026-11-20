@@ -2,7 +2,7 @@
 
 ## 公共入口
 
-`index.ts` 统一导出 `NoticeDismissButton` 和 `useNoticeDismiss`；宿主使用 `@/tsgw/notice-dismiss`，不依赖内部文件路径。
+`index.ts` 导出 `NoticeDismissButton`。`useNoticeDismiss.ts` 是独立的 Hook 入口，避免仅使用会话 Hook 时装载 JSX 按钮。
 
 ## Scope and implementation
 Adds an individual close button and a stable callback to remove exactly one notice and clear only that notice's pause. Existing notice state, queues, expiry, focus/hover pause and rendering belong to upstream.
@@ -16,7 +16,7 @@ Adds an individual close button and a stable callback to remove exactly one noti
 ## External integration inventory
 | File / function | Integration |
 | --- | --- |
-| `hooks/useAgentSession.ts` / notice controls | Calls `useNoticeDismiss` with the existing reducer dispatch and pause setter; returns the callback. |
+| `hooks/useAgentSession.ts` / notice controls | Imports `@/tsgw/notice-dismiss/useNoticeDismiss` and calls it with the existing reducer dispatch and pause setter. Hook tests use the upstream loader configuration. |
 | `components/ChatWindow.tsx` / NoticeShelf | Imports `NoticeDismissButton`, takes `dismissNotice` from the existing session hook, passes it as `onDismiss` to the shelf and renders the button with the existing notice id. No other fork change to ChatWindow. |
 
 ## Host dependencies and upgrade checks

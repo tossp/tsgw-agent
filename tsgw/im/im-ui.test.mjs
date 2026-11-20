@@ -9,7 +9,7 @@ registerHooks({ load(url, context, nextLoad) {
   return { format: "module", shortCircuit: true, source: "export default new Proxy({}, { get: (_, key) => String(key) });" };
 } });
 
-const shim = fileURLToPath(new URL("../../hooks/__fixtures__/react-hook-shim.mjs", import.meta.url));
+const shim = fileURLToPath(new URL("./react-ui-test-shim.mjs", import.meta.url));
 const jiti = createJiti(import.meta.url, {
   alias: { "react/jsx-runtime": fileURLToPath(import.meta.resolve("react/jsx-runtime")), react: shim },
   jsx: { runtime: "automatic" }, tsconfigPaths: true,

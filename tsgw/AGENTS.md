@@ -20,9 +20,9 @@
 | [login2](login2/AGENTS.md) | `index.ts`：页面默认导出；`server.ts`：来源 IP helper | [行为与素材](login2/README.md) |
 | [release](release/AGENTS.md) | `index.js` / `index.d.ts`：包身份及更新通道；`.mjs`：显式构建命令 | [发布说明](release/README.md) |
 | [branding](branding/AGENTS.md) | `index.ts`：图标 URL、metadata 与 manifest 图标 | 模块规则 |
-| [notice-dismiss](notice-dismiss/AGENTS.md) | `index.ts`：关闭按钮与 hook | 模块规则；[浏览器回归](notice-dismiss/e2e.mjs) |
+| [notice-dismiss](notice-dismiss/AGENTS.md) | `index.ts`：关闭按钮；`useNoticeDismiss.ts`：独立 Hook 入口 | 模块规则；[浏览器回归](notice-dismiss/e2e.mjs) |
 | [session-title](session-title/AGENTS.md) | `index.ts`：`TITLE_PROMPT` | 模块规则 |
-| [session-management](session-management/AGENTS.md) | Node-only `index.ts`：共享清单、读取、改名、归档与工具注册 | 模块规则；[调用技能](session-management/skills/tsgw-session-management/SKILL.md) |
+| [session-management](session-management/AGENTS.md) | Node-only `index.ts`：共享清单、通知受理、读取、改名、归档与工具注册 | 模块规则；[调用技能](session-management/skills/tsgw-session-management/SKILL.md) |
 | [debug](debug/AGENTS.md) | `index.ts`：`DebugPage` | [当前界面与数据边界](debug/DESIGN.md) |
 | [cors](cors/AGENTS.md) | `index.ts`：Origin 匹配、Host 合并、CORS proxy 包装 | [配置与接入](cors/README.md) |
 | [agent-tracing](agent-tracing/AGENTS.md) | `index.ts`：tracer、`createTracingAgentSessionFromServices`；`policy.ts`：初始化策略 | 模块规则 |

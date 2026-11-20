@@ -34,7 +34,7 @@
 | `lib/rpc-manager.ts` | Node imports、`initializeWakeups()`、普通分支 `extensionFactories` | 初始化服务级 runtime，并仅为普通会话注册工具。 |
 | `lib/rpc-manager.ts` | `AgentSessionWrapper.start()`、unsubscribe、abort／`clear_queue` | 订阅原始 SDK 事件，释放 observer，Stop/Recall 时通知模块并中止未提交准备。 |
 | `lib/rpc-manager.ts` | `RpcSessionStartOptions.requireExistingSession` 及实际 open 前 | 定时投递严格重开并核对 ID，禁止 SDK 为已删目标创建替代文件；其他调用保持原语义。 |
-| `lib/rpc-manager.ts` | `acquirePromptAdmission()`、`shellRunning`、`beginCustomMessageSubmission()` | 复用宿主 admission、shell 状态与提交计数，不另建会话锁或注册表。 |
+| `lib/rpc-manager.ts` | `acquirePromptAdmission()`、`shellRunning`、`beginCustomMessageSubmission()` | 经 [session-management](../session-management/AGENTS.md) 共用宿主 admission、shell 状态与提交计数。唤醒继续核验调度 owner、目标文件并记录投递回执。 |
 | `instrumentation-node.ts` | `registerNodeInstrumentation()` | Node 服务启动时初始化恢复；错误写日志，不改其他 instrumentation 初始化。 |
 | `app/api/tsgw/wakeups/route.ts`、`[wakeupId]/route.ts` | GET；详情路径 DELETE | 查询统一投影、禁缓存、非法过滤返回 400；DELETE 仅由已有 owner 清理单条已保存终态，未知记录 404、非可清理状态 409、不可写 503，不访问会话。 |
 | `components/AppShell.tsx` | 模块 import、全局顶栏、`activeTopPanel`/`toggleTopPanel`、共享面板槽位 | 接入独立 wakeup 按钮、受控开关及 portal 容器；沿用共享顶面板互斥和布局，不在宿主组件实现任务列表或调度。 |

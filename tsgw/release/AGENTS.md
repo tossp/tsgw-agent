@@ -30,7 +30,7 @@ CAT 归档和补传属于 `../cat-monitoring/`；登录与 Playwright 登录辅�
 | `tsgw/AGENTS.md`：公共入口、文档与测试发现约定 | 常规测试覆盖全部模块，CI 对 release 与 CAT 另保留显式非空测试入口 |
 | 根 `README.md`、`AGENTS.md`、`tsgw/AGENTS.md`、`e2e/README.md` | 正式发布说明为本模块 `README.md`，登录行为为 `../login2/README.md`，CAT 构建说明为 `../cat-monitoring/BUILD.md`；固定入口保留薄索引，包内断言使用新路径 |
 
-没有通用共享代码重构。`bin/run-records.js` 的既有 `tsgw-agent` 进程识别保持原样；`lib/pi-web-cli-commands.test.mjs` 原有 CLI/bin 路径仍有效，不需机械改写。
+没有通用共享代码重构。`bin/run-records.js` 的既有 `tsgw-agent` 进程识别保持原样；`lib/pi-web-cli-commands.test.mjs` 通过实际 `runUpdate()` 验证稳定版与预览版的同通道更新。
 
 ## 宿主依赖与打包约束
 

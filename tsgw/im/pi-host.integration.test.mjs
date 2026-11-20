@@ -13,6 +13,7 @@ const { createPiSessionHost } = await jiti.import("./pi-host.ts");
 const { createImExtension, installChatOnlyImReply } = await jiti.import("./extension.ts");
 const { IM_NOTIFICATION_TYPE, resolveImReplyHandle } = await jiti.import("./notification.ts");
 const { buildSessionContext } = await jiti.import("../../lib/session-reader.ts");
+const { WAKEUP_NOTIFICATION_TYPE } = await jiti.import("../wakeups/history.ts");
 
 async function setup(t, chatOnly) {
   const directory = await mkdtemp(join(tmpdir(), "pi-im-sdk-"));
@@ -59,6 +60,7 @@ for (const chatOnly of [false, true]) {
     const first = Promise.withResolvers();
     const requested = Promise.withResolvers();
     const notified = Promise.withResolvers();
+    let wakeupTools;
     f.fake.setResponses([
       (context) => { assert.equal(declared(context).includes("im_send"), !chatOnly); requested.resolve(); return first.promise; },
       (context) => {
@@ -71,6 +73,10 @@ for (const chatOnly of [false, true]) {
         return reply(f.handle.id, "actual reply");
       },
       () => fauxAssistantMessage("only Web transcript"),
+      (context) => {
+        wakeupTools = declared(context);
+        return fauxAssistantMessage("independent wakeup reply");
+      },
       (context) => { assert.equal(declared(context).includes("im_send"), !chatOnly); return fauxAssistantMessage("next Web reply"); },
     ]);
     t.after(first.resolve);
@@ -83,7 +89,12 @@ for (const chatOnly of [false, true]) {
     await notified.promise;
     await f.session.waitForIdle();
     assert.deepEqual(f.sent, [{ cwd: f.directory, destination: { handle: f.handle }, items: [{ type: "text", text: "actual reply" }] }]);
+    await f.session.sendCustomMessage({
+      customType: WAKEUP_NOTIFICATION_TYPE, content: "independent wakeup fixture", display: true,
+    }, { triggerTurn: true, deliverAs: "followUp" });
+    assert.equal(wakeupTools?.includes("im_send"), !chatOnly);
     await f.session.prompt("next Web prompt");
+    assert.equal(f.fake.state.callCount, 5);
     const entries = f.session.sessionManager.getEntries();
     assert.equal(entries.filter((entry) => entry.type === "message" && entry.message.role === "user").length, 2);
     assert.equal(entries.filter((entry) => entry.type === "custom_message" && entry.customType === IM_NOTIFICATION_TYPE).length, 1);

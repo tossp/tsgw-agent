@@ -66,8 +66,8 @@ export function installChatOnlyImReply(session: Pick<AgentSession, "agent" | "se
   };
   const declaration = toToolDeclaration(replyTool);
   const isImRequest = (messages: typeof agent.state.messages) => {
-    const input = messages.findLast((message) => message.role === "user" || (message.role === "custom" && message.customType === IM_NOTIFICATION_TYPE));
-    if (input?.role !== "custom") return false;
+    const input = messages.findLast((message) => message.role === "user" || message.role === "custom");
+    if (input?.role !== "custom" || input.customType !== IM_NOTIFICATION_TYPE) return false;
     const id = (input.details as { id?: string } | undefined)?.id;
     return id !== undefined && resolveImReplyHandle(sessionManager, id) !== undefined;
   };
